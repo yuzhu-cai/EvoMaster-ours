@@ -1,0 +1,43 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: robotwin-interactive-test
+  namespace: embo-ml-master-robotwin
+spec:
+  restartPolicy: Never
+  containers:
+  - name: robotwin-container
+    image: 10.254.40.242:30550/robotwin:v1.1
+    imagePullPolicy: IfNotPresent
+    env:
+    - name: NVIDIA_DRIVER_CAPABILITIES
+      value: "compute,utility,graphics"
+    resources:
+      limits:
+        nvidia.com/gpu: 1
+        cpu: "4"
+        memory: "40Gi"
+      requests:
+        nvidia.com/gpu: 1
+        cpu: "2"
+        memory: "20Gi"
+    volumeMounts:
+    - name: robowin-workspace
+      mountPath: /workspace/RoboTwin
+    - name: dshm
+      mountPath: /dev/shm
+    - name: submission
+      mountPath: /workspace/submission
+    command: ["sleep", "infinity"]
+  volumes:
+  - name: robowin-workspace
+    hostPath:
+      path: /data/yuanshuozhang/RoboTwin
+      type: Directory
+  - name: submission
+    emptyDir: {}
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 16Gi
+

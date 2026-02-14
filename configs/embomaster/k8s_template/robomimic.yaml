@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robomimic-train
+  namespace: default
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robomimic-train
+        # ★ 这里改成你私有仓库里的镜像 ★
+        image: 10.254.40.242:30550/robomimic:conda_init
+        imagePullPolicy: IfNotPresent
+        # imagePullPolicy: Never
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 0
+            cpu: "4"
+            memory: "80Gi"
+          requests:
+            nvidia.com/gpu: 0
+            cpu: "4"
+            memory: "40Gi"
+
+        volumeMounts:
+        - name: tmp-dir
+          mountPath: /root/tmp
+        - name: robomimic-workspace
+          mountPath: /workspace/robomimic
+        - name: huggingface-cache
+          mountPath: /root/.cache/huggingface
+        - name: dshm
+          mountPath: /dev/shm
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        # - "sleep infinity"
+        - >
+          source /opt/conda/etc/profile.d/conda.sh &&
+          export http_proxy=http://172.17.0.1:7891;export https_proxy=http://172.17.0.1:7891 &&
+          cd /workspace/robomimic &&
+          conda activate robomimic_venv && 
+          python robomimic/scripts/generate_paper_configs.py --config_dir /workspace/robomimic/robomimic/exps/paper  --output_dir /workspace/robomimic/experiment_results --dataset_dir  /workspace/robomimic/datasets/ &&
+          python robomimic/scripts/train.py --config robomimic/exps/paper/core/lift/ph/low_dim/bc.json
+
+      volumes:
+      - name: tmp-dir
+        hostPath:
+          path: /data/gjliu/robomimic/k8s_tmp/tmp
+          type: Directory
+      - name: robomimic-workspace
+        hostPath:
+          path: /data/gjliu/robomimic
+          type: Directory
+      - name: huggingface-cache
+        hostPath:
+          path: /data/gjliu/robomimic/k8s_tmp/huggingface
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi

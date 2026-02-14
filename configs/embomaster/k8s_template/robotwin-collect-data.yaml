@@ -1,0 +1,107 @@
+# RoboTwin 数据采集 K8S Job
+# 用法: kubectl apply -f robotwin-collect-data.yaml
+# 参考: https://robotwin-platform.github.io/doc/usage/collect-data.html
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-collect-data-pick-dual-bottles
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  # 数据采集可能需要较长时间，设置较长的活动期限
+  activeDeadlineSeconds: 86400  # 24 小时
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-collect
+        # 使用与训练相同的镜像
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        # 数据采集任务参数
+        - name: TASK_NAME
+          value: "pick_dual_bottles"
+        - name: TASK_CONFIG
+          value: "demo_clean"
+        - name: GPU_ID
+          value: "0"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "8"
+            memory: "64Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "=============================================="
+          echo "[K8S] RoboTwin Data Collection Job"
+          echo "=============================================="
+          echo "TASK_NAME:   ${TASK_NAME}"
+          echo "TASK_CONFIG: ${TASK_CONFIG}"
+          echo "GPU_ID:      ${GPU_ID}"
+          echo "=============================================="
+          
+          # 激活 conda 环境
+          echo "[K8S] Activating conda environment..."
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          
+          # 进入 RoboTwin 目录
+          cd /workspace/RoboTwin
+          echo "[K8S] Working directory: $(pwd)"
+          
+          # 检查任务环境文件是否存在
+          if [ ! -f "envs/${TASK_NAME}.py" ]; then
+              echo "[ERROR] Task ${TASK_NAME} not found in envs/"
+              exit 1
+          fi
+          
+          # 运行数据采集
+          echo "[K8S] Starting data collection..."
+          echo "[K8S] Command: bash collect_data.sh ${TASK_NAME} ${TASK_CONFIG} ${GPU_ID}"
+          echo ""
+          
+          bash collect_data.sh "${TASK_NAME}" "${TASK_CONFIG}" "${GPU_ID}"
+          
+          echo ""
+          echo "[K8S] Data collection completed!"
+          echo "[K8S] Data saved to: /workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/"
+          
+          # 显示采集结果
+          echo ""
+          echo "[K8S] Collected data summary:"
+          ls -la "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/" 2>/dev/null | head -20 || echo "No data files found"
+          
+          # 统计 episode 数量
+          EPISODE_COUNT=$(ls -1 "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/"*.hdf5 2>/dev/null | wc -l)
+          echo "[K8S] Total episodes collected: ${EPISODE_COUNT}"
+
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+
+

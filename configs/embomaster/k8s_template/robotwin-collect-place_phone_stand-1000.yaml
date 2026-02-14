@@ -1,0 +1,95 @@
+# RoboTwin 数据采集 K8S Job - place_phone_stand 任务 (1000 条数据)
+# 用法: kubectl apply -f robotwin-collect-place_phone_stand-1000.yaml
+# 预计运行时间: 约 4-8 小时（取决于硬件性能）
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-collect-place-phone-stand-1000
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 172800  # 48 小时
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-collect
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "place_phone_stand"
+        - name: TASK_CONFIG
+          value: "demo_clean_1000"
+        - name: GPU_ID
+          value: "0"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "8"
+            memory: "64Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "=============================================="
+          echo "[K8S] RoboTwin Data Collection Job"
+          echo "[K8S] Task: place_phone_stand (1000 episodes)"
+          echo "=============================================="
+          echo "TASK_NAME:   ${TASK_NAME}"
+          echo "TASK_CONFIG: ${TASK_CONFIG}"
+          echo "GPU_ID:      ${GPU_ID}"
+          echo "=============================================="
+          
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          cd /workspace/RoboTwin
+          
+          if [ ! -f "envs/${TASK_NAME}.py" ]; then
+              echo "[ERROR] Task ${TASK_NAME} not found in envs/"
+              exit 1
+          fi
+          
+          if [ ! -f "task_config/${TASK_CONFIG}.yml" ]; then
+              echo "[ERROR] Config ${TASK_CONFIG}.yml not found in task_config/"
+              exit 1
+          fi
+          
+          START_TIME=$(date +%s)
+          echo "[K8S] Starting data collection at $(date)"
+          bash collect_data.sh "${TASK_NAME}" "${TASK_CONFIG}" "${GPU_ID}"
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          HOURS=$((DURATION / 3600))
+          MINUTES=$(((DURATION % 3600) / 60))
+          
+          echo "[K8S] Data collection completed! Total time: ${HOURS}h ${MINUTES}m"
+          EPISODE_COUNT=$(ls -1 "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/"*.hdf5 2>/dev/null | wc -l)
+          echo "[K8S] Total episodes collected: ${EPISODE_COUNT} / 1000"
+
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+

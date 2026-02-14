@@ -1,0 +1,66 @@
+# RoboTwin 数据采集 K8S Job - place_phone_stand 任务 (10 条数据)
+# 用法: kubectl apply -f robotwin-collect-place_phone_stand-10.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-collect-place-phone-stand-10
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200  # 2 小时
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-collect
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "place_phone_stand"
+        - name: TASK_CONFIG
+          value: "demo_clean_10"
+        - name: GPU_ID
+          value: "0"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "8"
+            memory: "64Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "[K8S] RoboTwin Data Collection: place_phone_stand (10 episodes)"
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          cd /workspace/RoboTwin
+          bash collect_data.sh "${TASK_NAME}" "${TASK_CONFIG}" "${GPU_ID}"
+          EPISODE_COUNT=$(ls -1 "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/"*.hdf5 2>/dev/null | wc -l)
+          echo "[K8S] Total episodes collected: ${EPISODE_COUNT} / 10"
+
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+

@@ -1,0 +1,90 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-train-dp-pick-dual-bottles
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-train
+        # ★ 这里改成你私有仓库里的镜像 ★
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+
+        - name: TASK_NAME
+          value: "pick_dual_bottles"
+        - name: TASK_CONFIG
+          value: "demo_clean"
+        - name: EXPERT_DATA_NUM
+          value: "50"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0"
+        - name: ACTION_DIM
+          value: "14"
+        - name: TRAIN_TIMEOUT
+          value: "7200"                     # seconds
+        # ★ 重要：HEAD_CAMERA_TYPE 必须与专家数据采集时使用的摄像头配置一致 ★
+        # demo_clean.yml 中设置为 D435 (320x240, FOV 37°)
+        # 如果设置不一致会导致训练/评估时的视觉输入与专家数据不匹配，成功率为 0
+        - name: HEAD_CAMERA_TYPE
+          value: "D435"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "80Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "40Gi"
+
+        volumeMounts:
+        - name: robowin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        - name: submission
+          mountPath: /workspace/submission
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - >
+          cd /workspace/RoboTwin/policy/DP &&
+          bash train_and_eval_ml-master-2.sh
+          "/workspace/RoboTwin"
+          "${HOSTNAME:-robotwin-job}"
+          "/workspace/submission"
+          "${TASK_NAME}"
+          "${TASK_CONFIG}"
+          "${EXPERT_DATA_NUM}"
+          "${SEED}"
+          "${GPU_ID}"
+          "${ACTION_DIM}"
+          "${TRAIN_TIMEOUT}"
+
+
+      volumes:
+      - name: robowin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+
+      - name: submission
+        emptyDir: {}
+
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+
+

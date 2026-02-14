@@ -1,0 +1,80 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-train-adjust-bottle
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-train
+        # ★ 这里改成你私有仓库里的镜像 ★
+        image: 10.254.40.242:30550/robotwin:latest
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+
+        - name: TASK_NAME
+          value: "adjust-bottle"        # ∈ {adjust-bottle, adjust_bottle}
+        - name: TASK_CONFIG
+          value: "demo_clean"               # ∈ {demo_clean, demo_randomized}
+        - name: EXPERT_DATA_NUM
+          value: "50"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0"
+        - name: TRAIN_TIMEOUT
+          value: "7200"                     # seconds
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "80Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "40Gi"
+
+        volumeMounts:
+        - name: robowin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        - name: submission
+          mountPath: /workspace/submission
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - >
+          cd /workspace/RoboTwin/policy/ACT &&
+          bash train_and_eval_ml-master-2.sh
+          "/workspace/RoboTwin"                # CODEBASE
+          "${HOSTNAME:-robotwin-job}"          # NODE_ID 占位，可按需替换
+          "/workspace/submission"              # SUBMISSION_DIR
+          "${TASK_NAME}"
+          "${TASK_CONFIG}"
+          "${EXPERT_DATA_NUM}"
+          "${SEED}"
+          "${GPU_ID}"
+          "${TRAIN_TIMEOUT}"
+
+
+      volumes:
+      - name: robowin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+
+      - name: submission
+        emptyDir: {}
+
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi

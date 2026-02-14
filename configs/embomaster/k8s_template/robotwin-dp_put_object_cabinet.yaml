@@ -1,0 +1,91 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-train-dp-put-object-cabinet
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-train
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        # PyTorch 显存管理优化，减少内存碎片
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
+
+        - name: TASK_NAME
+          value: "put_object_cabinet"
+        - name: TASK_CONFIG
+          value: "demo_clean_1000"
+        - name: EXPERT_DATA_NUM
+          value: "1000"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0"
+        - name: ACTION_DIM
+          value: "14"
+        - name: TRAIN_TIMEOUT
+          value: "14400"                     # 4 hours for 1000 episodes
+        - name: HEAD_CAMERA_TYPE
+          value: "D435"
+        - name: CHECKPOINT_EVERY
+          value: "3"  # Save checkpoint every 3 epochs for 1000 episodes dataset
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "80Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "40Gi"
+
+        volumeMounts:
+        - name: robowin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        - name: submission
+          mountPath: /workspace/submission
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          CODEBASE_PATH="/workspace/RoboTwin"
+          cd "${CODEBASE_PATH}/policy/DP" && \
+          bash train_and_eval_ml-master-put_object_cabinet.sh \
+          "${CODEBASE_PATH}" \
+          "${HOSTNAME:-robotwin-job}" \
+          "/workspace/submission" \
+          "${TASK_NAME}" \
+          "${TASK_CONFIG}" \
+          "${EXPERT_DATA_NUM}" \
+          "${SEED}" \
+          "${GPU_ID}" \
+          "${ACTION_DIM}" \
+          "${TRAIN_TIMEOUT}"
+
+
+      volumes:
+      - name: robowin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+
+      - name: submission
+        emptyDir: {}
+
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+

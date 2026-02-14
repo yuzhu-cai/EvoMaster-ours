@@ -1,0 +1,313 @@
+# RoboTwin 多 GPU 并行数据采集 - press_stapler 任务 (4 x 250 = 1000 条数据)
+# 用法: kubectl apply -f robotwin-collect-press_stapler-parallel.yaml
+# 预计运行时间: 约 1-2 小时（4 GPU 并行）
+# 
+# 采集完成后，运行合并脚本:
+#   python script/merge_sharded_data.py press_stapler demo_clean_1000_shard 4
+#
+# 注意: 需要先将配置文件同步到 K8S 挂载的目录
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-collect-press-stapler-shard0
+  namespace: robotwin
+  labels:
+    task: press-stapler-parallel
+    shard: "0"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200  # 12 小时
+  template:
+    spec:
+      restartPolicy: Never
+      # 使用 nodeSelector 或 affinity 确保不同 Job 调度到不同节点（可选）
+      containers:
+      - name: robotwin-collect
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "press_stapler"
+        - name: TASK_CONFIG
+          value: "demo_clean_1000_shard0"
+        - name: GPU_ID
+          value: "0"
+        - name: SHARD_ID
+          value: "0"
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "2"
+            memory: "16Gi"
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "=============================================="
+          echo "[K8S] Parallel Data Collection - Shard ${SHARD_ID}"
+          echo "=============================================="
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          cd /workspace/RoboTwin
+          
+          START_TIME=$(date +%s)
+          echo "[K8S] Starting at $(date)"
+          
+          bash collect_data.sh "${TASK_NAME}" "${TASK_CONFIG}" "${GPU_ID}"
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "[K8S] Shard ${SHARD_ID} completed in $((DURATION / 60)) minutes"
+          
+          EPISODE_COUNT=$(ls -1 "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/"*.hdf5 2>/dev/null | wc -l)
+          echo "[K8S] Shard ${SHARD_ID}: ${EPISODE_COUNT} episodes collected"
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 32Gi
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-collect-press-stapler-shard1
+  namespace: robotwin
+  labels:
+    task: press-stapler-parallel
+    shard: "1"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-collect
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "press_stapler"
+        - name: TASK_CONFIG
+          value: "demo_clean_1000_shard1"
+        - name: GPU_ID
+          value: "0"
+        - name: SHARD_ID
+          value: "1"
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "2"
+            memory: "16Gi"
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "=============================================="
+          echo "[K8S] Parallel Data Collection - Shard ${SHARD_ID}"
+          echo "=============================================="
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          cd /workspace/RoboTwin
+          
+          START_TIME=$(date +%s)
+          echo "[K8S] Starting at $(date)"
+          
+          bash collect_data.sh "${TASK_NAME}" "${TASK_CONFIG}" "${GPU_ID}"
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "[K8S] Shard ${SHARD_ID} completed in $((DURATION / 60)) minutes"
+          
+          EPISODE_COUNT=$(ls -1 "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/"*.hdf5 2>/dev/null | wc -l)
+          echo "[K8S] Shard ${SHARD_ID}: ${EPISODE_COUNT} episodes collected"
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 32Gi
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-collect-press-stapler-shard2
+  namespace: robotwin
+  labels:
+    task: press-stapler-parallel
+    shard: "2"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-collect
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "press_stapler"
+        - name: TASK_CONFIG
+          value: "demo_clean_1000_shard2"
+        - name: GPU_ID
+          value: "0"
+        - name: SHARD_ID
+          value: "2"
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "2"
+            memory: "16Gi"
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "=============================================="
+          echo "[K8S] Parallel Data Collection - Shard ${SHARD_ID}"
+          echo "=============================================="
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          cd /workspace/RoboTwin
+          
+          START_TIME=$(date +%s)
+          echo "[K8S] Starting at $(date)"
+          
+          bash collect_data.sh "${TASK_NAME}" "${TASK_CONFIG}" "${GPU_ID}"
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "[K8S] Shard ${SHARD_ID} completed in $((DURATION / 60)) minutes"
+          
+          EPISODE_COUNT=$(ls -1 "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/"*.hdf5 2>/dev/null | wc -l)
+          echo "[K8S] Shard ${SHARD_ID}: ${EPISODE_COUNT} episodes collected"
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 32Gi
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-collect-press-stapler-shard3
+  namespace: robotwin
+  labels:
+    task: press-stapler-parallel
+    shard: "3"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 43200
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-collect
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "press_stapler"
+        - name: TASK_CONFIG
+          value: "demo_clean_1000_shard3"
+        - name: GPU_ID
+          value: "0"
+        - name: SHARD_ID
+          value: "3"
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "2"
+            memory: "16Gi"
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "=============================================="
+          echo "[K8S] Parallel Data Collection - Shard ${SHARD_ID}"
+          echo "=============================================="
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          cd /workspace/RoboTwin
+          
+          START_TIME=$(date +%s)
+          echo "[K8S] Starting at $(date)"
+          
+          bash collect_data.sh "${TASK_NAME}" "${TASK_CONFIG}" "${GPU_ID}"
+          
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          echo "[K8S] Shard ${SHARD_ID} completed in $((DURATION / 60)) minutes"
+          
+          EPISODE_COUNT=$(ls -1 "/workspace/RoboTwin/data/${TASK_NAME}/${TASK_CONFIG}/data/"*.hdf5 2>/dev/null | wc -l)
+          echo "[K8S] Shard ${SHARD_ID}: ${EPISODE_COUNT} episodes collected"
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 32Gi
+

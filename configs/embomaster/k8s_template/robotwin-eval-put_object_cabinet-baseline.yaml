@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-eval-put-object-cabinet-baseline
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-eval
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "put_object_cabinet"
+        - name: TASK_CONFIG
+          value: "demo_clean_1000"
+        - name: EXPERT_DATA_NUM
+          value: "1000"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0"
+        - name: CKPT_NUM
+          value: "30"
+        - name: EVAL_VIDEO_LOG
+          value: "True" # 开启视频输出
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "32Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "2"
+            memory: "16Gi"
+        volumeMounts:
+        - name: robowin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          
+          cd /workspace/RoboTwin/policy/DP
+          echo "[EVAL] Starting evaluation with VIDEO LOGGING enabled"
+          echo "[EVAL] Task: ${TASK_NAME}, Epoch: ${CKPT_NUM}"
+          
+          bash eval.sh "${TASK_NAME}" "${TASK_CONFIG}" "${TASK_CONFIG}" "${EXPERT_DATA_NUM}" "${SEED}" "${GPU_ID}" "${CKPT_NUM}"
+          
+          echo "=============================================="
+          echo "[EVAL] Evaluation completed!"
+          echo "=============================================="
+
+      volumes:
+      - name: robowin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi

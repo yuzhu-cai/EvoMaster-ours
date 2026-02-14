@@ -1,0 +1,113 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-rdt-place-phone-stand-debug
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-train
+        image: 10.254.40.242:30550/robotwin:RDT_v0.1
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        # PyTorch 显存管理优化，减少内存碎片
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
+
+        - name: TASK_NAME
+          value: "place_phone_stand"
+        - name: TASK_CONFIG
+          value: "demo_clean"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+            cpu: "32"
+            memory: "320Gi"
+          requests:
+            nvidia.com/gpu: 8
+            cpu: "32"
+            memory: "320Gi"
+
+        volumeMounts:
+        - name: robowin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+        - name: submission
+          mountPath: /workspace/submission
+        - name: policy-weights
+          mountPath: /workspace/RoboTwin/policy/weights
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          CODEBASE_PATH="/workspace/RoboTwin"
+          echo "=========================================="
+          echo "[DEBUG] Container started for inspection"
+          echo "=========================================="
+          echo "[DEBUG] Mount points:"
+          echo "  - /workspace/RoboTwin -> robowin-workspace"
+          echo "  - /workspace/RoboTwin/policy/weights -> policy-weights"
+          echo "  - /workspace/submission -> submission"
+          echo "  - /dev/shm -> dshm"
+          echo ""
+          echo "[DEBUG] Checking mounts..."
+          echo ""
+          echo "=== Checking /workspace/RoboTwin/policy/weights ==="
+          ls -la /workspace/RoboTwin/policy/weights || echo "ERROR: Cannot access /workspace/RoboTwin/policy/weights"
+          echo ""
+          echo "=== Checking if siglip model exists ==="
+          ls -la /workspace/RoboTwin/policy/weights/siglip-so400m-patch14-384 2>&1 || echo "WARNING: siglip-so400m-patch14-384 not found"
+          echo ""
+          echo "=== Checking mount info ==="
+          mount | grep weights || echo "No weights mount found"
+          echo ""
+          echo "=== Current working directory ==="
+          pwd
+          echo ""
+          echo "=== Environment variables ==="
+          echo "VISION_ENCODER_NAME=${VISION_ENCODER_NAME:-not set}"
+          echo ""
+          echo "=== Checking finetune.sh script ==="
+          if [ -f "${CODEBASE_PATH}/policy/RDT/finetune.sh" ]; then
+            echo "finetune.sh exists"
+            grep "VISION_ENCODER_NAME" ${CODEBASE_PATH}/policy/RDT/finetune.sh | head -3 || echo "VISION_ENCODER_NAME not found in finetune.sh"
+          else
+            echo "ERROR: finetune.sh not found"
+          fi
+          echo ""
+          echo "=========================================="
+          echo "[DEBUG] Sleeping for 2 hours to allow inspection"
+          echo "You can exec into this pod to check things"
+          echo "=========================================="
+          sleep 7200
+
+
+      volumes:
+      - name: robowin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+
+      - name: submission
+        emptyDir: {}
+
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
+
+      - name: policy-weights
+        hostPath:
+          path: /data/modelsrepo/RDT
+          type: Directory
