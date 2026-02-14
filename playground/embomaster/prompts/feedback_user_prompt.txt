@@ -1,0 +1,19 @@
+Task ID: {task_id}
+Task Type: {task_type}
+Task Description:
+{description}
+
+Round:
+{round_index}
+
+K8S Status:
+{k8s_status}
+
+Metric:
+{metric_value}
+
+K8S Log Tail:
+{k8s_log_tail}
+
+Please provide improvement suggestions for the next round.
+

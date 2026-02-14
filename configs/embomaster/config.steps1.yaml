@@ -1,0 +1,141 @@
+# EmboMaster Playground minimal skeleton config
+
+llm:
+  gpugeek_vendor2_claude45:
+    provider: "openai"
+    model: "Vendor2/Claude-4.5-Sonnet"
+    api_key: "u0rgjezq53e5tv01000dg95v0yqn2eecv02b7z3r"
+    base_url: "https://api.gpugeek.com/v1"
+    temperature: 0.2
+    max_tokens: 16384
+    timeout: 120
+    max_retries: 3
+    retry_delay: 1.0
+  default: "gpugeek_vendor2_claude45"
+
+agents:
+  coding:
+    llm: "gpugeek_vendor2_claude45"
+    max_turns: 40
+    enable_tools: true
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 6
+    system_prompt_file: "prompts/coding_system_prompt.txt"
+    user_prompt_file: "prompts/coding_user_prompt.txt"
+  feedback:
+    llm: "gpugeek_vendor2_claude45"
+    max_turns: 8
+    enable_tools: false
+    context:
+      max_tokens: 64000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 4
+    system_prompt_file: "prompts/feedback_system_prompt.txt"
+    user_prompt_file: "prompts/feedback_user_prompt.txt"
+
+session:
+  type: "local"
+  local:
+    working_dir: "./playground/embomaster/workspace"
+    timeout: 120
+    symlinks: {}
+
+debug_test:
+  enabled: true
+  default_timeout: 180
+  default_env_init: ""
+  use_k8s_debug_pod: false
+  k8s_fallback_to_local: true
+
+tool_policy:
+  allowed: ["finish", "str_replace_editor", "debug_test"]
+  disable_execute_bash: true
+
+experiment:
+  steps: 1
+  time_limit_seconds: 86400
+  metric_mode: "maximize"
+  # Example: "success\\s*rate\\s*[:=]\\s*([0-9]*\\.?[0-9]+)"
+  metric_pattern: ""
+  stop_on_job_failed: false
+
+workspace_isolation:
+  enabled: true
+  # Relative path is resolved from session workspace.
+  session_dir: ".embomaster_session"
+  # Empty means auto-detect from workspace/codebase symlink.
+  source_codebase_dir: ""
+  parent_strategy: "previous"  # previous | best | none
+  size_threshold_mb: 30
+  submission_subdir: "submission"
+
+k8s_runner:
+  enabled: false
+  namespace: "default"
+  poll_interval_seconds: 15
+  job_timeout_seconds: 3600
+  cleanup_on_success: false
+  manifest_path: ""
+  job_name_prefix: "embomaster-adjust-bottle"
+  container_workspace: "/workspace"
+  container_name: ""
+  apply_mounts_to_all_containers: false
+  codebase_volume_name: "codebase-volume"
+  codebase_mount_path: "/workspace/codebase"
+  enable_submission_mount: true
+  submission_volume_name: "submission"
+  submission_mount_path: "/workspace/submission"
+  enable_large_dir_mounts: true
+  large_dir_volume_prefix: "large-dir"
+  manifest_env: {}
+  debug_pod:
+    enabled: false
+    image: ""
+    pod_name_prefix: "embomaster-debug"
+    container_name: "debug"
+    workspace_mount_path: "/workspace"
+    command: ["sleep", "infinity"]
+    ready_timeout_seconds: 120
+    cleanup_after_exec: false
+
+mcp:
+  enabled: false
+  config_file: "mcp_config.json"
+
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+  log_path: "./logs/embomaster.log"
+
+project_root: "."
+workspace: "./workspace"
+results_dir: "./results"
+debug: false
+
+env:
+  cluster:
+    debug_pool:
+      type: "cpu"
+      max_concurrent: 1
+    train_pool:
+      type: "cpu"
+      max_concurrent: 1
+  docker:
+    base_image: "python:3.11-slim"
+    registry: "docker.io"
+    pull_policy: "if_not_present"
+  scheduler:
+    type: "local"
+    queue_timeout: 300
+    retry_failed: false
+    max_retries: 1

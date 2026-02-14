@@ -11,7 +11,7 @@
   --config: 指定配置文件路径（可选，默认使用 configs/{agent}/config.yaml）
   --task: 任务描述（可选，如不提供则进入交互式输入）
   --interactive: 交互式模式（可选）
-  --run-dir: 指定 run 目录（可选，默认自动创建 runs/{agent}_{timestamp}/）
+  --run-dir: 指定 run 目录（可选，默认自动创建 /data/agents/EvoMaster/workspaces/{experiment}_{timestamp}/）
 """
 
 import argparse
@@ -46,7 +46,7 @@ def parse_args():
   python run.py --agent agent-builder --interactive
 
   # 指定 run 目录
-  python run.py --agent minimal --task "分析数据" --run-dir runs/my_experiment
+  python run.py --agent minimal --task "分析数据" --run-dir /data/agents/EvoMaster/workspaces/my_experiment
 
   # 批量任务（串行）
   python run.py --agent minimal --task-file tasks.json
@@ -85,7 +85,7 @@ def parse_args():
 
     parser.add_argument(
         "--run-dir",
-        help="指定 run 目录（默认自动创建 runs/{agent}_{timestamp}/）"
+        help="指定 run 目录（默认自动创建 /data/agents/EvoMaster/workspaces/{experiment}_{timestamp}/）"
     )
 
     parser.add_argument(
@@ -354,6 +354,30 @@ def auto_import_playgrounds():
     logger.debug(f"Auto-imported {imported_count} playground modules")
 
 
+def _sanitize_experiment_name(value: str) -> str:
+    import re
+
+    text = re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-_")
+    return text or "experiment"
+
+
+def _default_run_dir(agent_name: str, config_path: Path) -> Path:
+    """Build default run directory under shared workspace root.
+
+    Pattern:
+      /data/agents/EvoMaster/workspaces/{experiment_name}_{YYYYMMDD_HHMMSS}
+    """
+    workspace_root = Path("/data/agents/EvoMaster/workspaces")
+    config_stem = config_path.stem
+    if config_stem and config_stem.lower() != "config":
+        experiment_name = f"{agent_name}_{config_stem}"
+    else:
+        experiment_name = agent_name
+    experiment_name = _sanitize_experiment_name(experiment_name)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return workspace_root / f"{experiment_name}_{timestamp}"
+
+
 def main():
     """主入口函数"""
     setup_logging()
@@ -383,8 +407,7 @@ def main():
     if args.run_dir:
         run_dir = Path(args.run_dir)
     else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = project_root / "runs" / f"{args.agent}_{timestamp}"
+        run_dir = _default_run_dir(args.agent, config_path)
 
     # 3. 解析任务
     if args.task_file:

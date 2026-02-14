@@ -1,0 +1,157 @@
+# EmboMaster 专用映射配置
+# 目标：对齐 openhands-ml-master launch.json 中
+# "RoboTwin-Adjust-Bottle-DSV32" 的关键运行参数。
+#
+# 使用方式：
+# python run.py --agent embomaster \
+#   --config configs/embomaster/config_robotwin_adjust_bottle_dsv32.yaml \
+#   --task /data/agents/openhands-ml-master/PRDs/robotwin_task_2.md
+
+llm:
+  gpugeek_vendor2_claude45:
+    provider: "openai"
+    model: "Vendor2/Claude-4.5-Sonnet"
+    api_key: "u0rgjezq53e5tv01000dg95v0yqn2eecv02b7z3r"
+    base_url: "https://api.gpugeek.com/v1"
+    temperature: 0.5
+    max_tokens: 16384
+    timeout: 300
+    max_retries: 3
+    retry_delay: 1.0
+  default: "gpugeek_vendor2_claude45"
+
+agents:
+  coding:
+    llm: "gpugeek_vendor2_claude45"
+    max_turns: 60
+    enable_tools: true
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 6
+    system_prompt_file: "prompts/coding_system_prompt.txt"
+    user_prompt_file: "prompts/coding_user_prompt.txt"
+
+  feedback:
+    llm: "gpugeek_vendor2_claude45"
+    max_turns: 8
+    enable_tools: false
+    context:
+      max_tokens: 64000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 4
+    system_prompt_file: "prompts/feedback_system_prompt.txt"
+    user_prompt_file: "prompts/feedback_user_prompt.txt"
+
+session:
+  type: "local"
+  local:
+    working_dir: "./playground/embomaster/workspace"
+    timeout: 300
+    symlinks:
+      "/data/agents/openhands-ml-master/embodied-benchmarks-code-repos/robotwin": "codebase"
+      "/data/agents/openhands-ml-master/datasets/robotwin": "input"
+
+debug_test:
+  enabled: true
+  default_timeout: 600
+  default_env_init: ""
+  use_k8s_debug_pod: false
+  k8s_fallback_to_local: true
+
+tool_policy:
+  allowed: ["finish", "str_replace_editor", "debug_test"]
+  disable_execute_bash: true
+
+experiment:
+  # 对齐 launch.json: agent.steps=20, agent.time_limit=86400
+  steps: 20
+  time_limit_seconds: 86400
+  metric_mode: "maximize"
+  # 可按日志格式调整
+  metric_pattern: "success\\s*rate\\s*[:=]\\s*([0-9]*\\.?[0-9]+)"
+  stop_on_job_failed: false
+
+workspace_isolation:
+  enabled: true
+  # 每轮独立 codebase 目录将创建在: {workspace}/.embomaster_session/round_workspaces/{round_workspace}/
+  session_dir: ".embomaster_session"
+  source_codebase_dir: "/data/agents/openhands-ml-master/embodied-benchmarks-code-repos/robotwin"
+  parent_strategy: "previous"   # previous | best | none
+  size_threshold_mb: 30
+  submission_subdir: "submission"
+
+k8s_runner:
+  enabled: true
+  namespace: "default"
+  poll_interval_seconds: 15
+  job_timeout_seconds: 9600
+  cleanup_on_success: true
+  manifest_path: "/data/agents/openhands-ml-master/k8s_template/robotwin-adjust_bottle.yaml"
+  job_name_prefix: "robotwin-adjust-bottle"
+  container_workspace: "/workspace"
+  container_name: "robotwin-train"
+  apply_mounts_to_all_containers: false
+  codebase_volume_name: "robowin-workspace"
+  codebase_mount_path: "/workspace/RoboTwin"
+  enable_submission_mount: true
+  submission_volume_name: "submission"
+  submission_mount_path: "/workspace/submission"
+  enable_large_dir_mounts: true
+  large_dir_volume_prefix: "large-dir"
+  manifest_env:
+    TASK_NAME: "adjust_bottle"
+    TASK_CONFIG: "demo_clean"
+    EXPERT_DATA_NUM: "50"
+    SEED: "0"
+    GPU_ID: "0"
+    TRAIN_TIMEOUT: "7200"
+  debug_pod:
+    enabled: false
+    image: ""
+    pod_name_prefix: "embomaster-debug"
+    container_name: "debug"
+    workspace_mount_path: "/workspace"
+    command: ["sleep", "infinity"]
+    ready_timeout_seconds: 120
+    cleanup_after_exec: false
+
+mcp:
+  enabled: false
+  config_file: "mcp_config.json"
+
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+  log_path: "./logs/embomaster_robotwin_adjust_bottle_dsv32.log"
+
+project_root: "."
+workspace: "./workspace"
+results_dir: "./results"
+debug: false
+
+env:
+  cluster:
+    debug_pool:
+      type: "cpu"
+      max_concurrent: 1
+    train_pool:
+      type: "cpu"
+      max_concurrent: 1
+  docker:
+    base_image: "python:3.11-slim"
+    registry: "docker.io"
+    pull_policy: "if_not_present"
+  scheduler:
+    type: "local"
+    queue_timeout: 300
+    retry_failed: false
+    max_retries: 1

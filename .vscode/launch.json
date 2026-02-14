@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python 调试程序: 当前文件",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "EvoMaster: RoboTwin-Adjust-Bottle-DSV32 (Large-Dir Check Enabled)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/run.py",
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--agent",
+                "embomaster",
+                "--config",
+                "${workspaceFolder}/configs/embomaster/config_robotwin_adjust_bottle_dsv32_e2e_once.yaml",
+                "--task",
+                "/data/agents/openhands-ml-master/PRDs/robotwin_task_2.md"
+            ]
+        }
+    ]
+}

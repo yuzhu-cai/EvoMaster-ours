@@ -96,10 +96,14 @@ class Dialog(BaseModel):
         result = []
         for msg in self.messages:
             msg_dict: dict[str, Any] = {"role": msg.role.value}
-            if msg.content is not None:
-                msg_dict["content"] = msg.content
             if isinstance(msg, AssistantMessage) and msg.tool_calls:
+                # Some OpenAI-compatible gateways reject assistant tool-call messages
+                # with empty/null content; provide a non-empty placeholder for compatibility.
+                if msg.content is None or msg.content == "":
+                    msg_dict["content"] = "Tool call issued."
                 msg_dict["tool_calls"] = [tc.model_dump() for tc in msg.tool_calls]
+            elif msg.content is not None:
+                msg_dict["content"] = msg.content
             if isinstance(msg, ToolMessage):
                 msg_dict["tool_call_id"] = msg.tool_call_id
                 msg_dict["name"] = msg.name
@@ -148,4 +152,3 @@ class TaskInstance(BaseModel):
     description: str = Field(default="", description="任务描述")
     input_data: dict[str, Any] = Field(default_factory=dict, description="输入数据")
     meta: dict[str, Any] = Field(default_factory=dict, description="元数据")
-

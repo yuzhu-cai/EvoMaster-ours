@@ -1,0 +1,21 @@
+Task ID: {task_id}
+Task Type: {task_type}
+Round: {round_index}/{max_rounds}
+Workspace ID: {workspace_id}
+Parent Workspace ID: {parent_workspace_id}
+Workspace Codebase Path: {workspace_codebase_path}
+Workspace Source Type: {workspace_source_type}
+Workspace Large Dir Mount Count: {workspace_large_dirs_count}
+Task Description:
+{description}
+
+Additional Input:
+{input_data}
+
+Best Metric So Far:
+{best_metric}
+
+Feedback From Previous Round:
+{feedback_for_next_round}
+
+Please implement code changes for this round and run at least one lightweight validation.
