@@ -1,0 +1,20 @@
+Core result:
+{result}
+
+Full context (analysis, code, and files):
+{context}
+
+Task:
+Based on the result above, perform a critical evaluation and provide:
+- A decision on status of this node.
+- A brief summary suitable for short-term memory.
+- Your critical evaluation of the result, including a score and concise opinion.
+
+Output requirements:
+Return a JSON object with the following keys:
+- decision: one of ["to_revise", "to_improve", "to_redraft", "complete"]
+- opinion: brief, bullet-like diagnostics of errors, assumptions, or key issues
+- score: a float between 0 and 1 (higher is better)
+- summary: a short summary of current progress and what the next node should focus on (2-5 sentences)
+- core_results: a list of key numerical results, formulas, or intermediate values (may be empty)
+- code: short code snippets or commands relevant for continuation (string or array)

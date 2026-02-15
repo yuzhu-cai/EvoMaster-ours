@@ -1,0 +1,11 @@
+User query:
+{user_query}
+
+Schema to follow strictly (JSON):
+{schema_json}
+
+Additional notice:
+- The number of items in "related_knowledge" must be <= {max_keys}.
+- Build "constraints" by selecting relevant items from: symmetry, conservation_law, scales, boundary_condition, initial_condition, and other mathematical constraints.
+
+Now output ONLY the JSON object that adheres to the schema and constraints above.

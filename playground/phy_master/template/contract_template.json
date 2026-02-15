@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://example.org/schema/template.json",
+  "title": "Structured Research Task Template",
+  "description": "A JSON schema for structured research tasks in physics.",
+  "type": "object",
+  "properties": {
+    "topic": { "type": "string" },
+    "domain": { "type": "string" },
+    "subdomain": { "type": "string" },
+    "related_knowledge": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "task_type": { "type": "string" },
+    "task_background": { "type": "string" },
+    "task_description": { "type": "string" },
+    "input": {
+      "type": "object",
+      "properties": {
+        "format": { "type": "string" },
+        "path": { "type": "string", "default": "none" },
+        "description": { "type": "string" }
+      },
+      "required": ["format", "path"]
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "expected_output": { "$ref": "#/definitions/expected_output" },
+    "subtasks": { "$ref": "#/definitions/subtasks" }
+  },
+  "required": [
+    "topic",
+    "domain",
+    "task_description",
+    "input",
+    "constraints",
+    "expected_output",
+    "subtasks"
+  ],
+  "definitions": {
+    "expected_output": {
+      "title": "Output Specification Schema",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "format": { "type": "string", "enum": ["PDF", "Code", "CSV", "Image", "Text"] },
+          "path": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "required": ["format", "path"]
+      }
+    },
+    "subtasks": {
+      "title": "Subtask Schema",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "subtask_type": { "type": "string", "enum": ["reasoning", "coding", "analysis"] },
+          "input": { "type": "string" },
+          "expected_output": { "type": "string" },
+          "description": { "type": "string" }
+        },
+        "required": ["id", "subtask_type", "description"]
+      }
+    }
+  }
+}

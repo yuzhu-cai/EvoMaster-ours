@@ -1,0 +1,14 @@
+The structured problem:
+{structured}
+
+Node info:
+{node}
+
+Your task is:
+Determine the next subtask to complete and add the necessary background knowledge for reference.
+
+Notice:
+If any suggested method, estimated result (quantitative or qualitative), or known conclusion is already provided in the background above, pass it down carefully and explicitly.
+
+Output requirement:
+Return the subtask and the necessary background knowledge in ONE STRING.

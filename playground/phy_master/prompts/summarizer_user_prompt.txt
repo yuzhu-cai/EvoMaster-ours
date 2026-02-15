@@ -1,0 +1,17 @@
+Task:
+{task_description}
+
+Best score:
+{best_score}
+
+Best path JSON:
+{best_path_json}
+
+Search trace JSON:
+{search_trace_json}
+
+Please output:
+1) A concise final solution summary.
+2) The best path steps in order.
+3) Why this path beat alternatives.
+4) Remaining uncertainty and suggested next verification.

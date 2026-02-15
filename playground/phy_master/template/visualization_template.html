@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PhysMaster MCTS Visualization</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js" crossorigin="anonymous"></script>
+  <style>
+    :root {
+      --bg: #f6f6f6;
+      --panel: #ffffff;
+      --panel-2: #fafafa;
+      --line: #d4d4d8;
+      --text: #111111;
+      --muted: #52525b;
+      --accent: #1f2937;
+      --node: #1f2937;
+      --node-best: #111111;
+      --node-root: #9ca3af;
+      --edge: #4b5563;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 800px at 20% -20%, #ffffff 0%, var(--bg) 65%);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #app {
+      display: grid;
+      grid-template-columns: 58% 42%;
+      height: 100vh;
+    }
+
+    #left {
+      position: relative;
+      border-right: 1px solid var(--line);
+      background: #ffffff;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    #left-scroll {
+      position: absolute;
+      inset: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      overscroll-behavior: contain;
+      padding-top: 44px;
+    }
+
+    #left-scroll canvas {
+      display: block;
+      width: 100% !important;
+      height: auto !important;
+    }
+
+    #left-title {
+      position: absolute;
+      top: 10px;
+      left: 12px;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      padding: 6px 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: blur(4px);
+    }
+
+    #right {
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(180deg, #fafafa, #f5f5f5);
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .top-info {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 10px;
+      max-height: 32vh;
+      overflow: auto;
+      overscroll-behavior: contain;
+      flex: 0 0 auto;
+      min-height: 0;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .card h4 {
+      margin: 0 0 6px 0;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .tabbar {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      border-bottom: 1px solid var(--line);
+      background: #f0f0f0;
+      flex: 0 0 auto;
+    }
+
+    .tab-btn {
+      padding: 11px 10px;
+      color: var(--muted);
+      background: transparent;
+      border: none;
+      border-right: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background .2s ease, color .2s ease, transform .12s ease;
+    }
+
+    .tab-btn:last-child { border-right: none; }
+
+    .tab-btn.active {
+      color: var(--text);
+      background: #ffffff;
+      box-shadow: inset 0 -2px 0 #111111;
+    }
+    .tab-btn:active { transform: scale(0.98); }
+
+    #detail-area {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .tab-panel {
+      display: none;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 12px;
+      gap: 10px;
+      flex-direction: column;
+      min-height: 0;
+      flex: 1 1 auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+      background: #f7f7f8;
+      height: 100%;
+    }
+
+    .tab-panel.active {
+      display: flex;
+      animation: fadeIn .2s ease;
+    }
+
+    .tab-panel .card {
+      flex: 0 0 auto;
+    }
+
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .meta-line {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="left">
+      <div id="left-title">PhysMaster · Visualization</div>
+      <div id="left-scroll"></div>
+    </div>
+
+    <div id="right">
+      <div class="top-info">
+        <div class="card"><h4>Task</h4><div id="task_desc"></div></div>
+        <div class="card"><h4>Selected Node</h4><div id="node_meta" class="meta-line"></div></div>
+        <div class="card"><h4>Subtask</h4><div id="node_subtask"></div></div>
+      </div>
+
+      <div id="detail-area">
+        <div class="tabbar">
+          <button class="tab-btn active" data-tab="tab-supervisor">Supervisor</button>
+          <button class="tab-btn" data-tab="tab-theoretician">Theoretician</button>
+          <button class="tab-btn" data-tab="tab-critic">Critic</button>
+        </div>
+
+        <div id="tab-supervisor" class="tab-panel active">
+          <div class="card"><h4>Action</h4><div id="sup_action"></div></div>
+          <div class="card"><h4>Reason</h4><div id="sup_reason"></div></div>
+          <div class="card"><h4>New Subtasks</h4><pre id="sup_new_subtasks"></pre></div>
+          <div class="card"><h4>Raw Supervisor Feedback</h4><pre id="sup_raw"></pre></div>
+        </div>
+
+        <div id="tab-theoretician" class="tab-panel">
+          <div class="card"><h4>Analysis</h4><pre id="the_analysis"></pre></div>
+          <div class="card"><h4>Core Results</h4><pre id="the_core"></pre></div>
+          <div class="card"><h4>Code</h4><pre id="the_code"></pre></div>
+          <div class="card"><h4>Files</h4><pre id="the_files"></pre></div>
+          <div class="card"><h4>Raw Theoretician Output</h4><pre id="the_raw"></pre></div>
+        </div>
+
+        <div id="tab-critic" class="tab-panel">
+          <div class="card"><h4>Decision / Verdict</h4><div id="cri_decision"></div></div>
+          <div class="card"><h4>Score</h4><div id="cri_score"></div></div>
+          <div class="card"><h4>Summary</h4><pre id="cri_summary"></pre></div>
+          <div class="card"><h4>Opinion / Analysis</h4><pre id="cri_opinion"></pre></div>
+          <div class="card"><h4>New Subtasks</h4><pre id="cri_new_subtasks"></pre></div>
+          <div class="card"><h4>Raw Critic Feedback</h4><pre id="cri_raw"></pre></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- __DATA_INJECT__ -->
+
+  <script>
+    const MOCK_DATA = {
+      task_description: "Demo: Estimate free-fall time and impact velocity.",
+      root_id: "root",
+      best_node_id: "n002",
+      nodes: [
+        {
+          node_id: "root",
+          parent_id: null,
+          children: ["n001", "n002"],
+          depth: 0,
+          subtask: "Problem decomposition root",
+          score: null,
+          reward: 0,
+          visits: 4,
+          status: "expanded",
+          theoretician_output: "",
+          supervisor_feedback: {},
+          critic_feedback: {}
+        },
+        {
+          node_id: "n001",
+          parent_id: "root",
+          children: [],
+          depth: 1,
+          subtask: "Derive t = sqrt(2h/g) and compute numeric value.",
+          score: 0.82,
+          reward: 0.82,
+          visits: 2,
+          status: "closed",
+          theoretician_output: '{"analysis":"Used constant-acceleration kinematics.","core_results":{"t_s":1.01},"code":"import math","files":["calc.txt"]}',
+          supervisor_feedback: {"action":"continue","reason":"Need impact velocity too","new_subtasks":[{"title":"velocity","objective":"compute v"}]},
+          critic_feedback: {"decision":"to_improve","score":0.82,"summary":"Time is correct, add velocity."}
+        },
+        {
+          node_id: "n002",
+          parent_id: "root",
+          children: [],
+          depth: 1,
+          subtask: "Compute both time and impact velocity with consistency checks.",
+          score: 0.94,
+          reward: 0.94,
+          visits: 2,
+          status: "closed",
+          theoretician_output: '{"analysis":"Computed t and v and checked v≈gt.","core_results":{"t_s":1.01,"v_mps":9.90},"code":"# python code","files":["result.csv"]}',
+          supervisor_feedback: {"action":"terminate","reason":"Satisfies objective","new_subtasks":[]},
+          critic_feedback: {"decision":"complete","verdict":"accept","score":0.94,"summary":"Complete and consistent.","opinion":"Good numerical consistency."}
+        }
+      ],
+      edges: [["root","n001"],["root","n002"]]
+    };
+
+    const DATA = window.__PHY_MCTS_DATA__ || MOCK_DATA;
+    const nodeMap = new Map((DATA.nodes || []).map(n => [n.node_id, n]));
+    let selectedNodeId = DATA.best_node_id || DATA.root_id;
+    const TREE_BG = "#ffffff";
+    const NODE_SIZE = 62;
+    const LEVEL_GAP_SCALE = 1.5;
+    const NODE_FILL = "#111111";
+    const NODE_TEXT = "#ffffff";
+    const EDGE_COLOR = "#111111";
+    const SELECTED_FILL = "#ffffff";
+    const SELECTED_TEXT = "#111111";
+    const SELECTED_STROKE = "#111111";
+
+    function parseMaybeJson(raw) {
+      if (raw == null) return null;
+      if (typeof raw === "object") return raw;
+      const text = String(raw).trim();
+      if (!text) return null;
+      try { return JSON.parse(text); } catch (_) {}
+      const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (m) {
+        try { return JSON.parse(m[1]); } catch (_) {}
+      }
+      const l = text.indexOf("{");
+      const r = text.lastIndexOf("}");
+      if (l >= 0 && r > l) {
+        try { return JSON.parse(text.slice(l, r + 1)); } catch (_) {}
+      }
+      return null;
+    }
+
+    function asText(v) {
+      if (v == null) return "";
+      if (typeof v === "string") return v;
+      try { return JSON.stringify(v, null, 2); } catch (_) { return String(v); }
+    }
+
+    function buildTreeStructData() {
+      const nodes = DATA.nodes || [];
+      const idToIdx = new Map(nodes.map((n, i) => [n.node_id, i]));
+      const layout = nodes.map((node) => {
+        if (typeof node.viz_x === "number" && typeof node.viz_y === "number") {
+          return [node.viz_x, node.viz_y];
+        }
+        const depth = Number(node.depth || 0);
+        const sameDepth = nodes.filter(n => Number(n.depth || 0) === depth);
+        const idx = Math.max(0, sameDepth.findIndex(n => n.node_id === node.node_id));
+        return [((idx + 1) / (sameDepth.length + 1)), (0.12 + depth * 0.16)];
+      });
+      const edges = (DATA.edges || [])
+        .map(([a, b]) => [idToIdx.get(a), idToIdx.get(b)])
+        .filter(([a, b]) => Number.isInteger(a) && Number.isInteger(b));
+      return {
+        nodeIds: nodes.map(n => n.node_id),
+        layout,
+        edges,
+      };
+    }
+
+    function initMctsTree() {
+      const mount = document.getElementById("left-scroll");
+      const tree = buildTreeStructData();
+      let nodes = [];
+      let edges = [];
+      let pulseUntil = 0;
+      let contentHeight = 0;
+
+      const selectedIndex = Math.max(0, tree.nodeIds.findIndex(id => id === selectedNodeId));
+      if (!selectedNodeId && tree.nodeIds.length > 0) selectedNodeId = tree.nodeIds[0];
+
+      const sketch = (p) => {
+        function canvasDims() {
+          return [Math.max(120, mount.clientWidth), Math.max(120, mount.clientHeight)];
+        }
+
+        class Node {
+          constructor(x, y, treeInd) {
+            this.x = x;
+            this.y = y;
+            this.treeInd = treeInd;
+            this.size = NODE_SIZE;
+            this.xT = x;
+            this.yT = y - this.size / 2;
+            this.xB = x;
+            this.yB = y + this.size / 2;
+            this.selected = false;
+            nodes.push(this);
+          }
+
+          child(node) {
+            const edge = new Edge(this, node);
+            edges.push(edge);
+            return node;
+          }
+
+          render() {
+            const id = tree.nodeIds[this.treeInd];
+            const isSelected = id === selectedNodeId;
+            const [mx, my] = localMouse();
+            const isHover = p.dist(mx, my, this.x, this.y) <= this.size / 2;
+            const renderSize = isHover ? this.size * 1.08 : this.size;
+            if (isSelected) {
+              p.fill(SELECTED_FILL);
+              p.stroke(SELECTED_STROKE);
+              p.strokeWeight(4);
+            } else {
+              p.fill(NODE_FILL);
+              p.stroke(EDGE_COLOR);
+              p.strokeWeight(isHover ? 3 : 2);
+            }
+            if (isHover && !isSelected) {
+              p.drawingContext.shadowBlur = 14;
+              p.drawingContext.shadowColor = "rgba(0,0,0,0.35)";
+            } else {
+              p.drawingContext.shadowBlur = 0;
+            }
+            p.circle(this.x, this.y, renderSize);
+            p.drawingContext.shadowBlur = 0;
+
+            p.noStroke();
+            p.fill(isSelected ? SELECTED_TEXT : NODE_TEXT);
+            p.textAlign(p.CENTER, p.CENTER);
+            p.textSize(24);
+            const label = id === "root" ? "root" : String(this.treeInd + 1).padStart(2, "0");
+            p.text(label, this.x, this.y + 1);
+          }
+        }
+
+        class Edge {
+          constructor(nodeT, nodeB) {
+            this.nodeT = nodeT;
+            this.nodeB = nodeB;
+          }
+
+          render() {
+            p.strokeWeight(3);
+            p.stroke(EDGE_COLOR);
+            p.noFill();
+            p.bezier(
+              this.nodeT.xB,
+              this.nodeT.yB,
+              this.nodeT.xB,
+              (this.nodeT.yB + this.nodeB.yT) / 2,
+              this.nodeB.xT,
+              (this.nodeT.yB + this.nodeB.yT) / 2,
+              this.nodeB.xT,
+              this.nodeB.yT,
+            );
+          }
+        }
+
+        function buildNodesOnce() {
+          if (nodes.length > 0) return;
+          const maxLayY = tree.layout.reduce((m, lay) => Math.max(m, Number(lay[1] || 0)), 0);
+          contentHeight = Math.max(
+            p.height,
+            Math.ceil(140 + maxLayY * Math.max(600, p.height * 1.4)),
+          );
+          contentHeight = Math.ceil(contentHeight * LEVEL_GAP_SCALE);
+          p.resizeCanvas(p.width, contentHeight);
+
+          const xPad = 80;
+          const yPad = 70;
+          const plotW = Math.max(1, p.width - xPad * 2);
+          const plotH = Math.max(1, contentHeight - yPad * 2);
+
+          tree.layout.forEach((lay, index) => {
+            new Node(
+              xPad + plotW * lay[0],
+              yPad + plotH * lay[1],
+              index,
+            );
+          });
+          tree.edges.forEach(([a, b]) => {
+            if (nodes[a] && nodes[b]) nodes[a].child(nodes[b]);
+          });
+          if (nodes[selectedIndex]) nodes[selectedIndex].selected = true;
+        }
+
+        function localMouse() {
+          return [p.mouseX, p.mouseY];
+        }
+
+        function pickNode(mx, my) {
+          for (const n of nodes) {
+            if (p.dist(mx, my, n.x, n.y) <= n.size / 1.45) return n;
+          }
+          return null;
+        }
+
+        p.setup = () => {
+          const [w, hViewport] = canvasDims();
+          const c = p.createCanvas(w, hViewport);
+          c.parent(mount);
+          p.textFont("Times New Roman");
+        };
+
+        p.windowResized = () => {
+          const [w, hViewport] = canvasDims();
+          p.resizeCanvas(w, hViewport);
+          nodes = [];
+          edges = [];
+        };
+
+        p.mouseReleased = () => {
+          const [mx, my] = localMouse();
+          const hit = pickNode(mx, my);
+          if (!hit) return;
+          selectedNodeId = tree.nodeIds[hit.treeInd];
+          pulseUntil = p.millis() + 360;
+          renderRight(selectedNodeId);
+
+          const selectedNode = nodes[hit.treeInd];
+          if (selectedNode) {
+            const top = mount.scrollTop;
+            const bottom = top + mount.clientHeight;
+            const targetY = selectedNode.y;
+            const pad = 80;
+            if (targetY < top + pad) mount.scrollTop = Math.max(0, targetY - pad);
+            if (targetY > bottom - pad) mount.scrollTop = Math.max(0, targetY - mount.clientHeight + pad);
+          }
+        };
+
+        p.draw = () => {
+          p.cursor(p.ARROW);
+          p.frameRate(45);
+          buildNodesOnce();
+          p.background(TREE_BG);
+
+          edges.forEach((e) => e.render());
+          nodes.forEach((n) => n.render());
+
+          if (pulseUntil > p.millis()) {
+            const age = 1 - (pulseUntil - p.millis()) / 360;
+            const idx = tree.nodeIds.findIndex(id => id === selectedNodeId);
+            const s = nodes[idx];
+            if (s) {
+              p.noFill();
+              p.stroke(0, Math.max(0, 180 * (1 - age)));
+              p.strokeWeight(3);
+              p.circle(s.x, s.y, NODE_SIZE * (1.1 + age * 0.9));
+            }
+          }
+        };
+      };
+
+      new p5(sketch);
+    }
+
+    function renderRight(nodeId) {
+      const node = nodeMap.get(nodeId);
+      if (!node) return;
+
+      document.getElementById("task_desc").textContent = DATA.task_description || "";
+      document.getElementById("node_meta").textContent =
+        `id=${node.node_id}  depth=${node.depth}  score=${node.score}  reward=${node.reward}  visits=${node.visits}  status=${node.status}`;
+      document.getElementById("node_subtask").textContent = node.subtask || "";
+
+      const sup = parseMaybeJson(node.supervisor_feedback) || node.supervisor_feedback || {};
+      document.getElementById("sup_action").textContent = sup.action || "";
+      document.getElementById("sup_reason").textContent = sup.reason || "";
+      document.getElementById("sup_new_subtasks").textContent = asText(sup.new_subtasks || []);
+      document.getElementById("sup_raw").textContent = asText(sup);
+
+      const theoRaw = node.theoretician_output || "";
+      const theo = parseMaybeJson(theoRaw) || {};
+      document.getElementById("the_analysis").textContent = asText(theo.analysis || "");
+      document.getElementById("the_core").textContent = asText(theo.core_results || theo.numerical_results || "");
+      document.getElementById("the_code").textContent = asText(theo.code || "");
+      document.getElementById("the_files").textContent = asText(theo.files || []);
+      document.getElementById("the_raw").textContent = asText(theoRaw);
+
+      const cri = parseMaybeJson(node.critic_feedback) || node.critic_feedback || {};
+      document.getElementById("cri_decision").textContent = cri.decision || cri.verdict || "";
+      document.getElementById("cri_score").textContent = asText(cri.score ?? "");
+      document.getElementById("cri_summary").textContent = asText(cri.summary || "");
+      document.getElementById("cri_opinion").textContent = asText(cri.opinion || cri.analysis || "");
+      document.getElementById("cri_new_subtasks").textContent = asText(cri.new_subtasks || []);
+      document.getElementById("cri_raw").textContent = asText(cri);
+    }
+
+    function initTabs() {
+      const btns = Array.from(document.querySelectorAll(".tab-btn"));
+      const panels = Array.from(document.querySelectorAll(".tab-panel"));
+      btns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          btns.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          const target = btn.getAttribute("data-tab");
+          panels.forEach((p) => p.classList.toggle("active", p.id === target));
+        });
+      });
+    }
+
+    initTabs();
+    initMctsTree();
+    renderRight(selectedNodeId || (DATA.nodes[0] && DATA.nodes[0].node_id));
+  </script>
+</body>
+</html>

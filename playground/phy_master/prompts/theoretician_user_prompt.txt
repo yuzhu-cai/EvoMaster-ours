@@ -1,0 +1,20 @@
+[USER REQUEST]
+
+Structured contract:
+{structured}
+
+Subtask and background knowledge:
+{subtask}
+
+Short-term memory from the parent node:
+{memory}
+
+Node metadata:
+{node_metadata}
+
+Current node output path:
+{path}
+
+NOTICE:
+- Any files created by the code you provide (plots, data, CSVs, etc.) must be written into the directory above.
+- Return the result strictly following the JSON schema defined in the system instructions, without ant text outside the JSON object.

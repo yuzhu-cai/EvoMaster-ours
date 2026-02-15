@@ -1,0 +1,155 @@
+# PHY Master configuration (Clarifier -> Supervisor/Theoretician/Critic MCTS loop -> Summarize)
+
+llm:
+  openai:
+    provider: "openai"
+    model: "${GPT_CHAT_MODEL}"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    temperature: 0.4
+    max_tokens: 8192
+    timeout: 120
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "openai"
+
+agents:
+  clarifier:
+    llm: "openai"
+    max_turns: 4
+    enable_tools: true
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    system_prompt_file: "prompts/clarifier_system_prompt.txt"
+    user_prompt_file: "prompts/clarifier_user_prompt.txt"
+    max_key_concepts: 5
+
+  supervisor:
+    llm: "openai"
+    max_turns: 4
+    enable_tools: false
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    system_prompt_file: "prompts/supervisor_system_prompt.txt"
+    user_prompt_file: "prompts/supervisor_user_prompt.txt"
+
+  theoretician:
+    llm: "openai"
+    max_turns: 10
+    enable_tools: true
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    system_prompt_file: "prompts/theoretician_system_prompt.txt"
+    user_prompt_file: "prompts/theoretician_user_prompt.txt"
+
+  critic:
+    llm: "openai"
+    max_turns: 4
+    enable_tools: false
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    system_prompt_file: "prompts/critic_system_prompt.txt"
+    user_prompt_file: "prompts/critic_user_prompt.txt"
+
+  summarizer:
+    llm: "openai"
+    max_turns: 4
+    enable_tools: false
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    system_prompt_file: "prompts/summarizer_system_prompt.txt"
+    user_prompt_file: "prompts/summarizer_user_prompt.txt"
+
+skills:
+  enabled: true
+  skills_root: "evomaster/skills"
+
+# Custom workflow knobs for PHY Master MCTS
+phy_mcts:
+  max_rounds: 12
+  max_depth: 4
+  max_children_per_node: 3
+  max_initial_subtasks: 5
+  exploration_constant: 1.4
+  min_score: 0.0
+  max_score: 1.0
+  early_stop_score: 0.9
+
+mcp:
+  config_file: "mcp_config.json"
+  enabled: false
+
+session:
+  type: "local"
+  local:
+    working_dir: "./playground/phy_master/workspace"
+    timeout: 120
+    gpu_devices: null
+    cpu_devices: null
+    symlinks: {}
+
+  docker:
+    image: "evomaster/base:latest"
+    container_name: null
+    use_existing_container: null
+    working_dir: "/workspace"
+    memory_limit: "64g"
+    cpu_limit: 16.0
+    gpu_devices: "0"
+    network_mode: "host"
+    volumes: {"./playground/phy_master/workspace":"/workspace"}
+    env_vars: {}
+    auto_remove: false
+    timeout: 300
+
+env:
+  cluster:
+    debug_pool:
+      type: "cpu"
+      max_concurrent: 1
+    train_pool:
+      type: "cpu"
+      max_concurrent: 1
+
+  docker:
+    base_image: "python:3.11-slim"
+    registry: "docker.io"
+    pull_policy: "if_not_present"
+
+  scheduler:
+    type: "local"
+    queue_timeout: 300
+    retry_failed: false
+    max_retries: 1
+
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+  log_path: "./logs/evomaster.log"
+
+project_root: "."
+workspace: "./workspace"
+results_dir: "./results"
+debug: false
