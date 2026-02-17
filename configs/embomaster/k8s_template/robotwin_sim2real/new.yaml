@@ -1,0 +1,99 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-train-beat_block_hammer
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      hostIPC: true
+      restartPolicy: Never
+      containers:
+      - name: robotwin-train
+        # ★ 这里改成你私有仓库里的镜像 ★
+        image: 10.254.40.242:30550/robotwin:openpi
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "beat_block_hammer"
+        - name: TASK_CONFIG
+          value: "demo_clean"               # ∈ {demo_clean, demo_randomized}
+        - name: EXPERT_DATA_NUM
+          value: "50"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0,1,2,3"
+        - name: TRAIN_TIMEOUT
+          value: "64800"            
+        # # 这一行通常用于解决某些 OpenGL 渲染问题
+        # - name: DISPLAY
+        #   value: ":0"          # seconds
+
+        # 5. 对应 --gpus all (这里配置为 1，如需更多请修改 number)
+        resources:
+          limits:
+            nvidia.com/gpu: 4
+            cpu: "4"
+            memory: "80Gi"
+          requests:
+            nvidia.com/gpu: 4
+            cpu: "4"
+            memory: "40Gi"
+
+
+        volumeMounts:
+        - name: workspace-volume   # 对应 -v ...:/workspace
+          mountPath: /workspace
+        - name: data-root          # 对应 -v /data:/data
+          mountPath: /data
+        - name: curobo-source      # 对应 -v ...:/curobo
+          mountPath: /curobo
+        - name: cache-volume       # 对应 -v ...:/root/.cache
+          mountPath: /root/.cache
+        - name: dshm
+          mountPath: /dev/shm
+        - name: submission
+          mountPath: /workspace/submission
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - >
+          cd /workspace/RoboTwin/policy/ACT &&
+          bash train_and_eval_ml-master-2.sh
+          "/workspace/RoboTwin"                # CODEBASE
+          "${HOSTNAME:-robotwin-job}"          # NODE_ID 占位，可按需替换
+          "/workspace/submission"              # SUBMISSION_DIR
+          "${TASK_NAME}"
+          "${TASK_CONFIG}"
+          "${EXPERT_DATA_NUM}"
+          "${SEED}"
+          "${GPU_ID}"
+          "${TRAIN_TIMEOUT}"
+      volumes:
+      - name: workspace-volume
+        hostPath:
+          path: /data/gjliu/RoboTwin
+          type: Directory
+      - name: data-root
+        hostPath:
+          path: /data
+          type: Directory
+      - name: curobo-source
+        hostPath:
+          path: /data/gjliu/curobo
+          type: Directory
+      - name: cache-volume
+        hostPath:
+          path: /home/ubuntu/.cache  # ⚠️ 确保 Pod 运行的节点上有这个路径
+          type: Directory
+      - name: submission
+        emptyDir: {}
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi

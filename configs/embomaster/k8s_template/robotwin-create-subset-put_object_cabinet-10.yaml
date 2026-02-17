@@ -1,0 +1,158 @@
+# RoboTwin 数据集子集生成 K8S Job - put_object_cabinet 任务 (从 1000 条生成 10 条)
+# 用法: kubectl apply -f robotwin-create-subset-put_object_cabinet-10.yaml
+# 预计运行时间: 约 5-10 分钟
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-create-subset-put-object-cabinet-10
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  # 数据集生成任务，设置 1 小时超时
+  activeDeadlineSeconds: 3600  # 1 小时
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-create-subset
+        # 使用与训练相同的镜像
+        image: 10.254.40.242:30550/robotwin:v1.2
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        # 数据集生成任务参数
+        - name: TASK_NAME
+          value: "put_object_cabinet"
+        - name: SOURCE_CONFIG
+          value: "demo_clean_1000"
+        - name: TARGET_CONFIG
+          value: "demo_clean_10"
+        - name: NUM_EPISODES
+          value: "10"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 0  # 不需要 GPU
+            cpu: "4"
+            memory: "16Gi"
+          requests:
+            nvidia.com/gpu: 0
+            cpu: "2"
+            memory: "8Gi"
+
+        volumeMounts:
+        - name: robotwin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: dshm
+          mountPath: /dev/shm
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -e
+          echo "=============================================="
+          echo "[K8S] RoboTwin Dataset Subset Creation Job"
+          echo "[K8S] Task: ${TASK_NAME}"
+          echo "[K8S] Source: ${SOURCE_CONFIG} -> Target: ${TARGET_CONFIG}"
+          echo "[K8S] Episodes: ${NUM_EPISODES}"
+          echo "=============================================="
+          
+          # 激活 conda 环境
+          echo "[K8S] Activating conda environment..."
+          source /opt/conda/etc/profile.d/conda.sh
+          conda activate RoboTwin
+          
+          # 进入 RoboTwin 目录
+          cd /workspace/RoboTwin
+          echo "[K8S] Working directory: $(pwd)"
+          
+          # 检查源数据集是否存在
+          SOURCE_DIR="/workspace/RoboTwin/data/${TASK_NAME}/${SOURCE_CONFIG}"
+          if [ ! -d "$SOURCE_DIR" ]; then
+              echo "[ERROR] Source dataset not found: $SOURCE_DIR"
+              exit 1
+          fi
+          
+          echo "[K8S] Source dataset found: $SOURCE_DIR"
+          echo "[K8S] Checking source dataset structure..."
+          ls -la "$SOURCE_DIR" | head -20
+          
+          # 检查脚本是否存在
+          SCRIPT_PATH="/workspace/RoboTwin/script/create_subset_dataset.py"
+          if [ ! -f "$SCRIPT_PATH" ]; then
+              echo "[ERROR] Script not found: $SCRIPT_PATH"
+              exit 1
+          fi
+          
+          echo "[K8S] Script found: $SCRIPT_PATH"
+          
+          # 记录开始时间
+          START_TIME=$(date +%s)
+          echo "[K8S] Starting dataset subset creation at $(date)"
+          echo ""
+          
+          # 运行数据集生成脚本
+          echo "[K8S] Command: python $SCRIPT_PATH ${TASK_NAME} ${SOURCE_CONFIG} ${TARGET_CONFIG} ${NUM_EPISODES}"
+          echo ""
+          
+          python "$SCRIPT_PATH" "${TASK_NAME}" "${SOURCE_CONFIG}" "${TARGET_CONFIG}" "${NUM_EPISODES}"
+          
+          # 记录结束时间
+          END_TIME=$(date +%s)
+          DURATION=$((END_TIME - START_TIME))
+          MINUTES=$((DURATION / 60))
+          SECONDS=$((DURATION % 60))
+          
+          echo ""
+          echo "[K8S] Dataset subset creation completed!"
+          echo "[K8S] Total time: ${MINUTES}m ${SECONDS}s"
+          
+          # 显示生成结果
+          TARGET_DIR="/workspace/RoboTwin/data/${TASK_NAME}/${TARGET_CONFIG}"
+          echo ""
+          echo "[K8S] Generated dataset summary:"
+          echo "[K8S] Target directory: $TARGET_DIR"
+          echo ""
+          
+          if [ -d "$TARGET_DIR" ]; then
+              echo "[K8S] Directory structure:"
+              ls -la "$TARGET_DIR"
+              echo ""
+              
+              if [ -d "$TARGET_DIR/data" ]; then
+                  EPISODE_COUNT=$(ls -1 "$TARGET_DIR/data/"*.hdf5 2>/dev/null | wc -l)
+                  echo "=============================================="
+                  echo "[K8S] Total episodes in subset: ${EPISODE_COUNT} / ${NUM_EPISODES}"
+                  echo "=============================================="
+                  
+                  if [ "$EPISODE_COUNT" -eq "${NUM_EPISODES}" ]; then
+                      echo "[SUCCESS] All ${NUM_EPISODES} episodes created successfully!"
+                  else
+                      echo "[WARNING] Expected ${NUM_EPISODES} episodes but found ${EPISODE_COUNT}"
+                  fi
+              else
+                  echo "[ERROR] Data directory not found in target dataset"
+                  exit 1
+              fi
+          else
+              echo "[ERROR] Target dataset directory not created"
+              exit 1
+          fi
+
+      volumes:
+      - name: robotwin-workspace
+        hostPath:
+          path: /data/yuanshuozhang/RoboTwin
+          type: Directory
+
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 16Gi
+
+
+
+
+

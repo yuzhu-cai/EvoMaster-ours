@@ -1,0 +1,9 @@
+FROM 10.254.40.242:30550/robotwin:latest
+
+# Activate RoboTwin environment and install missing dependencies
+RUN /bin/bash -c "source /opt/conda/etc/profile.d/conda.sh && \
+    conda activate RoboTwin && \
+    python -m pip install --upgrade pip && \
+    pip config set global.index-url https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple && \
+    pip install --upgrade pip setuptools wheel && \
+    pip install hydra-core==1.2.0 omegaconf diffusers dill numba"
