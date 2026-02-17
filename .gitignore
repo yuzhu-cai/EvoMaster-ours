@@ -166,3 +166,4 @@ local_model/
 .pids
 runs/
 /.env
+playground/embomaster/workspaces/

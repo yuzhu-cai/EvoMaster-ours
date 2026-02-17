@@ -11,7 +11,7 @@
   --config: 指定配置文件路径（可选，默认使用 configs/{agent}/config.yaml）
   --task: 任务描述（可选，如不提供则进入交互式输入）
   --interactive: 交互式模式（可选）
-  --run-dir: 指定 run 目录（可选，默认自动创建 /data/agents/EvoMaster/workspaces/{experiment}_{timestamp}/）
+  --run-dir: 指定 run 目录（可选，默认自动创建 ./playground/{agent}/workspaces/{experiment}_{timestamp}/）
 """
 
 import argparse
@@ -20,6 +20,7 @@ import sys
 import importlib
 from pathlib import Path
 from datetime import datetime
+import yaml
 
 # 添加项目根目录到 sys.path
 project_root = Path(__file__).parent
@@ -46,7 +47,7 @@ def parse_args():
   python run.py --agent agent-builder --interactive
 
   # 指定 run 目录
-  python run.py --agent minimal --task "分析数据" --run-dir /data/agents/EvoMaster/workspaces/my_experiment
+  python run.py --agent minimal --task "分析数据" --run-dir ./playground/minimal/workspaces/my_experiment
 
   # 批量任务（串行）
   python run.py --agent minimal --task-file tasks.json
@@ -85,7 +86,7 @@ def parse_args():
 
     parser.add_argument(
         "--run-dir",
-        help="指定 run 目录（默认自动创建 /data/agents/EvoMaster/workspaces/{experiment}_{timestamp}/）"
+        help="指定 run 目录（默认自动创建 ./playground/{agent}/workspaces/{experiment}_{timestamp}/）"
     )
 
     parser.add_argument(
@@ -366,13 +367,36 @@ def _sanitize_experiment_name(value: str) -> str:
     return text or "experiment"
 
 
+def _resolve_run_dir_base(agent_name: str, config_path: Path) -> Path:
+    """Resolve default run-dir base from config, with sensible fallback."""
+    fallback = project_root / "playground" / agent_name / "workspaces"
+
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            config_data = yaml.safe_load(f) or {}
+    except Exception:
+        return fallback
+
+    if not isinstance(config_data, dict):
+        return fallback
+
+    raw_base = str(config_data.get("run_dir_base", "")).strip()
+    if not raw_base:
+        return fallback
+
+    base_path = Path(raw_base).expanduser()
+    if not base_path.is_absolute():
+        base_path = (project_root / base_path).resolve()
+    return base_path
+
+
 def _default_run_dir(agent_name: str, config_path: Path) -> Path:
     """Build default run directory under shared workspace root.
 
     Pattern:
-      /data/agents/EvoMaster/workspaces/{experiment_name}_{YYYYMMDD_HHMMSS}
+      ./playground/{agent}/workspaces/{experiment_name}_{YYYYMMDD_HHMMSS}
     """
-    workspace_root = Path("/data/agents/EvoMaster/workspaces")
+    workspace_root = _resolve_run_dir_base(agent_name, config_path)
     config_stem = config_path.stem
     if config_stem and config_stem.lower() != "config":
         experiment_name = f"{agent_name}_{config_stem}"

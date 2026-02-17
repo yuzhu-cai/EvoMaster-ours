@@ -12,13 +12,52 @@ import logging
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
 LARGE_DIR_KEYWORDS = ["assets", "data", "ckpt", "checkpoint"]
 DEFAULT_SIZE_THRESHOLD_MB = 30
 DEFAULT_SIZE_THRESHOLD_BYTES = DEFAULT_SIZE_THRESHOLD_MB * 1024 * 1024
-COPY_EXCLUDE_PATTERNS = ["*.ckpt", "*.pth", "*.pt", "*.safetensors", "eval_result", "run_results"]
+COPY_EXCLUDE_PATTERNS = [
+    "*.ckpt",
+    "*.pth",
+    "*.pt",
+    "*.safetensors",
+    "*.pyc",
+    "*.pyo",
+    "eval_result",
+    "run_results",
+    ".embomaster_copy_plan.json",
+]
+COPY_EXCLUDE_DIR_NAMES = {
+    "eval_result",
+    "__pycache__",
+    ".git",
+    "run_results",
+    ".venv",
+    "venv",
+    "env",
+    ".conda",
+    ".mamba",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    "__pypackages__",
+    "wandb",
+}
+COPY_EXCLUDE_REL_PREFIXES = [
+    "policy/pi0/.venv",
+    "XDG_CACHE_HOME/uv/archive-v0",
+    "policy/TinyVLA/model_param",
+    "policy/TinyVLA/src/nvidia-curobo",
+]
+UV_EPHEMERAL_SEGMENT_PREFIXES = ("git-v", "sdists-v", "simple-v", ".tmp")
+COPY_PLAN_CACHE_FILENAME = ".embomaster_copy_plan.json"
+COPY_PLAN_VERSION = 4
+CopyPlanProgressCallback = Callable[[int, int, int, str], None]
 
 
 @dataclass
@@ -49,7 +88,29 @@ def _contains_keyword(name: str) -> bool:
     return any(kw in name_lower for kw in LARGE_DIR_KEYWORDS)
 
 
-def _should_exclude_file(name: str) -> bool:
+def _normalize_rel_path(rel_path: str) -> str:
+    return rel_path.replace("\\", "/").strip().strip("/")
+
+
+def _is_excluded_rel_path(rel_path: str) -> bool:
+    rel_norm = _normalize_rel_path(rel_path)
+    if not rel_norm:
+        return False
+    uv_prefix = "XDG_CACHE_HOME/uv/"
+    if rel_norm.startswith(uv_prefix):
+        seg = rel_norm[len(uv_prefix) :].split("/", 1)[0]
+        if seg and any(seg.startswith(prefix) for prefix in UV_EPHEMERAL_SEGMENT_PREFIXES):
+            return True
+    for prefix in COPY_EXCLUDE_REL_PREFIXES:
+        prefix_norm = _normalize_rel_path(prefix)
+        if rel_norm == prefix_norm or rel_norm.startswith(f"{prefix_norm}/"):
+            return True
+    return False
+
+
+def _should_exclude_file(name: str, rel_path: str | None = None) -> bool:
+    if rel_path and _is_excluded_rel_path(rel_path):
+        return True
     name_lower = name.lower()
     for pattern in COPY_EXCLUDE_PATTERNS:
         if pattern.startswith("*."):
@@ -61,8 +122,12 @@ def _should_exclude_file(name: str) -> bool:
     return False
 
 
-def _should_exclude_dir(name: str) -> bool:
-    return name.lower() in ["eval_result", "__pycache__", ".git", "run_results"]
+def _should_exclude_dir(name: str, rel_path: str | None = None) -> bool:
+    if name.lower() in COPY_EXCLUDE_DIR_NAMES:
+        return True
+    if rel_path and _is_excluded_rel_path(rel_path):
+        return True
+    return False
 
 
 def _find_large_dirs_recursive(
@@ -86,14 +151,14 @@ def _find_large_dirs_recursive(
             continue
 
         if entry.is_file():
-            if _should_exclude_file(entry.name):
+            if _should_exclude_file(entry.name, rel_path=rel_path):
                 continue
             shutil.copy2(src_path, dst_path)
             continue
 
         if not entry.is_dir():
             continue
-        if _should_exclude_dir(entry.name):
+        if _should_exclude_dir(entry.name, rel_path=rel_path):
             continue
 
         dir_size = get_dir_size(src_path)
@@ -116,17 +181,318 @@ def _find_large_dirs_recursive(
             )
             continue
 
+        subtree_root_resolved = src_path.resolve()
+
         def _ignore_func(_d: str, files: list[str]) -> list[str]:
-            return [f for f in files if _should_exclude_file(f) or _should_exclude_dir(f)]
+            ignored: list[str] = []
+            current_dir = Path(_d)
+            try:
+                suffix_rel = current_dir.resolve().relative_to(subtree_root_resolved).as_posix()
+            except Exception:
+                suffix_rel = ""
+            suffix_rel = "" if suffix_rel == "." else suffix_rel
+            current_rel = f"{rel_path}/{suffix_rel}" if suffix_rel else rel_path
+            for name in files:
+                item_rel = f"{current_rel}/{name}" if current_rel else name
+                if _should_exclude_file(name, rel_path=item_rel) or _should_exclude_dir(
+                    name, rel_path=item_rel
+                ):
+                    ignored.append(name)
+            return ignored
 
         shutil.copytree(src_path, dst_path, symlinks=True, ignore=_ignore_func)
+
+
+def _collect_large_dirs_recursive(
+    src_dir: Path,
+    rel_prefix: str,
+    size_threshold: int,
+    large_dirs: list[dict],
+    progress_total: int = 0,
+    progress_state: dict[str, int] | None = None,
+    progress_callback: CopyPlanProgressCallback | None = None,
+) -> None:
+    for entry in src_dir.iterdir():
+        rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+        src_path = entry
+
+        if entry.is_file():
+            if _should_exclude_file(entry.name, rel_path=rel_path):
+                continue
+            continue
+
+        if not entry.is_dir():
+            continue
+        if _should_exclude_dir(entry.name, rel_path=rel_path):
+            continue
+        if progress_state is not None:
+            progress_state["visited"] = progress_state.get("visited", 0) + 1
+            if progress_callback:
+                progress_callback(
+                    int(progress_state["visited"]),
+                    int(progress_total),
+                    len(large_dirs),
+                    rel_path,
+                )
+
+        dir_size = get_dir_size(src_path)
+        dir_size_mb = dir_size / 1024 / 1024
+        if dir_size > size_threshold and _contains_keyword(entry.name):
+            large_dirs.append(
+                {"src": str(src_path.resolve()), "rel": rel_path, "size_mb": round(dir_size_mb, 1)}
+            )
+            if progress_state is not None and progress_callback:
+                progress_callback(
+                    int(progress_state.get("visited", 0)),
+                    int(progress_total),
+                    len(large_dirs),
+                    rel_path,
+                )
+            continue
+
+        if dir_size > size_threshold:
+            _collect_large_dirs_recursive(
+                src_dir=src_path,
+                rel_prefix=rel_path,
+                size_threshold=size_threshold,
+                large_dirs=large_dirs,
+                progress_total=progress_total,
+                progress_state=progress_state,
+                progress_callback=progress_callback,
+            )
+
+
+def _count_scannable_dirs(src_dir: Path, rel_prefix: str = "") -> int:
+    total = 0
+    for entry in src_dir.iterdir():
+        rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+        if not entry.is_dir():
+            continue
+        if _should_exclude_dir(entry.name, rel_path=rel_path):
+            continue
+        total += 1
+        total += _count_scannable_dirs(entry, rel_prefix=rel_path)
+    return total
+
+
+def _scan_large_dirs(
+    src: Path,
+    size_threshold: int,
+    progress_callback: CopyPlanProgressCallback | None = None,
+) -> list[dict]:
+    large_dirs: list[dict] = []
+    progress_total = _count_scannable_dirs(src) if progress_callback else 0
+    progress_state = {"visited": 0} if progress_callback else None
+    _collect_large_dirs_recursive(
+        src_dir=src,
+        rel_prefix="",
+        size_threshold=size_threshold,
+        large_dirs=large_dirs,
+        progress_total=progress_total,
+        progress_state=progress_state,
+        progress_callback=progress_callback,
+    )
+    if progress_callback:
+        progress_callback(progress_total, progress_total, len(large_dirs), "")
+    return large_dirs
+
+
+def _normalize_large_dirs(large_dirs: list[dict], src_root: Path) -> list[dict]:
+    normalized: list[dict] = []
+    seen: set[str] = set()
+    for item in large_dirs:
+        if not isinstance(item, dict):
+            continue
+        rel_raw = str(item.get("rel", "")).strip().strip("/")
+        if not rel_raw or rel_raw in seen:
+            continue
+        if _is_excluded_rel_path(rel_raw):
+            continue
+        src_raw = str(item.get("src", "")).strip()
+        src_path = Path(src_raw).expanduser() if src_raw else (src_root / rel_raw)
+        src_resolved = src_path.resolve()
+        if not src_resolved.exists() or not src_resolved.is_dir():
+            continue
+        size_mb = item.get("size_mb")
+        try:
+            size_val = float(size_mb) if size_mb is not None else None
+        except (TypeError, ValueError):
+            size_val = None
+        normalized_item: dict[str, Any] = {"src": str(src_resolved), "rel": rel_raw}
+        if size_val is not None:
+            normalized_item["size_mb"] = round(size_val, 1)
+        normalized.append(normalized_item)
+        seen.add(rel_raw)
+    return normalized
+
+
+def _load_copy_plan(
+    cache_file: Path,
+    src: Path,
+    size_threshold: int,
+) -> list[dict] | None:
+    if not cache_file.exists():
+        return None
+    try:
+        with cache_file.open("r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Failed to load copy plan cache %s: %s", cache_file, e)
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+    version = int(payload.get("version", -1))
+    source_root = str(payload.get("source_root", "")).strip()
+    threshold = int(payload.get("size_threshold", -1))
+    if version != COPY_PLAN_VERSION:
+        return None
+    if source_root != str(src.resolve()):
+        return None
+    if threshold != size_threshold:
+        return None
+
+    large_dirs = payload.get("large_dirs", [])
+    if not isinstance(large_dirs, list):
+        return None
+    return _normalize_large_dirs(large_dirs, src_root=src)
+
+
+def _save_copy_plan(
+    cache_file: Path,
+    src: Path,
+    size_threshold: int,
+    large_dirs: list[dict],
+) -> None:
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": COPY_PLAN_VERSION,
+        "source_root": str(src.resolve()),
+        "size_threshold": int(size_threshold),
+        "large_dirs": large_dirs,
+    }
+    with cache_file.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
+def _has_large_dir_descendant(rel_path: str, large_rel_set: set[str]) -> bool:
+    prefix = f"{rel_path}/"
+    for rel in large_rel_set:
+        if rel.startswith(prefix):
+            return True
+    return False
+
+
+def _copytree_with_filters(src_root: Path, src_path: Path, dst_path: Path) -> None:
+    src_root_resolved = src_root.resolve()
+
+    def _ignore_func(_d: str, files: list[str]) -> list[str]:
+        ignored: list[str] = []
+        current_dir = Path(_d)
+        try:
+            current_rel = current_dir.resolve().relative_to(src_root_resolved).as_posix()
+        except Exception:
+            current_rel = ""
+        current_rel = "" if current_rel == "." else current_rel
+
+        for name in files:
+            rel_path = f"{current_rel}/{name}" if current_rel else name
+            if _should_exclude_file(name, rel_path=rel_path) or _should_exclude_dir(
+                name, rel_path=rel_path
+            ):
+                ignored.append(name)
+        return ignored
+
+    shutil.copytree(src_path, dst_path, symlinks=False, ignore=_ignore_func)
+
+
+def _copy_from_plan(src: Path, dst: Path, large_dirs: list[dict]) -> None:
+    large_rel_set: set[str] = {
+        str(item.get("rel", "")).strip().strip("/")
+        for item in large_dirs
+        if isinstance(item, dict) and str(item.get("rel", "")).strip()
+    }
+    large_rel_set = {rel for rel in large_rel_set if rel}
+
+    for rel in sorted(large_rel_set):
+        (dst / rel).mkdir(parents=True, exist_ok=True)
+
+    def _copy_recursive(src_dir: Path, dst_dir: Path, rel_prefix: str) -> None:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for entry in src_dir.iterdir():
+            rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
+            dst_path = dst_dir / entry.name
+
+            if entry.is_file():
+                if _should_exclude_file(entry.name, rel_path=rel_path):
+                    continue
+                shutil.copy2(entry, dst_path, follow_symlinks=True)
+                continue
+
+            if not entry.is_dir():
+                continue
+            if _should_exclude_dir(entry.name, rel_path=rel_path):
+                continue
+            if rel_path in large_rel_set:
+                dst_path.mkdir(parents=True, exist_ok=True)
+                continue
+
+            if _has_large_dir_descendant(rel_path, large_rel_set):
+                _copy_recursive(entry, dst_path, rel_path)
+                continue
+
+            _copytree_with_filters(src_root=src, src_path=entry, dst_path=dst_path)
+
+    _copy_recursive(src, dst, "")
+
+
+def build_copy_plan_cache(
+    src: Path,
+    cache_file: Path,
+    size_threshold: int = DEFAULT_SIZE_THRESHOLD_BYTES,
+    progress_callback: CopyPlanProgressCallback | None = None,
+) -> list[dict]:
+    large_dirs = _scan_large_dirs(
+        src,
+        size_threshold=size_threshold,
+        progress_callback=progress_callback,
+    )
+    large_dirs = _normalize_large_dirs(large_dirs, src_root=src)
+    _save_copy_plan(cache_file, src=src, size_threshold=size_threshold, large_dirs=large_dirs)
+    return large_dirs
 
 
 def smart_copy_codebase(
     src: Path,
     dst: Path,
     size_threshold: int = DEFAULT_SIZE_THRESHOLD_BYTES,
+    copy_plan_cache_file: Path | None = None,
+    use_copy_plan_cache: bool = True,
+    force_rebuild_copy_plan: bool = False,
 ) -> list[dict]:
+    if use_copy_plan_cache:
+        cache_file = copy_plan_cache_file or (src / COPY_PLAN_CACHE_FILENAME)
+        large_dirs: list[dict] | None = None
+        if not force_rebuild_copy_plan:
+            large_dirs = _load_copy_plan(
+                cache_file=cache_file,
+                src=src,
+                size_threshold=size_threshold,
+            )
+        if large_dirs is None:
+            large_dirs = build_copy_plan_cache(
+                src=src,
+                cache_file=cache_file,
+                size_threshold=size_threshold,
+            )
+            logger.info("Copy plan cache refreshed: %s", cache_file)
+        else:
+            logger.info("Copy plan cache hit: %s", cache_file)
+
+        dst.mkdir(parents=True, exist_ok=True)
+        _copy_from_plan(src=src, dst=dst, large_dirs=large_dirs)
+        return large_dirs
+
     large_dirs: list[dict] = []
     dst.mkdir(parents=True, exist_ok=True)
     _find_large_dirs_recursive(
@@ -146,23 +512,24 @@ def _copy_from_parent_filtered(
 ) -> list[dict]:
     dst_dir.mkdir(parents=True, exist_ok=True)
 
-    def _copy_recursive(src: Path, dst: Path) -> None:
+    def _copy_recursive(src: Path, dst: Path, rel_prefix: str = "") -> None:
         dst.mkdir(parents=True, exist_ok=True)
         for entry in src.iterdir():
             src_path = entry
             dst_path = dst / entry.name
+            rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
             if entry.is_symlink():
                 link_target = entry.readlink()
                 if not dst_path.exists():
                     dst_path.symlink_to(link_target)
             elif entry.is_file():
-                if _should_exclude_file(entry.name):
+                if _should_exclude_file(entry.name, rel_path=rel_path):
                     continue
                 shutil.copy2(src_path, dst_path)
             elif entry.is_dir():
-                if _should_exclude_dir(entry.name):
+                if _should_exclude_dir(entry.name, rel_path=rel_path):
                     continue
-                _copy_recursive(src_path, dst_path)
+                _copy_recursive(src_path, dst_path, rel_prefix=rel_path)
 
     _copy_recursive(src_dir, dst_dir)
 
@@ -240,6 +607,9 @@ def prepare_workspace_codebase(
     source_codebase_dir: Path | None = None,
     parent_workspace_id: str | None = None,
     size_threshold: int = DEFAULT_SIZE_THRESHOLD_BYTES,
+    copy_plan_cache_file: Path | None = None,
+    use_copy_plan_cache: bool = True,
+    force_rebuild_copy_plan: bool = False,
 ) -> WorkspaceCodebaseInfo:
     short_id = workspace_id[:8]
     workspace_dir = session_dir / "round_workspaces" / short_id
@@ -276,7 +646,14 @@ def prepare_workspace_codebase(
         )
 
     if source_codebase_dir and source_codebase_dir.exists():
-        large_dirs = smart_copy_codebase(source_codebase_dir, dest_codebase, size_threshold=size_threshold)
+        large_dirs = smart_copy_codebase(
+            source_codebase_dir,
+            dest_codebase,
+            size_threshold=size_threshold,
+            copy_plan_cache_file=copy_plan_cache_file,
+            use_copy_plan_cache=use_copy_plan_cache,
+            force_rebuild_copy_plan=force_rebuild_copy_plan,
+        )
         save_large_dirs(dest_codebase, large_dirs)
         _create_codebase_symlink(symlink_path, dest_codebase)
         return WorkspaceCodebaseInfo(

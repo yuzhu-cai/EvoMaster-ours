@@ -5,7 +5,7 @@
 # 使用方式：
 # python run.py --agent embomaster \
 #   --config configs/embomaster/config_robotwin_adjust_bottle_dsv32.yaml \
-#   --task /data/agents/openhands-ml-master/PRDs/robotwin_task_2.md
+#   --task /data/zixing/code/EvoMaster-ours/playground/embomaster/PRDs/robotwin_task_2.md
 
 llm:
   gpugeek_vendor2_claude45:
@@ -48,11 +48,11 @@ agents:
 session:
   type: "local"
   local:
-    working_dir: "./playground/embomaster/workspace"
+    working_dir: "./playground/embomaster/workspaces"
     timeout: 300
     symlinks:
-      "/data/agents/openhands-ml-master/embodied-benchmarks-code-repos/robotwin": "codebase"
-      "/data/agents/openhands-ml-master/datasets/robotwin": "input"
+      "/data/zixing/code/simulators/RoboTwin": "codebase"
+      "/data/zixing/code/simulators/RoboTwin/data": "input"
 
 debug_test:
   enabled: true
@@ -78,9 +78,12 @@ workspace_isolation:
   enabled: true
   # 每轮独立 codebase 目录将创建在: {workspace}/.embomaster_session/round_workspaces/{round_workspace}/
   session_dir: ".embomaster_session"
-  source_codebase_dir: "/data/agents/openhands-ml-master/embodied-benchmarks-code-repos/robotwin"
+  source_codebase_dir: "/data/zixing/code/simulators/RoboTwin"
   parent_strategy: "previous"   # previous | best | none
   size_threshold_mb: 30
+  copy_plan_cache_enabled: true
+  copy_plan_cache_file: ".embomaster_copy_plan.json"
+  copy_plan_rebuild: false
   submission_subdir: "submission"
 
 k8s_runner:
@@ -89,7 +92,7 @@ k8s_runner:
   poll_interval_seconds: 15
   job_timeout_seconds: 9600
   cleanup_on_success: true
-  manifest_path: "/data/agents/openhands-ml-master/k8s_template/robotwin-adjust_bottle.yaml"
+  manifest_path: "/data/zixing/code/simulators/RoboTwin/robotwin.yaml"
   job_name_prefix: "robotwin-adjust-bottle"
   container_workspace: "/workspace"
   container_name: "robotwin-train"
@@ -137,7 +140,8 @@ logging:
   log_path: "./logs/embomaster_robotwin_adjust_bottle_dsv32.log"
 
 project_root: "."
-workspace: "./workspace"
+run_dir_base: "./playground/embomaster/workspaces"
+workspace: "./playground/embomaster/workspaces"
 results_dir: "./results"
 debug: false
 

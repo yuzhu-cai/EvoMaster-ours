@@ -22,7 +22,7 @@
                 "--config",
                 "${workspaceFolder}/configs/embomaster/config_robotwin_adjust_bottle_dsv32_e2e_once.yaml",
                 "--task",
-                "/data/agents/openhands-ml-master/PRDs/robotwin_task_2.md"
+                "/data/zixing/code/EvoMaster-ours/playground/embomaster/PRDs/robotwin_task_2.md"
             ]
         }
     ]

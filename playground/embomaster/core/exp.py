@@ -367,6 +367,9 @@ class EmboMasterExp(BaseExp):
         workspace_cfg.setdefault("submission_subdir", "submission")
         workspace_cfg.setdefault("source_codebase_dir", "")
         workspace_cfg.setdefault("session_dir", "")
+        workspace_cfg.setdefault("copy_plan_cache_enabled", True)
+        workspace_cfg.setdefault("copy_plan_cache_file", ".embomaster_copy_plan.json")
+        workspace_cfg.setdefault("copy_plan_rebuild", False)
         return workspace_cfg
 
     def _choose_parent_workspace_id(
@@ -416,6 +419,18 @@ class EmboMasterExp(BaseExp):
 
         size_threshold_mb = int(workspace_cfg.get("size_threshold_mb", 30))
         size_threshold_bytes = size_threshold_mb * 1024 * 1024
+        use_copy_plan_cache = bool(workspace_cfg.get("copy_plan_cache_enabled", True))
+        force_rebuild_copy_plan = bool(workspace_cfg.get("copy_plan_rebuild", False))
+        copy_plan_cache_file: Path | None = None
+        cache_file_raw = str(workspace_cfg.get("copy_plan_cache_file", "")).strip()
+        if use_copy_plan_cache:
+            if not cache_file_raw:
+                cache_file_raw = ".embomaster_copy_plan.json"
+            cache_file_path = Path(cache_file_raw).expanduser()
+            if not cache_file_path.is_absolute():
+                base = source_codebase_dir if source_codebase_dir else workspace_path
+                cache_file_path = (base / cache_file_path).resolve()
+            copy_plan_cache_file = cache_file_path
 
         try:
             codebase_info = prepare_workspace_codebase(
@@ -424,6 +439,9 @@ class EmboMasterExp(BaseExp):
                 source_codebase_dir=source_codebase_dir,
                 parent_workspace_id=parent_workspace_id,
                 size_threshold=size_threshold_bytes,
+                copy_plan_cache_file=copy_plan_cache_file,
+                use_copy_plan_cache=use_copy_plan_cache,
+                force_rebuild_copy_plan=force_rebuild_copy_plan,
             )
             cleanup_eval_result(codebase_info.path)
         except Exception as exc:

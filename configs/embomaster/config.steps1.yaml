@@ -40,7 +40,7 @@ agents:
 session:
   type: "local"
   local:
-    working_dir: "./playground/embomaster/workspace"
+    working_dir: "./playground/embomaster/workspaces"
     timeout: 120
     symlinks: {}
 
@@ -118,7 +118,8 @@ logging:
   log_path: "./logs/embomaster.log"
 
 project_root: "."
-workspace: "./workspace"
+run_dir_base: "./playground/embomaster/workspaces"
+workspace: "./playground/embomaster/workspaces"
 results_dir: "./results"
 debug: false
 
