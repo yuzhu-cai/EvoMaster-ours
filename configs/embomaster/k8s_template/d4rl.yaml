@@ -11,7 +11,7 @@ spec:
       containers:
       - name: robomimic-train
         # ★ 这里改成你私有仓库里的镜像 ★
-        image: 10.254.40.242:30550/robomimic:conda_init
+        image: 10.1.0.116:5000/robomimic:conda_init
         imagePullPolicy: IfNotPresent
         # imagePullPolicy: Never
 

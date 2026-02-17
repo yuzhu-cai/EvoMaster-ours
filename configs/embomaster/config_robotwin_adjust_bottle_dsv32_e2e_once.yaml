@@ -10,7 +10,7 @@
 llm:
   gpugeek_vendor2_claude45:
     provider: "openai"
-    model: "Vendor2/Claude-4.5-Sonnet"
+    model: "Vendor2/Claude-4.6-Opus"
     api_key: "u0rgjezq53e5tv01000dg95v0yqn2eecv02b7z3r"
     base_url: "https://api.gpugeek.com/v1"
     temperature: 0.5
@@ -113,7 +113,7 @@ k8s_runner:
     TRAIN_TIMEOUT: "7200"
   debug_pod:
     enabled: true
-    image: "10.254.40.242:30550/robotwin:latest"
+    image: "10.1.0.116:5000/robotwin:latest"
     pod_name_prefix: "robotwin-debug"
     container_name: "debug"
     pin_to_local_node: true

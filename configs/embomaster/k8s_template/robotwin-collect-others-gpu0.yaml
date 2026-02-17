@@ -12,7 +12,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: robotwin-collect
-        image: 10.254.40.242:30550/robotwin:v1.2
+        image: 10.1.0.116:5000/robotwin:v1.2
         imagePullPolicy: IfNotPresent
         env:
         - name: NVIDIA_DRIVER_CAPABILITIES
@@ -71,7 +71,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: robotwin-collect
-        image: 10.254.40.242:30550/robotwin:v1.2
+        image: 10.1.0.116:5000/robotwin:v1.2
         imagePullPolicy: IfNotPresent
         env:
         - name: NVIDIA_DRIVER_CAPABILITIES

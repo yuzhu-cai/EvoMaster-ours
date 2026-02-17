@@ -12,7 +12,7 @@ spec:
       containers:
       - name: robotwin-train
         # ★ 这里改成你私有仓库里的镜像 ★
-        image: 10.254.40.242:30550/robotwin:openpi
+        image: 10.1.0.116:5000/robotwin:openpi
         imagePullPolicy: IfNotPresent
 
         env:

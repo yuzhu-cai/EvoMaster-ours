@@ -18,6 +18,10 @@ from typing import Any
 from evomaster.agent.session import BaseSession
 import yaml
 
+RFC1123_SUBDOMAIN_RE = re.compile(
+    r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
+)
+
 
 class K8SExperimentRunner:
     """Run experiment jobs on Kubernetes and collect basic outputs."""
@@ -726,13 +730,37 @@ class K8SExperimentRunner:
     def _resolve_debug_node_name(self) -> str:
         configured = str(self.debug_pod_config.get("node_name", "")).strip()
         if configured:
-            return configured
+            return self._normalize_and_validate_debug_node_name(
+                configured, source="k8s_runner.debug_pod.node_name"
+            )
         if not bool(self.debug_pod_config.get("pin_to_local_node", True)):
             return ""
         host = socket.gethostname().strip()
         if not host:
             return ""
-        return host.split(".")[0]
+        return self._normalize_and_validate_debug_node_name(
+            host.split(".")[0], source="local_hostname"
+        )
+
+    def _normalize_and_validate_debug_node_name(self, raw_name: str, source: str) -> str:
+        node_name = raw_name.strip()
+        if not node_name:
+            return ""
+        normalized = node_name.lower()
+        if normalized != node_name:
+            self.logger.info(
+                "Normalize debug pod nodeName (%s): %s -> %s",
+                source,
+                node_name,
+                normalized,
+            )
+        if not RFC1123_SUBDOMAIN_RE.fullmatch(normalized):
+            raise ValueError(
+                "invalid debug pod node name "
+                f"({source}): {node_name!r}; normalized={normalized!r}. "
+                "Must match lowercase RFC1123 subdomain, e.g. gpu-node002."
+            )
+        return normalized
 
     def _build_debug_pod_name(self, workspace_host_path: Path) -> str:
         pod_name = str(self.debug_pod_config.get("pod_name", "")).strip()
