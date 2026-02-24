@@ -164,5 +164,3 @@ local_model/
 .pids
 runs/
 /.env
-
-PHY_Master/
