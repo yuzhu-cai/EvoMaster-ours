@@ -47,6 +47,8 @@ def build_payload(
     root_id: str,
     best_node_id: str | None,
     task_description: str,
+    subtasks: Any = None,
+    summary: str = "",
 ) -> dict[str, Any]:
     coords = _compute_tree_layout(nodes, root_id=root_id)
 
@@ -66,6 +68,8 @@ def build_payload(
 
     return {
         "task_description": task_description,
+        "subtasks": subtasks if subtasks is not None else [],
+        "summary": summary or "",
         "root_id": root_id,
         "best_node_id": best_node_id,
         "nodes": payload_nodes,
@@ -79,12 +83,16 @@ def build_mcts_html(
     root_id: str,
     best_node_id: str | None,
     task_description: str,
+    subtasks: Any = None,
+    summary: str = "",
 ) -> str:
     payload = build_payload(
         nodes=nodes,
         root_id=root_id,
         best_node_id=best_node_id,
         task_description=task_description,
+        subtasks=subtasks,
+        summary=summary,
     )
     payload_json = json.dumps(payload, ensure_ascii=False)
 
@@ -100,6 +108,8 @@ def write_mcts_html(
     root_id: str = "root",
     best_node_id: str | None = None,
     task_description: str = "",
+    subtasks: Any = None,
+    summary: str = "",
 ) -> Path:
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +118,8 @@ def write_mcts_html(
         root_id=root_id,
         best_node_id=best_node_id,
         task_description=task_description,
+        subtasks=subtasks,
+        summary=summary,
     )
     out.write_text(html, encoding="utf-8")
     return out

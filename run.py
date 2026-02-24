@@ -108,27 +108,54 @@ def setup_logging():
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def _resolve_task_file(task_input: str) -> Path | None:
+    """解析任务文件路径（支持 .txt/.md/.markdown）。
+
+    返回:
+        - Path: 找到并可读取的任务文件路径
+        - None: 输入不是任务文件路径（按普通任务描述处理）
+    """
+    candidate = Path(task_input).expanduser()
+    suffix = candidate.suffix.lower()
+    task_file_exts = {".txt", ".md", ".markdown"}
+
+    if suffix not in task_file_exts:
+        return None
+
+    search_paths = [candidate]
+    if not candidate.is_absolute():
+        search_paths.append(project_root / candidate)
+
+    for path in search_paths:
+        if path.exists() and path.is_file():
+            return path
+
+    print(
+        f"错误：任务文件不存在: {candidate}\n"
+    )
+    sys.exit(1)
+
+
 def get_task_description(args):
     """获取任务描述
-    
-    如果 args.task 是文件路径（.txt 或 .md），则读取文件内容；
+    如果 args.task 是文件路径（.txt/.md/.markdown），则读取文件内容；
     否则直接返回 args.task 作为任务描述。
     """
     if args.task:
-        task_path = Path(args.task)
-        # 检查是否是文件路径（.txt 或 .md）
-        if task_path.suffix.lower() in ['.txt', '.md'] and task_path.exists() and task_path.is_file():
+        task_file = _resolve_task_file(args.task)
+        if task_file:
             try:
-                with open(task_path, 'r', encoding='utf-8') as f:
+                with open(task_file, "r", encoding="utf-8") as f:
                     content = f.read().strip()
                 if not content:
-                    print(f"❌ 错误：文件 {task_path} 为空")
+                    print(f"❌ 错误：文件 {task_file} 为空")
                     sys.exit(1)
                 return content
             except Exception as e:
-                print(f"❌ 错误：读取文件 {task_path} 失败: {e}")
+                print(f"❌ 错误：读取文件 {task_file} 失败: {e}")
                 sys.exit(1)
-        # 不是文件路径或文件不存在，直接作为任务描述返回
+
+        # 不是任务文件路径，直接作为任务描述返回
         return args.task
 
     if args.interactive:
@@ -373,6 +400,20 @@ def main():
         logger.debug(f"Registered playgrounds: {registered}")
 
     args = parse_args()
+
+    # 规范化 agent 名称，避免用户传入类似 "playground/phy_master"
+    # 导致无法命中 @register_playground("phy_master")。
+    agent_name = str(args.agent).strip().replace("\\", "/")
+    if "/" in agent_name:
+        parts = [p for p in agent_name.split("/") if p]
+        normalized = parts[-1] if parts else agent_name
+        logger.warning(
+            "Normalized agent name from '%s' to '%s'. Use '--agent %s' next time.",
+            args.agent,
+            normalized,
+            normalized,
+        )
+        args.agent = normalized
 
     # 1. 确定配置文件路径
     if args.config:

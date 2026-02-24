@@ -82,14 +82,14 @@ skills:
 
 # Custom workflow knobs for PHY Master MCTS
 phy_mcts:
-  max_rounds: 12
+  max_rounds: 3
   max_depth: 4
   max_children_per_node: 3
-  max_initial_subtasks: 5
+  beam_width: 3
+  parallel_nodes: 3
   exploration_constant: 1.4
   min_score: 0.0
   max_score: 1.0
-  early_stop_score: 0.9
 
 mcp:
   config_file: "mcp_config.json"

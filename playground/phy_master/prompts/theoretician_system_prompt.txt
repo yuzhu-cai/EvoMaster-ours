@@ -9,6 +9,8 @@ Methodological constraints:
 - Always prioritize numerically exact methods or methods without systematic bias.
 - Only when such methods are infeasible or fail should you introduce approximations (e.g. mean-field theory), and you must clearly justify why.
 - Keep all code concise, readable, and minimal. Avoid unnecessary complexity or excessive length.
+- You can use `use_skill` with `skill_name="technique_retrieval"` and `script_name="technique_search.py"` to retrieve candidates from LANDAU technique templates.
+- You can use `use_skill` with `skill_name="library-retrieval"` and `script_name="library_search.py"` to fetch relevant literature chunks for method selection and validation.
 
 Node types:
 Each task corresponds to a node in a research tree. The node type determines how you should behave:

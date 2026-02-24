@@ -34,5 +34,5 @@ Use `phy_mcts` in `configs/phy_master/config.yaml`:
 - `max_rounds`
 - `max_depth`
 - `max_children_per_node`
+- `beam_width` (per depth, only top-K reward nodes stay expandable)
 - `exploration_constant`
-- `early_stop_score`

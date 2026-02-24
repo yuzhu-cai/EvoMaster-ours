@@ -83,16 +83,105 @@
       overflow: hidden;
     }
 
-    .top-info {
-      padding: 12px;
-      border-bottom: 1px solid var(--line);
+    .modebar {
       display: grid;
-      gap: 10px;
-      max-height: 32vh;
-      overflow: auto;
-      overscroll-behavior: contain;
+      grid-template-columns: repeat(2, 1fr);
+      border-bottom: 1px solid var(--line);
+      background: #f0f0f0;
       flex: 0 0 auto;
+    }
+
+    .mode-btn {
+      padding: 11px 10px;
+      color: var(--muted);
+      background: transparent;
+      border: none;
+      border-right: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background .2s ease, color .2s ease, transform .12s ease;
+    }
+
+    .mode-btn:last-child { border-right: none; }
+
+    .mode-btn.active {
+      color: var(--text);
+      background: #ffffff;
+      box-shadow: inset 0 -2px 0 #111111;
+    }
+    .mode-btn:active { transform: scale(0.98); }
+
+    #mode-area {
+      display: flex;
+      flex-direction: column;
       min-height: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+
+    .mode-panel {
+      display: none;
+      flex-direction: column;
+      min-height: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #f7f7f8;
+    }
+
+    .mode-panel.active {
+      display: flex;
+      animation: fadeIn .2s ease;
+    }
+
+    .panel-scroll {
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+      height: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+
+    #mode-node .panel-scroll {
+      flex: 0 0 auto;
+      overflow: visible;
+      padding-bottom: 8px;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .mini-card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 10px;
+      padding: 10px;
+    }
+
+    .mini-label {
+      margin: 0 0 6px 0;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .mini-value {
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--text);
+      word-break: break-word;
     }
 
     .card {
@@ -207,41 +296,62 @@
     </div>
 
     <div id="right">
-      <div class="top-info">
-        <div class="card"><h4>Task</h4><div id="task_desc"></div></div>
-        <div class="card"><h4>Selected Node</h4><div id="node_meta" class="meta-line"></div></div>
-        <div class="card"><h4>Subtask</h4><div id="node_subtask"></div></div>
+      <div class="modebar">
+        <button class="mode-btn active" data-mode="mode-node">Node Info</button>
+        <button class="mode-btn" data-mode="mode-overview">Overview</button>
       </div>
 
-      <div id="detail-area">
-        <div class="tabbar">
-          <button class="tab-btn active" data-tab="tab-supervisor">Supervisor</button>
-          <button class="tab-btn" data-tab="tab-theoretician">Theoretician</button>
-          <button class="tab-btn" data-tab="tab-critic">Critic</button>
+      <div id="mode-area">
+        <div id="mode-node" class="mode-panel active">
+          <div class="panel-scroll">
+            <div class="meta-grid">
+              <div class="mini-card"><div class="mini-label">ID</div><div id="meta_id" class="mini-value"></div></div>
+              <div class="mini-card"><div class="mini-label">Depth</div><div id="meta_depth" class="mini-value"></div></div>
+              <div class="mini-card"><div class="mini-label">Subtask ID</div><div id="meta_subtask_id" class="mini-value"></div></div>
+              <div class="mini-card"><div class="mini-label">Type</div><div id="meta_type" class="mini-value"></div></div>
+              <div class="mini-card"><div class="mini-label">Reward</div><div id="meta_reward" class="mini-value"></div></div>
+              <div class="mini-card"><div class="mini-label">Decision</div><div id="meta_decision" class="mini-value"></div></div>
+            </div>
+          </div>
+
+          <div id="detail-area">
+            <div class="tabbar">
+              <button class="tab-btn active" data-tab="tab-supervisor">Supervisor</button>
+              <button class="tab-btn" data-tab="tab-theoretician">Theoretician</button>
+              <button class="tab-btn" data-tab="tab-critic">Critic</button>
+            </div>
+
+            <div id="tab-supervisor" class="tab-panel active">
+              <div class="card"><h4>Type</h4><div id="sup_type"></div></div>
+              <div class="card"><h4>Subtask</h4><pre id="sup_subtask"></pre></div>
+              <div class="card"><h4>Description</h4><pre id="sup_description"></pre></div>
+              <div class="card"><h4>Raw Supervisor Feedback</h4><pre id="sup_raw"></pre></div>
+            </div>
+
+            <div id="tab-theoretician" class="tab-panel">
+              <div class="card"><h4>Analysis</h4><pre id="the_analysis"></pre></div>
+              <div class="card"><h4>Core Results</h4><pre id="the_core"></pre></div>
+              <div class="card"><h4>Code</h4><pre id="the_code"></pre></div>
+              <div class="card"><h4>Files</h4><pre id="the_files"></pre></div>
+              <div class="card"><h4>Raw Theoretician Output</h4><pre id="the_raw"></pre></div>
+            </div>
+
+            <div id="tab-critic" class="tab-panel">
+              <div class="card"><h4>Decision</h4><div id="cri_decision"></div></div>
+              <div class="card"><h4>Score</h4><div id="cri_score"></div></div>
+              <div class="card"><h4>Analysis</h4><pre id="cri_opinion"></pre></div>
+              <div class="card"><h4>Summary</h4><pre id="cri_summary"></pre></div>
+              <div class="card"><h4>Raw Critic Feedback</h4><pre id="cri_raw"></pre></div>
+            </div>
+          </div>
         </div>
 
-        <div id="tab-supervisor" class="tab-panel active">
-          <div class="card"><h4>Action</h4><div id="sup_action"></div></div>
-          <div class="card"><h4>Reason</h4><div id="sup_reason"></div></div>
-          <div class="card"><h4>New Subtasks</h4><pre id="sup_new_subtasks"></pre></div>
-          <div class="card"><h4>Raw Supervisor Feedback</h4><pre id="sup_raw"></pre></div>
-        </div>
-
-        <div id="tab-theoretician" class="tab-panel">
-          <div class="card"><h4>Analysis</h4><pre id="the_analysis"></pre></div>
-          <div class="card"><h4>Core Results</h4><pre id="the_core"></pre></div>
-          <div class="card"><h4>Code</h4><pre id="the_code"></pre></div>
-          <div class="card"><h4>Files</h4><pre id="the_files"></pre></div>
-          <div class="card"><h4>Raw Theoretician Output</h4><pre id="the_raw"></pre></div>
-        </div>
-
-        <div id="tab-critic" class="tab-panel">
-          <div class="card"><h4>Decision / Verdict</h4><div id="cri_decision"></div></div>
-          <div class="card"><h4>Score</h4><div id="cri_score"></div></div>
-          <div class="card"><h4>Summary</h4><pre id="cri_summary"></pre></div>
-          <div class="card"><h4>Opinion / Analysis</h4><pre id="cri_opinion"></pre></div>
-          <div class="card"><h4>New Subtasks</h4><pre id="cri_new_subtasks"></pre></div>
-          <div class="card"><h4>Raw Critic Feedback</h4><pre id="cri_raw"></pre></div>
+        <div id="mode-overview" class="mode-panel">
+          <div class="panel-scroll">
+            <div class="card"><h4>Task</h4><pre id="overview_task"></pre></div>
+            <div class="card"><h4>Subtasks</h4><pre id="overview_subtasks"></pre></div>
+            <div class="card"><h4>Summary</h4><pre id="overview_summary"></pre></div>
+          </div>
         </div>
       </div>
     </div>
@@ -260,12 +370,16 @@
           parent_id: null,
           children: ["n001", "n002"],
           depth: 0,
+          node_type: "draft",
           subtask: "Problem decomposition root",
+          description: "Root of decomposition",
           score: null,
           reward: 0,
           visits: 4,
           status: "expanded",
+          memory: "",
           theoretician_output: "",
+          supervisor_dispatch: {},
           supervisor_feedback: {},
           critic_feedback: {}
         },
@@ -274,13 +388,17 @@
           parent_id: "root",
           children: [],
           depth: 1,
+          node_type: "draft",
           subtask: "Derive t = sqrt(2h/g) and compute numeric value.",
+          description: "Derive free-fall time and compute the numeric result for given h and g.",
           score: 0.82,
           reward: 0.82,
           visits: 2,
           status: "closed",
+          memory: "type=draft | subtask=Derive t | verdict=partial | score=0.82",
           theoretician_output: '{"analysis":"Used constant-acceleration kinematics.","core_results":{"t_s":1.01},"code":"import math","files":["calc.txt"]}',
-          supervisor_feedback: {"action":"continue","reason":"Need impact velocity too","new_subtasks":[{"title":"velocity","objective":"compute v"}]},
+          supervisor_dispatch: {"node_type":"draft","subtask":"derive time","description":"derive and compute t"},
+          supervisor_feedback: {"node_type":"draft","subtask":"derive time","description":"derive and compute t"},
           critic_feedback: {"decision":"to_improve","score":0.82,"summary":"Time is correct, add velocity."}
         },
         {
@@ -288,25 +406,53 @@
           parent_id: "root",
           children: [],
           depth: 1,
+          node_type: "improve",
           subtask: "Compute both time and impact velocity with consistency checks.",
+          description: "Compute time and velocity and verify with v=gt and energy consistency.",
           score: 0.94,
           reward: 0.94,
           visits: 2,
           status: "closed",
+          memory: "type=improve | subtask=Compute both | verdict=accept | score=0.94",
           theoretician_output: '{"analysis":"Computed t and v and checked v≈gt.","core_results":{"t_s":1.01,"v_mps":9.90},"code":"# python code","files":["result.csv"]}',
-          supervisor_feedback: {"action":"terminate","reason":"Satisfies objective","new_subtasks":[]},
+          supervisor_dispatch: {"node_type":"improve","subtask":"compute time+velocity","description":"compute both and check consistency"},
+          supervisor_feedback: {"node_type":"improve","subtask":"compute time+velocity","description":"compute both and check consistency"},
           critic_feedback: {"decision":"complete","verdict":"accept","score":0.94,"summary":"Complete and consistent.","opinion":"Good numerical consistency."}
         }
       ],
-      edges: [["root","n001"],["root","n002"]]
+      edges: [["root","n001"],["root","n002"]],
+      subtasks: [
+        {
+          id: 1,
+          subtask_type: "reasoning",
+          input: "Height h, gravity g",
+          expected_output: "t and v with consistency checks",
+          description: "Derive free-fall time and impact speed."
+        }
+      ],
+      summary: "The best path derives a consistent solution with validated equations and checks."
     };
 
-    const DATA = window.__PHY_MCTS_DATA__ || MOCK_DATA;
+    const DATA = Object.assign(
+      {},
+      MOCK_DATA,
+      window.__PHY_MCTS_DATA__ || {},
+      window.__PHY_MCTS_EXTRA__ || {},
+    );
+    if (!Array.isArray(DATA.subtasks)) {
+      const contractSubtasks =
+        (DATA.contract && (DATA.contract.subtasks || DATA.contract.sub_tasks))
+        || DATA.sub_tasks
+        || [];
+      DATA.subtasks = Array.isArray(contractSubtasks) ? contractSubtasks : [];
+    }
+    if (DATA.summary == null) DATA.summary = "";
     const nodeMap = new Map((DATA.nodes || []).map(n => [n.node_id, n]));
     let selectedNodeId = DATA.best_node_id || DATA.root_id;
     const TREE_BG = "#ffffff";
     const NODE_SIZE = 62;
-    const LEVEL_GAP_SCALE = 1.5;
+    // Fixed vertical spacing (pixels) between consecutive depth levels.
+    const LEVEL_STEP_PX = 110;
     const NODE_FILL = "#111111";
     const NODE_TEXT = "#ffffff";
     const EDGE_COLOR = "#111111";
@@ -424,7 +570,8 @@
             p.fill(isSelected ? SELECTED_TEXT : NODE_TEXT);
             p.textAlign(p.CENTER, p.CENTER);
             p.textSize(24);
-            const label = id === "root" ? "root" : String(this.treeInd + 1).padStart(2, "0");
+            const m = String(id).match(/^n(\d+)$/i);
+            const label = id === "root" ? "root" : (m ? String(parseInt(m[1], 10)).padStart(2, "0") : String(this.treeInd).padStart(2, "0"));
             p.text(label, this.x, this.y + 1);
           }
         }
@@ -454,23 +601,26 @@
 
         function buildNodesOnce() {
           if (nodes.length > 0) return;
-          const maxLayY = tree.layout.reduce((m, lay) => Math.max(m, Number(lay[1] || 0)), 0);
-          contentHeight = Math.max(
-            p.height,
-            Math.ceil(140 + maxLayY * Math.max(600, p.height * 1.4)),
-          );
-          contentHeight = Math.ceil(contentHeight * LEVEL_GAP_SCALE);
-          p.resizeCanvas(p.width, contentHeight);
-
           const xPad = 80;
           const yPad = 70;
+          const maxDepth = Math.max(
+            0,
+            ...tree.nodeIds.map((id) => Number((nodeMap.get(id) || {}).depth || 0)),
+          );
+          contentHeight = Math.max(
+            p.height,
+            Math.ceil(yPad * 2 + maxDepth * LEVEL_STEP_PX + NODE_SIZE + 20),
+          );
+          p.resizeCanvas(p.width, contentHeight);
+
           const plotW = Math.max(1, p.width - xPad * 2);
-          const plotH = Math.max(1, contentHeight - yPad * 2);
 
           tree.layout.forEach((lay, index) => {
+            const nodeId = tree.nodeIds[index];
+            const depth = Number((nodeMap.get(nodeId) || {}).depth || 0);
             new Node(
               xPad + plotW * lay[0],
-              yPad + plotH * lay[1],
+              yPad + depth * LEVEL_STEP_PX,
               index,
             );
           });
@@ -553,17 +703,27 @@
     function renderRight(nodeId) {
       const node = nodeMap.get(nodeId);
       if (!node) return;
+      const cri = parseMaybeJson(node.critic_feedback) || node.critic_feedback || {};
+      const subtaskObj = parseMaybeJson(node.subtask) || node.subtask || {};
+      let subtaskId = "";
+      if (subtaskObj && typeof subtaskObj === "object" && !Array.isArray(subtaskObj) && subtaskObj.id != null && subtaskObj.id !== "") {
+        subtaskId = String(subtaskObj.id);
+      } else if (typeof node.subtask_index === "number" && node.subtask_index >= 0) {
+        subtaskId = String(node.subtask_index + 1);
+      }
 
-      document.getElementById("task_desc").textContent = DATA.task_description || "";
-      document.getElementById("node_meta").textContent =
-        `id=${node.node_id}  depth=${node.depth}  score=${node.score}  reward=${node.reward}  visits=${node.visits}  status=${node.status}`;
-      document.getElementById("node_subtask").textContent = node.subtask || "";
+      document.getElementById("meta_id").textContent = node.node_id || "";
+      document.getElementById("meta_depth").textContent = asText(node.depth ?? "");
+      document.getElementById("meta_subtask_id").textContent = subtaskId;
+      document.getElementById("meta_reward").textContent = asText(node.reward ?? "");
+      document.getElementById("meta_type").textContent = node.node_type || "";
+      document.getElementById("meta_decision").textContent = cri.decision || cri.verdict || "";
 
-      const sup = parseMaybeJson(node.supervisor_feedback) || node.supervisor_feedback || {};
-      document.getElementById("sup_action").textContent = sup.action || "";
-      document.getElementById("sup_reason").textContent = sup.reason || "";
-      document.getElementById("sup_new_subtasks").textContent = asText(sup.new_subtasks || []);
-      document.getElementById("sup_raw").textContent = asText(sup);
+      const supDispatch = parseMaybeJson(node.supervisor_dispatch) || node.supervisor_dispatch || {};
+      document.getElementById("sup_type").textContent = supDispatch.node_type || "";
+      document.getElementById("sup_subtask").textContent = asText(supDispatch.subtask || "");
+      document.getElementById("sup_description").textContent = asText(supDispatch.description || "");
+      document.getElementById("sup_raw").textContent = asText(supDispatch);
 
       const theoRaw = node.theoretician_output || "";
       const theo = parseMaybeJson(theoRaw) || {};
@@ -573,16 +733,33 @@
       document.getElementById("the_files").textContent = asText(theo.files || []);
       document.getElementById("the_raw").textContent = asText(theoRaw);
 
-      const cri = parseMaybeJson(node.critic_feedback) || node.critic_feedback || {};
       document.getElementById("cri_decision").textContent = cri.decision || cri.verdict || "";
       document.getElementById("cri_score").textContent = asText(cri.score ?? "");
       document.getElementById("cri_summary").textContent = asText(cri.summary || "");
       document.getElementById("cri_opinion").textContent = asText(cri.opinion || cri.analysis || "");
-      document.getElementById("cri_new_subtasks").textContent = asText(cri.new_subtasks || []);
       document.getElementById("cri_raw").textContent = asText(cri);
     }
 
-    function initTabs() {
+    function renderOverview() {
+      document.getElementById("overview_task").textContent = asText(DATA.task_description || "");
+      document.getElementById("overview_subtasks").textContent = asText(DATA.subtasks || []);
+      document.getElementById("overview_summary").textContent = asText(DATA.summary || "");
+    }
+
+    function initModeTabs() {
+      const btns = Array.from(document.querySelectorAll(".mode-btn"));
+      const panels = Array.from(document.querySelectorAll(".mode-panel"));
+      btns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          btns.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          const target = btn.getAttribute("data-mode");
+          panels.forEach((p) => p.classList.toggle("active", p.id === target));
+        });
+      });
+    }
+
+    function initDetailTabs() {
       const btns = Array.from(document.querySelectorAll(".tab-btn"));
       const panels = Array.from(document.querySelectorAll(".tab-panel"));
       btns.forEach((btn) => {
@@ -595,8 +772,10 @@
       });
     }
 
-    initTabs();
+    initModeTabs();
+    initDetailTabs();
     initMctsTree();
+    renderOverview();
     renderRight(selectedNodeId || (DATA.nodes[0] && DATA.nodes[0].node_id));
   </script>
 </body>

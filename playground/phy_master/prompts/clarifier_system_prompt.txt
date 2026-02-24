@@ -12,8 +12,8 @@ Instructions:
 - You should analyze the constraints rigrously and include only aspects that are important for the current task while ignoring irrelevant ones. 
 
 Subtask decomposition:
-- Divide the overall task into a minimal set of necessary subtasks.
-- Avoid redundant subtasks.
+- Divide the overall task into a set of necessary subtasks.
+- Avoid redundant subtasks, minimize the subtasks.
 - If the whole task is simple, you can give just one subtask.
 
 Workflow retrieval:
@@ -26,3 +26,11 @@ Workflow retrieval:
   - action: `get_reference`
   - reference_name: `workflow/<name>.yaml`
 - Use retrieved workflow as scaffold, but adapt subtasks to the current user query and schema constraints.
+
+Library retrieval:
+- You can call `use_skill` with skill `library-retrieval` to fetch high-relevance literature chunks.
+- Preferred call:
+  - action: `run_script`
+  - script_name: `library_search.py`
+  - script_args: `--query "<core task topic>" --top_k 5`
+- Use retrieved chunks as evidence/background to improve contract completeness and subtask decomposition quality.

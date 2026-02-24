@@ -46,6 +46,10 @@ class PhyMasterPlayground(BasePlayground):
         self.theoretician_agent = None
         self.critic_agent = None
         self.summarizer_agent = None
+        self.supervisor_agent_pool = []
+        self.theoretician_agent_pool = []
+        self.critic_agent_pool = []
+        self.parallel_nodes = 1
 
         self.mcp_manager = None
 
@@ -72,6 +76,10 @@ class PhyMasterPlayground(BasePlayground):
 
         self._setup_tools(skill_registry)
 
+        phy_cfg = self.config.model_dump().get("phy_mcts", {})
+        parallel_nodes = phy_cfg.get("parallel_nodes", phy_cfg.get("parallel_processes", 1))
+        self.parallel_nodes = max(1, int(parallel_nodes))
+
         agents_config = getattr(self.config, "agents", {})
         required = ["clarifier", "supervisor", "theoretician", "critic", "summarizer"]
         for name in required:
@@ -89,6 +97,41 @@ class PhyMasterPlayground(BasePlayground):
             setattr(self, f"{name}_agent", agent)
             self.logger.info("Agent created: %s", name)
 
+        # Build dedicated agent pools for parallel node evaluation.
+        self.supervisor_agent_pool = [self.supervisor_agent]
+        self.theoretician_agent_pool = [self.theoretician_agent]
+        self.critic_agent_pool = [self.critic_agent]
+        if self.parallel_nodes > 1:
+            for idx in range(1, self.parallel_nodes):
+                supervisor_clone = self._create_agent(
+                    name=f"supervisor_{idx}",
+                    agent_config=agents_config["supervisor"],
+                    enable_tools=agents_config["supervisor"].get("enable_tools", False),
+                    llm_config_dict=llm_config_dict,
+                    skill_registry=skill_registry,
+                )
+                theoretician_clone = self._create_agent(
+                    name=f"theoretician_{idx}",
+                    agent_config=agents_config["theoretician"],
+                    enable_tools=agents_config["theoretician"].get("enable_tools", False),
+                    llm_config_dict=llm_config_dict,
+                    skill_registry=skill_registry,
+                )
+                critic_clone = self._create_agent(
+                    name=f"critic_{idx}",
+                    agent_config=agents_config["critic"],
+                    enable_tools=agents_config["critic"].get("enable_tools", False),
+                    llm_config_dict=llm_config_dict,
+                    skill_registry=skill_registry,
+                )
+                self.supervisor_agent_pool.append(supervisor_clone)
+                self.theoretician_agent_pool.append(theoretician_clone)
+                self.critic_agent_pool.append(critic_clone)
+
+        self.logger.info(
+            "PHY parallel settings: parallel_nodes=%s (supervisor/theoretician/critic pools ready)",
+            self.parallel_nodes,
+        )
         self.logger.info("PhysMaster playground setup complete")
 
     def _create_exp(self):
@@ -98,6 +141,10 @@ class PhyMasterPlayground(BasePlayground):
             theoretician_agent=self.theoretician_agent,
             critic_agent=self.critic_agent,
             summarizer_agent=self.summarizer_agent,
+            supervisor_agent_pool=self.supervisor_agent_pool,
+            theoretician_agent_pool=self.theoretician_agent_pool,
+            critic_agent_pool=self.critic_agent_pool,
+            parallel_nodes=self.parallel_nodes,
             config=self.config,
         )
         if self.run_dir:

@@ -1,9 +1,6 @@
 Task:
 {task_description}
 
-Best score:
-{best_score}
-
 Best path JSON:
 {best_path_json}
 
