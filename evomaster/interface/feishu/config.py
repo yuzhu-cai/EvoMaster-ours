@@ -53,6 +53,10 @@ class FeishuBotConfig(BaseModel):
         default_factory=list,
         description="允许的用户 open_id 列表，空列表表示允许所有人",
     )
+    doc_folder_token: Optional[str] = Field(
+        default=None,
+        description="飞书文件夹 token，用于存放轨迹文档。为空则创建在应用根目录",
+    )
 
     class Config:
         extra = "allow"

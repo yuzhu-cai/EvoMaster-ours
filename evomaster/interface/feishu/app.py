@@ -17,8 +17,10 @@ from .client import create_feishu_client
 from .config import FeishuBotConfig
 from .dedup import MessageDedup
 from .dispatcher import TaskDispatcher
+from .document_writer import FeishuDocumentWriter
 from .event_handler import parse_event
 from .sender import send_card_message, send_text_message
+from .step_reporter import FeishuStepReporter
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,17 @@ class FeishuBot:
         # 消息去重
         self._dedup = MessageDedup()
 
+        # 实时进度报告工厂
+        client = self._client
+        doc_writer = FeishuDocumentWriter(
+            client,
+            folder_token=config.doc_folder_token,
+            domain=config.domain,
+        )
+
+        def _create_step_reporter(chat_id: str, reply_to_message_id: str | None = None, sender_open_id: str | None = None):
+            return FeishuStepReporter(client, chat_id, reply_to_message_id, document_writer=doc_writer, sender_open_id=sender_open_id)
+
         # 任务调度器
         self._dispatcher = TaskDispatcher(
             project_root=self._project_root,
@@ -63,6 +76,7 @@ class FeishuBot:
             max_workers=config.max_concurrent_tasks,
             task_timeout=config.task_timeout,
             on_result=self._send_result,
+            step_reporter_factory=_create_step_reporter,
         )
 
         self._ws_client: Optional[lark.ws.Client] = None
@@ -126,6 +140,7 @@ class FeishuBot:
             message_id=ctx.message_id,
             task_text=task_text,
             agent_name=agent_name,
+            sender_open_id=ctx.sender_open_id,
         )
 
     def _handle_message_read_event(self, data: P2ImMessageMessageReadV1) -> None:

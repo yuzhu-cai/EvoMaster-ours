@@ -137,7 +137,7 @@ class BaseExp:
         """
         self.run_dir = Path(run_dir)
 
-    def run(self, task_description: str, task_id: str = "exp_001") -> dict:
+    def run(self, task_description: str, task_id: str = "exp_001", on_step=None) -> dict:
         """运行一次实验
 
         Args:
@@ -156,7 +156,7 @@ class BaseExp:
 
         # 运行 Agent
         self.logger.debug(f"Running task: {task_id}")
-        trajectory = self.agent.run(task)
+        trajectory = self.agent.run(task, on_step=on_step)
 
         # 保存结果
         result = {

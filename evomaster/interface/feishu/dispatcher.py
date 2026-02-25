@@ -96,6 +96,7 @@ class TaskDispatcher:
         max_workers: int = 4,
         task_timeout: int = 600,
         on_result: Optional[Callable[[str, str, str], None]] = None,
+        step_reporter_factory: Optional[Callable[[str, str | None], Any]] = None,
     ):
         """
         Args:
@@ -105,12 +106,14 @@ class TaskDispatcher:
             max_workers: 最大并发线程数
             task_timeout: 任务超时（秒）
             on_result: 结果回调 (chat_id, message_id, result_text) -> None
+            step_reporter_factory: 创建 FeishuStepReporter 的工厂函数 (chat_id, reply_to_message_id) -> reporter
         """
         self._project_root = project_root
         self._default_agent = default_agent
         self._default_config_path = default_config_path
         self._task_timeout = task_timeout
         self._on_result = on_result
+        self._step_reporter_factory = step_reporter_factory
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="feishu-task",
@@ -126,6 +129,7 @@ class TaskDispatcher:
         message_id: str,
         task_text: str,
         agent_name: Optional[str] = None,
+        sender_open_id: Optional[str] = None,
     ) -> None:
         """提交任务到线程池
 
@@ -134,10 +138,11 @@ class TaskDispatcher:
             message_id: 消息 ID（用于回复）
             task_text: 任务描述
             agent_name: 指定 agent 名称，None 使用默认值
+            sender_open_id: 发送者 open_id，用于文档所有权转移
         """
         agent = agent_name or self._default_agent
         future = self._executor.submit(
-            self._run_task, chat_id, message_id, task_text, agent
+            self._run_task, chat_id, message_id, task_text, agent, sender_open_id
         )
         self._active_tasks[message_id] = future
         future.add_done_callback(lambda f: self._on_task_done(f, chat_id, message_id))
@@ -168,6 +173,7 @@ class TaskDispatcher:
         message_id: str,
         task_text: str,
         agent_name: str,
+        sender_open_id: Optional[str] = None,
     ) -> str:
         """在后台线程中执行 playground 任务
 
@@ -200,16 +206,40 @@ class TaskDispatcher:
                 task_text[:100],
             )
 
+            # 创建实时进度报告器
+            reporter = None
+            on_step = None
+            if self._step_reporter_factory:
+                try:
+                    reporter = self._step_reporter_factory(chat_id, message_id, sender_open_id)
+                    reporter.send_initial_card(task_text)
+                    on_step = reporter.on_step
+                except Exception:
+                    logger.exception("Failed to create step reporter")
+
             playground = get_playground_class(agent_name, config_path=config_path)
             playground.set_run_dir(run_dir, task_id=task_id)
-            result = playground.run(task_description=task_text)
+            result = playground.run(task_description=task_text, on_step=on_step)
 
             answer = _extract_final_answer(result)
             logger.info("Task completed: task_id=%s, status=%s", task_id, result.get("status"))
+
+            # 最终更新卡片
+            if reporter:
+                try:
+                    reporter.finalize("completed", answer)
+                except Exception:
+                    logger.exception("Failed to finalize step reporter")
+
             return answer
 
         except Exception as e:
             logger.exception("Task failed: task_id=%s", task_id)
+            if reporter:
+                try:
+                    reporter.finalize("failed")
+                except Exception:
+                    logger.exception("Failed to finalize step reporter on error")
             return f"任务执行出错: {e}"
 
     def _on_task_done(self, future, chat_id: str, message_id: str) -> None:

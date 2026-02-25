@@ -864,7 +864,7 @@ class BasePlayground:
         
         return trajectory_file
 
-    def run(self, task_description: str, output_file: str | None = None) -> dict:
+    def run(self, task_description: str, output_file: str | None = None, on_step=None) -> dict:
         """运行工作流
 
         Args:
@@ -884,7 +884,7 @@ class BasePlayground:
             exp = self._create_exp()
 
             self.logger.info("Running experiment...")
-            result = exp.run(task_description)
+            result = exp.run(task_description, on_step=on_step)
 
             return result
 

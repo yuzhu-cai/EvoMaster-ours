@@ -126,11 +126,12 @@ class BaseAgent(ABC):
         # Agent名称（用于标识不同的agent）
         self._agent_name: str | None = None
 
-    def run(self, task: TaskInstance):
+    def run(self, task: TaskInstance, on_step=None):
         """执行任务
 
         Args:
             task: 任务实例
+            on_step: 每步回调，签名 (StepRecord, step_number, max_steps) -> None
 
         Returns:
             执行轨迹
@@ -151,6 +152,14 @@ class BaseAgent(ABC):
                 self.logger.info("=" * 80)
 
                 should_finish = self._step()
+
+                # 调用步骤回调
+                if on_step and self.trajectory and self.trajectory.steps:
+                    try:
+                        on_step(self.trajectory.steps[-1], turn + 1, self.config.max_turns)
+                    except Exception as e:
+                        self.logger.warning("on_step callback failed: %s", e)
+
                 if should_finish:
                     self.logger.info("=" * 80)
                     self.logger.info("✅ Agent finished task")
