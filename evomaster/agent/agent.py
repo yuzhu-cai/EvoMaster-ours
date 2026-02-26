@@ -40,6 +40,10 @@ class AgentConfig(BaseModel):
         default_factory=ContextConfig,
         description="上下文管理配置"
     )
+    finish_on_text_response: bool = Field(
+        default=False,
+        description="当 LLM 回复纯文本（无 tool call）时直接视为任务完成，适用于对话场景"
+    )
 
 
 class BaseAgent(ABC):
@@ -58,8 +62,7 @@ class BaseAgent(ABC):
 
     VERSION: str = "1.0"
     
-    # 类级别的轨迹文件路径和锁（所有agent实例共享）
-    _trajectory_file_path: Path | None = None
+    # 类级别的轨迹文件锁（多agent实例写文件时互斥）
     _trajectory_file_lock = threading.Lock()
 
     # 类级别的当前exp信息（所有agent实例共享）
@@ -126,6 +129,9 @@ class BaseAgent(ABC):
         # Agent名称（用于标识不同的agent）
         self._agent_name: str | None = None
 
+        # 实例级别的轨迹文件路径（每个agent实例独立）
+        self._trajectory_file_path: Path | None = None
+
     def run(self, task: TaskInstance, on_step=None):
         """执行任务
 
@@ -154,6 +160,82 @@ class BaseAgent(ABC):
                 should_finish = self._step()
 
                 # 调用步骤回调
+                if on_step and self.trajectory and self.trajectory.steps:
+                    try:
+                        on_step(self.trajectory.steps[-1], turn + 1, self.config.max_turns)
+                    except Exception as e:
+                        self.logger.warning("on_step callback failed: %s", e)
+
+                if should_finish:
+                    self.logger.info("=" * 80)
+                    self.logger.info("✅ Agent finished task")
+                    self.logger.info("=" * 80)
+                    self.trajectory.finish("completed")
+                    break
+            else:
+                self.logger.warning("=" * 80)
+                self.logger.warning("⚠️  Reached max turns limit")
+                self.logger.warning("=" * 80)
+                self.trajectory.finish("failed", {"reason": "max_turns_exceeded"})
+
+        except Exception as e:
+            self.logger.error("=" * 80)
+            self.logger.error(f"❌ Agent execution failed: {e}")
+            self.logger.error("=" * 80)
+            self.trajectory.finish("failed", {"reason": str(e)})
+            raise
+
+        return self.trajectory
+
+    def continue_run(self, user_message: str, on_step=None):
+        """在已有对话上追加用户消息，继续执行 step 循环。
+
+        与 run() 的区别：不调用 _initialize()，保留已有 dialog 上下文。
+        适用于多轮对话场景（如飞书 Bot），上一轮 finish 后接收新消息继续对话。
+
+        Args:
+            user_message: 新的用户消息
+            on_step: 每步回调，签名 (StepRecord, step_number, max_steps) -> None
+
+        Returns:
+            本轮执行轨迹
+
+        Raises:
+            ValueError: 如果 agent 尚未通过 run() 初始化
+        """
+        from evomaster.utils.types import Trajectory
+
+        if self.current_dialog is None:
+            raise ValueError(
+                "Agent not initialized. Call run() first before continue_run()."
+            )
+
+        self.logger.info("Continuing conversation with new user message")
+
+        # 追加用户消息到已有对话
+        self.add_user_message(user_message)
+
+        # 创建本轮新的 Trajectory（用于追踪和报告）
+        self.trajectory = Trajectory(
+            task_id=f"continue_{self._step_count}",
+            meta={
+                "agent_version": self.VERSION,
+                "task_type": "chat_continue",
+            },
+        )
+        self.trajectory.dialogs.append(self.current_dialog)
+
+        # 重置步骤计数
+        self._step_count = 0
+
+        try:
+            for turn in range(self.config.max_turns):
+                self.logger.info("=" * 80)
+                self.logger.info(f"📍 Step [{turn + 1}/{self.config.max_turns}]")
+                self.logger.info("=" * 80)
+
+                should_finish = self._step()
+
                 if on_step and self.trajectory and self.trajectory.steps:
                     try:
                         on_step(self.trajectory.steps[-1], turn + 1, self.config.max_turns)
@@ -245,7 +327,9 @@ class BaseAgent(ABC):
             # 检查Agent是否启用了工具调用
             # 如果没有启用工具（enable_tools=False），则直接结束
             # 因为这种Agent只需要给出回答，不需要工具调用
-            if hasattr(self, 'enable_tools') and not self.enable_tools:
+            # 同理，finish_on_text_response=True 时也直接结束（对话场景）
+            if (hasattr(self, 'enable_tools') and not self.enable_tools) or \
+               self.config.finish_on_text_response:
                 self.trajectory.add_step(step_record)
                 # 追加保存本次step到轨迹文件（包含tool_responses）
                 self._append_trajectory_entry(dialog_for_query, step_record)
@@ -585,16 +669,15 @@ class BaseAgent(ABC):
             return []
         return self.current_dialog.messages.copy()
     
-    @classmethod
-    def set_trajectory_file_path(cls, trajectory_file_path: str | Path) -> None:
-        """设置轨迹文件路径（类级别，所有agent实例共享）
+    def set_trajectory_file_path(self, trajectory_file_path: str | Path) -> None:
+        """设置轨迹文件路径（实例级别，每个agent独立）
 
         Args:
             trajectory_file_path: 轨迹文件路径
         """
-        cls._trajectory_file_path = Path(trajectory_file_path)
+        self._trajectory_file_path = Path(trajectory_file_path)
         # 确保目录存在
-        cls._trajectory_file_path.parent.mkdir(parents=True, exist_ok=True)
+        self._trajectory_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def set_exp_info(cls, exp_name: str, exp_index: int) -> None:

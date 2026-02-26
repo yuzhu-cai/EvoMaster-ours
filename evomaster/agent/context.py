@@ -5,16 +5,20 @@
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    from evomaster.utils.llm import BaseLLM
     from evomaster.utils.types import Dialog, Message
 else:
     from evomaster.utils.types import Dialog, Message
+
+logger = logging.getLogger(__name__)
 
 
 class TruncationStrategy(str, Enum):
@@ -54,10 +58,18 @@ class ContextManager:
     def __init__(self, config: ContextConfig | None = None):
         self.config = config or ContextConfig()
         self._token_counter: TokenCounter | None = None
+        self._summary_llm: BaseLLM | None = None
 
     def set_token_counter(self, counter: TokenCounter) -> None:
         """设置 token 计数器"""
         self._token_counter = counter
+
+    def set_summary_llm(self, llm: BaseLLM) -> None:
+        """设置用于 auto-compact 摘要的 LLM
+
+        当截断策略为 SUMMARY 时，使用此 LLM 对旧消息进行摘要压缩。
+        """
+        self._summary_llm = llm
 
     def estimate_tokens(self, dialog: Dialog) -> int:
         """估算对话的 token 数
@@ -164,13 +176,120 @@ class ContextManager:
         )
 
     def _truncate_with_summary(self, dialog: Dialog) -> Dialog:
-        """摘要压缩（暂未实现）
-        
-        将历史对话压缩为摘要，需要 LLM 支持。
+        """Auto-compact：用 LLM 摘要旧消息，替换为紧凑的上下文总结。
+
+        将对话分为三部分：
+        1. system_msgs: 系统消息 + 初始用户消息（保持不动）
+        2. old_msgs: 需要被摘要的旧消息
+        3. recent_msgs: 最近保留的消息（保持不动）
+
+        摘要后的 dialog = system_msgs + [UserMessage(摘要)] + recent_msgs
+        如果 LLM 调用失败，回退到 latest_half 策略。
         """
-        # TODO: 实现摘要压缩，需要 LLM 支持
-        # 暂时回退到 latest_half 策略
-        return self._truncate_latest_half(dialog)
+        if self._summary_llm is None:
+            logger.warning("Summary LLM not set, falling back to latest_half")
+            return self._truncate_latest_half(dialog)
+
+        from evomaster.utils.types import Dialog as DialogCls, UserMessage, SystemMessage
+
+        messages = dialog.messages
+
+        # 找到第一个 assistant 消息的位置（system + initial user 之后）
+        assistant_start = 0
+        for i, msg in enumerate(messages):
+            if msg.role.value == "assistant":
+                assistant_start = i
+                break
+
+        if assistant_start == 0:
+            return dialog
+
+        # 计算保留最近消息的数量
+        recent_count = self.config.preserve_recent_turns * 3
+        recent_count = min(recent_count, len(messages) - assistant_start)
+        recent_start = len(messages) - recent_count
+
+        # 对齐到 assistant 消息边界
+        while recent_start < len(messages) and messages[recent_start].role.value != "assistant":
+            recent_start += 1
+
+        if recent_start >= len(messages) or recent_start <= assistant_start:
+            # 无法分割出需要摘要的消息
+            return self._truncate_latest_half(dialog)
+
+        system_msgs = messages[:assistant_start]
+        old_msgs = messages[assistant_start:recent_start]
+        recent_msgs = messages[recent_start:]
+
+        if not old_msgs:
+            return dialog
+
+        # 格式化旧消息为文本
+        lines = []
+        for msg in old_msgs:
+            role = msg.role.value.upper()
+            content = msg.content or ""
+            if not content:
+                continue
+            # 截断超长的单条消息用于摘要
+            if len(content) > 2000:
+                content = content[:1000] + "\n...(truncated)...\n" + content[-500:]
+            lines.append(f"[{role}]: {content}")
+
+        if not lines:
+            return self._truncate_latest_half(dialog)
+
+        conversation_text = "\n\n".join(lines)
+
+        # 用 LLM 生成摘要
+        try:
+            summary_prompt = (
+                "Please summarize the following conversation history concisely. "
+                "Preserve all key information: user requests, important decisions, results, "
+                "facts, and context needed to continue the conversation naturally. "
+                "Respond with ONLY the summary, no preamble.\n\n"
+                "---\n"
+                f"{conversation_text}"
+            )
+
+            summary_dialog = DialogCls(
+                messages=[
+                    SystemMessage(content="You are a conversation summarizer. "
+                                  "Produce a concise but complete summary."),
+                    UserMessage(content=summary_prompt),
+                ],
+                tools=[],
+            )
+
+            response = self._summary_llm.query(summary_dialog)
+            summary_text = response.content or ""
+
+            if not summary_text.strip():
+                logger.warning("Empty summary from LLM, falling back to latest_half")
+                return self._truncate_latest_half(dialog)
+
+            logger.info(
+                "Auto-compact: summarized %d messages (%d chars) -> %d chars",
+                len(old_msgs),
+                sum(len(m.content or "") for m in old_msgs),
+                len(summary_text),
+            )
+
+            # 构建新 dialog
+            summary_message = UserMessage(
+                content=f"[Previous conversation summary]\n{summary_text}"
+            )
+            new_messages = list(system_msgs) + [summary_message] + list(recent_msgs)
+
+            return DialogCls(
+                messages=new_messages,
+                tools=dialog.tools,
+                meta={**dialog.meta, "truncated": True, "strategy": "summary"},
+            )
+
+        except Exception:
+            logger.exception("Auto-compact failed, falling back to latest_half")
+            return self._truncate_latest_half(dialog)
 
     def prepare_for_query(self, dialog: Dialog) -> Dialog:
         """为 LLM 查询准备对话

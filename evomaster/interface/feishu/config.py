@@ -57,6 +57,10 @@ class FeishuBotConfig(BaseModel):
         default=None,
         description="飞书文件夹 token，用于存放轨迹文档。为空则创建在应用根目录",
     )
+    max_sessions: int = Field(
+        default=100,
+        description="最大并发会话数",
+    )
 
     class Config:
         extra = "allow"

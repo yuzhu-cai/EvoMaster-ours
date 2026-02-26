@@ -493,7 +493,12 @@ class BasePlayground:
         max_turns = agent_config.get('max_turns', 20)
         context_config_dict = agent_config.get('context', {})
         context_config = ContextConfig(**context_config_dict)
-        agent_cfg = AgentConfig(max_turns=max_turns, context_config=context_config)
+        finish_on_text_response = agent_config.get('finish_on_text_response', False)
+        agent_cfg = AgentConfig(
+            max_turns=max_turns,
+            context_config=context_config,
+            finish_on_text_response=finish_on_text_response,
+        )
 
         # 获取输出配置
         output_config = self._get_output_config()
@@ -556,6 +561,9 @@ class BasePlayground:
         
         # 设置Agent名称（用于轨迹文件中标识不同的agent）
         agent.set_agent_name(name)
+
+        # 注入 summary LLM，用于 auto-compact 上下文压缩
+        agent.context_manager.set_summary_llm(llm)
 
         return agent
 
@@ -856,10 +864,10 @@ class BasePlayground:
                 # 单任务模式：保存到 trajectories/trajectory.json
                 trajectory_file = self.run_dir / "trajectories" / "trajectory.json"
         
-        # 设置轨迹文件路径到BaseAgent（所有agent共享同一个文件）
+        # 设置轨迹文件路径到每个agent实例（实例级别，避免多agent互相覆盖）
         if trajectory_file:
-            from evomaster.agent import BaseAgent
-            BaseAgent.set_trajectory_file_path(trajectory_file)
+            for agent in self.agents.values():
+                agent.set_trajectory_file_path(trajectory_file)
             self.logger.info(f"Trajectory file set to: {trajectory_file}")
         
         return trajectory_file

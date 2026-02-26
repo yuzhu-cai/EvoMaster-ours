@@ -75,6 +75,7 @@ class FeishuBot:
             default_config_path=config.default_config_path,
             max_workers=config.max_concurrent_tasks,
             task_timeout=config.task_timeout,
+            max_sessions=getattr(config, "max_sessions", 100),
             on_result=self._send_result,
             step_reporter_factory=_create_step_reporter,
         )
@@ -120,19 +121,20 @@ class FeishuBot:
             send_text_message(
                 self._client,
                 ctx.chat_id,
-                "请提供任务描述。用法：直接发送任务，或使用 /agent <agent名称> <任务描述>",
+                "请提供任务描述。\n用法：直接发送消息对话，或使用 /agent <agent名称> <任务描述>\n命令：/new（新会话）、/shutdown（关闭 Bot）",
                 reply_to_message_id=ctx.message_id,
             )
             return
 
-        # 发送确认消息
-        agent_label = agent_name or self._config.default_agent
-        send_text_message(
-            self._client,
-            ctx.chat_id,
-            f"任务已接收，正在使用 [{agent_label}] 处理...\n任务: {task_text[:200]}",
-            reply_to_message_id=ctx.message_id,
-        )
+        # 特殊命令直接 dispatch，不发确认消息
+        stripped = task_text.strip()
+        if stripped in ("/new", "/shutdown"):
+            self._dispatcher.dispatch(
+                chat_id=ctx.chat_id,
+                message_id=ctx.message_id,
+                task_text=task_text,
+            )
+            return
 
         # 调度任务
         self._dispatcher.dispatch(

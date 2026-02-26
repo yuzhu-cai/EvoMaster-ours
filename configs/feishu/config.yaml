@@ -29,3 +29,6 @@ feishu:
 
   # 允许使用 Bot 的用户 open_id 列表（空列表 = 允许所有人）
   allow_from: []
+
+  # 最大并发会话数
+  max_sessions: 100

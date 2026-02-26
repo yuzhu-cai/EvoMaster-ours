@@ -37,10 +37,11 @@ agents:
     llm: "openai"
     max_turns: 50
     enable_tools: true
+    finish_on_text_response: true
 
     context:
       max_tokens: 128000
-      truncation_strategy: "latest_half"
+      truncation_strategy: "summary"
       preserve_system_messages: true
       preserve_recent_turns: 5
 
