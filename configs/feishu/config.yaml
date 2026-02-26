@@ -16,7 +16,7 @@ feishu:
   connection_mode: "websocket"
 
   # 默认 playground agent 名称
-  default_agent: "minimal"
+  default_agent: "chat_agent"
 
   # 默认配置文件路径（相对于 project_root，不设置则使用 configs/{agent}/config.yaml）
   # default_config_path: "configs/minimal/config.yaml"
