@@ -21,3 +21,34 @@ class ChatAgentPlayground(BasePlayground):
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "chat_agent"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
+
+    def setup(self):
+        super().setup()
+        self._register_web_search_tool()
+
+    def _register_web_search_tool(self):
+        """从配置中读取 web_search 段，注册到所有 agent 的 tool registry。"""
+        ws_config = getattr(self.config, "web_search", None)
+        if ws_config is None:
+            return
+
+        if isinstance(ws_config, dict):
+            cfg = ws_config
+        else:
+            cfg = ws_config.__dict__ if hasattr(ws_config, "__dict__") else {}
+
+        api_key = cfg.get("api_key")
+        base_url = cfg.get("base_url")
+        model = cfg.get("model")
+
+        if not all([api_key, base_url, model]):
+            self.logger.warning("web_search config incomplete, skipping")
+            return
+
+        from playground.chat_agent.tools.web_search import WebSearchTool
+
+        tool = WebSearchTool(api_key=api_key, base_url=base_url, model=model)
+        for agent in self.agents.values():
+            agent.tools.register(tool)
+
+        self.logger.info("Registered web_search tool (model: %s)", model)

@@ -56,6 +56,15 @@ mcp:
   enabled: False
 
 # ============================================
+# Web Search 配置
+# ============================================
+web_search:
+  provider: "perplexity"
+  api_key: "${WEB_SEARCH_API_KEY}"
+  base_url: "${WEB_SEARCH_BASE_URL}"
+  model: "${WEB_SEARCH_MODEL}"
+
+# ============================================
 # Session 配置
 # ============================================
 session:
