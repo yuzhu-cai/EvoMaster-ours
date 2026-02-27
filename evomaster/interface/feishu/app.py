@@ -78,6 +78,9 @@ class FeishuBot:
             max_sessions=getattr(config, "max_sessions", 100),
             on_result=self._send_result,
             step_reporter_factory=_create_step_reporter,
+            feishu_app_id=config.app_id,
+            feishu_app_secret=config.app_secret,
+            feishu_domain=config.domain,
         )
 
         self._ws_client: Optional[lark.ws.Client] = None

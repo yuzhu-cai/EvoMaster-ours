@@ -94,6 +94,9 @@ class TaskDispatcher:
         max_sessions: int = 100,
         on_result: Optional[Callable[[str, str, str], None]] = None,
         step_reporter_factory: Optional[Callable[[str, str | None], Any]] = None,
+        feishu_app_id: Optional[str] = None,
+        feishu_app_secret: Optional[str] = None,
+        feishu_domain: str = "https://open.feishu.cn",
     ):
         """
         Args:
@@ -105,6 +108,9 @@ class TaskDispatcher:
             max_sessions: 最大并发会话数
             on_result: 结果回调 (chat_id, message_id, result_text) -> None
             step_reporter_factory: 创建 FeishuStepReporter 的工厂函数
+            feishu_app_id: 飞书 App ID（用于注入飞书特有工具）
+            feishu_app_secret: 飞书 App Secret
+            feishu_domain: 飞书 API 域名
         """
         from .session_manager import ChatSessionManager
 
@@ -120,6 +126,19 @@ class TaskDispatcher:
         )
         self._active_tasks: dict[str, Any] = {}
         self._session_manager = ChatSessionManager(max_sessions=max_sessions)
+
+        # 飞书特有工具
+        self._feishu_tools: list = []
+        if feishu_app_id and feishu_app_secret:
+            from .doc_reader_tool import FeishuDocReadTool
+
+            self._feishu_tools.append(
+                FeishuDocReadTool(
+                    app_id=feishu_app_id,
+                    app_secret=feishu_app_secret,
+                    domain=feishu_domain,
+                )
+            )
 
         # 预加载 playgrounds
         _ensure_playgrounds_imported(project_root)
@@ -278,6 +297,9 @@ class TaskDispatcher:
                     session.playground._setup_trajectory_file()
                     session.agent = session.playground.agent
 
+                    # 注入飞书特有工具
+                    self._inject_feishu_tools(session.playground)
+
                     task = TaskInstance(
                         task_id=f"feishu_{message_id}",
                         task_type="chat",
@@ -336,6 +358,7 @@ class TaskDispatcher:
         try:
             playground.setup()
             playground._setup_trajectory_file()
+            self._inject_feishu_tools(playground)
             agent = playground.agent
             task = TaskInstance(
                 task_id=f"subtask_{agent_name}",
@@ -354,6 +377,14 @@ class TaskDispatcher:
                 playground.cleanup()
             except Exception:
                 logger.exception("Subtask cleanup failed")
+
+    def _inject_feishu_tools(self, playground) -> None:
+        """将飞书特有工具注入 playground 的所有 agent。"""
+        if not self._feishu_tools:
+            return
+        for agent in playground.agents.values():
+            for tool in self._feishu_tools:
+                agent.tools.register(tool)
 
     def _on_task_done(self, future, chat_id: str, message_id: str) -> None:
         """任务完成回调"""
