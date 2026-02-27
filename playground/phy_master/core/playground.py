@@ -20,6 +20,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from evomaster.core import BasePlayground, register_playground
+from evomaster.agent.tools import ToolRegistry
 
 from .exp import PhyMasterExp
 
@@ -82,11 +83,14 @@ class PhyMasterPlayground(BasePlayground):
 
         agents_config = getattr(self.config, "agents", {})
         required = ["clarifier", "supervisor", "theoretician", "critic", "summarizer"]
+        original_tools = self.tools
         for name in required:
             if name not in agents_config:
                 raise ValueError(f"Missing required agent config: {name}")
 
             cfg = agents_config[name]
+            # Clarifier must only decompose contract/subtasks and use workflow retrieval.
+            self.tools = self._tool_registry_for_agent(name, original_tools)
             agent = self._create_agent(
                 name=name,
                 agent_config=cfg,
@@ -94,6 +98,7 @@ class PhyMasterPlayground(BasePlayground):
                 llm_config_dict=llm_config_dict,
                 skill_registry=skill_registry,
             )
+            self.tools = original_tools
             setattr(self, f"{name}_agent", agent)
             self.logger.info("Agent created: %s", name)
 
@@ -133,6 +138,19 @@ class PhyMasterPlayground(BasePlayground):
             self.parallel_nodes,
         )
         self.logger.info("PhysMaster playground setup complete")
+
+    def _tool_registry_for_agent(self, agent_name: str, full_registry: ToolRegistry) -> ToolRegistry:
+        """Return per-agent tool registry to enforce side-effect boundaries."""
+        if agent_name != "clarifier":
+            return full_registry
+
+        allowlist = ("use_skill", "finish")
+        registry = ToolRegistry()
+        for tool_name in allowlist:
+            tool = full_registry.get_tool(tool_name)
+            if tool is not None:
+                registry.register(tool)
+        return registry
 
     def _create_exp(self):
         exp = PhyMasterExp(

@@ -13,5 +13,7 @@ Current node output path:
 {path}
 
 NOTICE:
+- For this node, treat the path above as your effective working directory.
 - Any files created by the code you provide (plots, data, CSVs, etc.) must be written into the directory above.
+- Do not write outputs to the parent task workspace root.
 - Return the result strictly following the JSON schema defined in the system instructions, without any text outside the JSON object.

@@ -31,6 +31,7 @@ DIRECTORY_TRUNCATED_NOTICE = (
 # 每次编辑显示的上下文行数
 SNIPPET_LINES = 4
 MAX_OUTPUT_SIZE = 16000
+MAX_HISTORY_ENTRIES = 20
 
 
 def maybe_truncate(content: str, max_size: int = MAX_OUTPUT_SIZE, notice: str = TEXT_FILE_TRUNCATED_NOTICE) -> str:
@@ -110,6 +111,46 @@ class EditorTool(BaseTool):
         super().__init__()
         # 文件编辑历史 {path: [(content, encoding), ...]}
         self._file_history: dict[str, list[tuple[str, str]]] = {}
+
+    def _push_history(self, path: str, content: str, encoding: str = "utf-8") -> None:
+        """记录文件历史（有上限，避免无限增长）。"""
+        if path not in self._file_history:
+            self._file_history[path] = []
+        self._file_history[path].append((content, encoding))
+        if len(self._file_history[path]) > MAX_HISTORY_ENTRIES:
+            self._file_history[path] = self._file_history[path][-MAX_HISTORY_ENTRIES:]
+
+    def _write_file_with_verification(
+        self,
+        session: BaseSession,
+        path: str,
+        new_content: str,
+        *,
+        encoding: str = "utf-8",
+        rollback_content: str | None = None,
+    ) -> None:
+        """写文件并校验写入结果；若失败可回滚。"""
+        session.write_file(path, new_content, encoding)
+        try:
+            persisted = session.read_file(path, encoding)
+        except Exception as e:
+            if rollback_content is not None:
+                try:
+                    session.write_file(path, rollback_content, encoding)
+                except Exception:
+                    pass
+            raise ToolError(f"Write verification failed for {path}: cannot read file after write ({e}).")
+
+        if persisted != new_content:
+            if rollback_content is not None:
+                try:
+                    session.write_file(path, rollback_content, encoding)
+                except Exception:
+                    pass
+            raise ToolError(
+                f"Write verification failed for {path}: persisted content differs from intended content "
+                f"(expected {len(new_content)} chars, got {len(persisted)} chars)."
+            )
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """执行编辑操作"""
@@ -213,6 +254,7 @@ class EditorTool(BaseTool):
         init_line = 1
         
         # 处理 view_range
+        range_note = ""
         if view_range:
             if len(view_range) != 2 or not all(isinstance(i, int) for i in view_range):
                 raise ToolParameterError("view_range", view_range, "It should be a list of two integers.")
@@ -220,26 +262,41 @@ class EditorTool(BaseTool):
             lines = content.rstrip("\n").split("\n")
             n_lines = len(lines)
             start, end = view_range
-            
-            if start < 1 or start > n_lines:
-                raise ToolParameterError("view_range", view_range, f"Start line {start} is out of range [1, {n_lines}].")
+
+            if n_lines == 0:
+                return self._format_output("", path, 1), {}
+
+            notes: list[str] = []
+
+            if start < 1:
+                notes.append(f"start line {start} < 1, clamped to 1")
+                start = 1
+            if start > n_lines:
+                notes.append(f"start line {start} > file length {n_lines}, clamped to {n_lines}")
+                start = n_lines
+
             if end != -1:
                 if end < start:
-                    raise ToolParameterError("view_range", view_range, f"End line {end} should be >= start line {start}.")
+                    notes.append(f"end line {end} < start line {start}, clamped to {start}")
+                    end = start
                 if end > n_lines:
-                    raise ToolParameterError("view_range", view_range, f"End line {end} exceeds file length {n_lines}.")
+                    notes.append(f"end line {end} > file length {n_lines}, clamped to {n_lines}")
+                    end = n_lines
             
             if end == -1:
                 content = "\n".join(lines[start - 1:])
             else:
                 content = "\n".join(lines[start - 1:end])
             init_line = start
+
+            if notes:
+                range_note = "view_range adjusted: " + "; ".join(notes) + "\n"
         
-        return self._format_output(content, path, init_line), {}
+        return range_note + self._format_output(content, path, init_line), {}
 
     def _create(self, session: BaseSession, path: str, file_text: str) -> tuple[str, dict[str, Any]]:
         """创建文件"""
-        session.write_file(path, file_text)
+        self._write_file_with_verification(session, path, file_text)
         self._file_history[path] = [(file_text, "utf-8")]
         return f"File created successfully at: {path}", {}
 
@@ -287,10 +344,13 @@ class EditorTool(BaseTool):
         new_content = content[:match.start()] + new_str + content[match.end():]
         
         # 保存历史并写入
-        if path not in self._file_history:
-            self._file_history[path] = []
-        self._file_history[path].append((content, "utf-8"))
-        session.write_file(path, new_content)
+        self._push_history(path, content, "utf-8")
+        self._write_file_with_verification(
+            session,
+            path,
+            new_content,
+            rollback_content=content,
+        )
         
         # 创建代码片段
         start_line = max(0, replacement_line - SNIPPET_LINES)
@@ -324,10 +384,13 @@ class EditorTool(BaseTool):
         new_content = "\n".join(result_lines)
         
         # 保存历史并写入
-        if path not in self._file_history:
-            self._file_history[path] = []
-        self._file_history[path].append((content, "utf-8"))
-        session.write_file(path, new_content)
+        self._push_history(path, content, "utf-8")
+        self._write_file_with_verification(
+            session,
+            path,
+            new_content,
+            rollback_content=content,
+        )
         
         # 创建代码片段
         start_line = max(0, insert_line - SNIPPET_LINES + 1)
@@ -347,7 +410,12 @@ class EditorTool(BaseTool):
             raise ToolError(f"No edit history found for {path}.")
         
         old_content, old_encoding = self._file_history[path].pop()
-        session.write_file(path, old_content, old_encoding)
+        try:
+            self._write_file_with_verification(session, path, old_content, encoding=old_encoding)
+        except Exception:
+            # 回滚历史栈，避免“写失败但历史已弹出”
+            self._push_history(path, old_content, old_encoding)
+            raise
         
         return f"Last edit to {path} undone successfully. {self._format_output(old_content, path)}", {}
 
@@ -359,4 +427,3 @@ class EditorTool(BaseTool):
             for i, line in enumerate(content.split("\n"))
         ]
         return f"Here's the result of running `cat -n` on {descriptor}:\n" + "\n".join(numbered_lines) + "\n"
-

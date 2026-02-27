@@ -36,6 +36,8 @@ if TYPE_CHECKING:
 class AgentConfig(BaseModel):
     """Agent 配置"""
     max_turns: int = Field(default=100, description="最大执行轮数")
+    max_tool_rounds: int = Field(default=20, description="单次主请求内允许的最大工具轮次")
+    force_final_response: bool = Field(default=True, description="内部工具轮次耗尽后是否强制生成最终回答")
     context_config: ContextConfig = Field(
         default_factory=ContextConfig,
         description="上下文管理配置"
@@ -217,89 +219,102 @@ class BaseAgent(ABC):
         """
         self._step_count += 1
 
-        # 准备对话（可能需要截断）
-        dialog_for_query = self.context_manager.prepare_for_query(self.current_dialog)
+        # 一次主请求内执行多轮: 查询 -> 工具 -> 回灌，直到 finish/最终文本/达到内部上限
+        max_tool_rounds = max(1, int(getattr(self.config, "max_tool_rounds", 20)))
+        force_final_response = bool(getattr(self.config, "force_final_response", True))
 
-        # 查询模型（使用 LLM）
-        assistant_message = self.llm.query(dialog_for_query)
-
-        self.current_dialog.add_message(assistant_message)
-
-        # 创建步骤记录
-        step_record = StepRecord(
-            step_id=self._step_count,
-            assistant_message=assistant_message,
-        )
-
-        # 如果没有工具调用
-        if not assistant_message.tool_calls:
-            # 检查Agent是否启用了工具调用
-            # 如果没有启用工具（enable_tools=False），则直接结束
-            # 因为这种Agent只需要给出回答，不需要工具调用
-            if hasattr(self, 'enable_tools') and not self.enable_tools:
-                self.trajectory.add_step(step_record)
-                # 追加保存本次step到轨迹文件（包含tool_responses）
-                self._append_trajectory_entry(dialog_for_query, step_record)
-                return True  # 直接结束
-
-            # 如果启用了工具但没有工具调用，提示继续
-            self._handle_no_tool_call()
-            self.trajectory.add_step(step_record)
-            # 追加保存本次step到轨迹文件（包含tool_responses）
-            self._append_trajectory_entry(dialog_for_query, step_record)
-            return False
-
-        # 处理工具调用
+        step_record = StepRecord(step_id=self._step_count)
+        last_dialog_for_query = None
+        last_assistant_message: AssistantMessage | None = None
         should_finish = False
-        for tool_call in assistant_message.tool_calls:
-            self.logger.debug(f"Processing tool call: {tool_call.function.name}")
 
-            # 检查是否是 finish 工具
-            if tool_call.function.name == "finish":
-                # 打印 finish 工具的参数（最终答案）
-                try:
-                    import json
-                    finish_args = json.loads(tool_call.function.arguments)
-                    self.logger.info("=" * 80)
-                    self.logger.info("📝 Finish Tool Arguments:")
-                    for key, value in finish_args.items():
-                        # 截断过长的值用于显示
-                        value_str = str(value)
-                        if len(value_str) > 2000:
-                            value_str = value_str[:1000] + "\n... [truncated] ...\n" + value_str[-1000:]
-                        self.logger.info(f"  {key}: {value_str}")
-                    self.logger.info("=" * 80)
-                except Exception as e:
-                    self.logger.info(f"📝 Finish Tool Raw Args: {tool_call.function.arguments}")
+        for _ in range(max_tool_rounds):
+            dialog_for_query = self.context_manager.prepare_for_query(self.current_dialog)
+            last_dialog_for_query = dialog_for_query
+            assistant_message = self.llm.query(dialog_for_query)
+            self.current_dialog.add_message(assistant_message)
+            last_assistant_message = assistant_message
+
+            # 无工具调用：直接结束本次主请求
+            if not assistant_message.tool_calls:
                 should_finish = True
                 break
 
-            # 执行工具
-            observation, info = self._execute_tool(tool_call)
+            # 处理工具调用
+            for tool_call in assistant_message.tool_calls:
+                self.logger.debug(f"Processing tool call: {tool_call.function.name}")
 
-            # 截断过长的工具输出，防止 context 溢出
-            MAX_TOOL_OUTPUT = 30000
-            if len(observation) > MAX_TOOL_OUTPUT:
-                observation = (
-                    observation[:MAX_TOOL_OUTPUT // 2]
-                    + "\n\n... [output truncated due to length] ...\n\n"
-                    + observation[-MAX_TOOL_OUTPUT // 2:]
+                # finish 工具：视为完成
+                if tool_call.function.name == "finish":
+                    try:
+                        finish_args = json.loads(tool_call.function.arguments)
+                        self.logger.info("=" * 80)
+                        self.logger.info("📝 Finish Tool Arguments:")
+                        for key, value in finish_args.items():
+                            value_str = str(value)
+                            if len(value_str) > 2000:
+                                value_str = value_str[:1000] + "\n... [truncated] ...\n" + value_str[-1000:]
+                            self.logger.info(f"  {key}: {value_str}")
+                        self.logger.info("=" * 80)
+                    except Exception:
+                        self.logger.info(f"📝 Finish Tool Raw Args: {tool_call.function.arguments}")
+                    should_finish = True
+                    break
+
+                observation, info = self._execute_tool(tool_call)
+
+                MAX_TOOL_OUTPUT = 30000
+                if len(observation) > MAX_TOOL_OUTPUT:
+                    observation = (
+                        observation[:MAX_TOOL_OUTPUT // 2]
+                        + "\n\n... [output truncated due to length] ...\n\n"
+                        + observation[-MAX_TOOL_OUTPUT // 2:]
+                    )
+
+                tool_message = ToolMessage(
+                    content=observation,
+                    tool_call_id=tool_call.id,
+                    name=tool_call.function.name,
+                    meta={"info": info}
                 )
+                self.current_dialog.add_message(tool_message)
+                step_record.tool_responses.append(tool_message)
 
-            # 创建工具响应消息
-            tool_message = ToolMessage(
-                content=observation,
-                tool_call_id=tool_call.id,
-                name=tool_call.function.name,
-                meta={"info": info}
+            if should_finish:
+                break
+
+        # 内部轮次耗尽后，强制再请求一次最终文本（禁用工具）
+        if not should_finish and force_final_response and self.enable_tools:
+            self.current_dialog.add_message(
+                UserMessage(
+                    content=(
+                        "Provide your final answer now without calling any tools. "
+                        "Summarize concrete results and key outputs."
+                    )
+                )
             )
+            forced_dialog = Dialog(
+                messages=list(self.current_dialog.messages),
+                tools=[],
+                meta=dict(self.current_dialog.meta),
+            )
+            forced_dialog_for_query = self.context_manager.prepare_for_query(forced_dialog)
+            final_assistant = self.llm.query(forced_dialog_for_query)
+            self.current_dialog.add_message(final_assistant)
+            last_assistant_message = final_assistant
+            last_dialog_for_query = forced_dialog_for_query
+            should_finish = True
 
-            self.current_dialog.add_message(tool_message)
-            step_record.tool_responses.append(tool_message)
+        step_record.assistant_message = last_assistant_message
+        step_record.meta.update(
+            {
+                "max_tool_rounds": max_tool_rounds,
+                "force_final_response": force_final_response,
+            }
+        )
 
         self.trajectory.add_step(step_record)
-        # 追加保存本次step到轨迹文件（包含tool_responses）
-        self._append_trajectory_entry(dialog_for_query, step_record)
+        self._append_trajectory_entry(last_dialog_for_query or self.current_dialog, step_record)
         return should_finish
 
     def _execute_tool(self, tool_call) -> tuple[str, dict[str, Any]]:

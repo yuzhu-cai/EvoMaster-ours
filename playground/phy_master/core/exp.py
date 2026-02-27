@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import re
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -83,9 +84,8 @@ class PhyMasterExp(BaseExp):
             cfg = {}
 
         self.max_rounds = int(cfg.get("max_rounds", 12))
-        self.max_depth = int(cfg.get("max_depth", 4))
         self.max_children_per_node = int(cfg.get("max_children_per_node", 3))
-        self.beam_width = max(0, int(cfg.get("beam_width", 0)))
+        self.active_beam_width = max(0, int(cfg.get("active_beam_width", 0)))
         self.exploration_constant = float(cfg.get("exploration_constant", 1.4))
         self.min_score = float(cfg.get("min_score", 0.0))
         self.max_score = float(cfg.get("max_score", 10.0))
@@ -101,6 +101,7 @@ class PhyMasterExp(BaseExp):
         self.contract: dict[str, Any] = {}
         self.subtask_sequence: list[dict[str, Any]] = []
         self.beam_expandable_node_ids: set[str] = set()
+        self._task_workspace_root: Path | None = None
 
     @property
     def exp_name(self) -> str:
@@ -109,6 +110,7 @@ class PhyMasterExp(BaseExp):
     def run(self, task_description: str, task_id: str = "exp_001") -> dict:
         self.logger.info("Starting PHY Master workflow")
         self.logger.info("Task: %s", task_description)
+        self._task_workspace_root = Path(self.clarifier_agent.session.config.workspace_path).resolve()
 
         try:
             plan = self._run_clarifier(task_description, task_id)
@@ -310,6 +312,7 @@ class PhyMasterExp(BaseExp):
             "node_type": node_type,
             "current_subtask": subtask,
             "node_workspace_path": str(node_workspace),
+            "effective_working_directory": str(node_workspace),
         }
         return self._run_agent_once(
             agent=use_agent,
@@ -325,6 +328,7 @@ class PhyMasterExp(BaseExp):
                 "node_metadata": json.dumps(node_metadata, ensure_ascii=False, indent=2),
                 "path": str(node_workspace),
             },
+            workspace_path=str(node_workspace),
         )
 
     def _run_critic(
@@ -398,6 +402,7 @@ class PhyMasterExp(BaseExp):
         agent=None,
     ) -> dict[str, Any]:
         use_agent = agent or self.supervisor_agent
+        node_workspace = self._node_workspace_path(node.node_id, use_agent)
         node_info = {
             "round_index": round_idx,
             "node_id": node.node_id,
@@ -405,6 +410,8 @@ class PhyMasterExp(BaseExp):
             "current_subtask": self._subtask_to_prompt_text(node.subtask),
             "current_description": node.description,
             "tree_snapshot": self._tree_snapshot(),
+            "node_workspace_path": str(node_workspace),
+            "effective_working_directory": str(node_workspace),
         }
         response = self._run_agent_once(
             agent=use_agent,
@@ -420,7 +427,9 @@ class PhyMasterExp(BaseExp):
                 "round_index": round_idx,
                 "structured": self._contract_for_prompt(),
                 "node": json.dumps(node_info, ensure_ascii=False, indent=2),
+                "path": str(node_workspace),
             },
+            workspace_path=str(node_workspace),
         )
         payload = self._extract_json_object(response)
         if not isinstance(payload, dict):
@@ -468,6 +477,7 @@ class PhyMasterExp(BaseExp):
         task_type: str,
         description: str,
         prompt_kwargs: dict[str, Any],
+        workspace_path: str | None = None,
     ) -> str:
         BaseAgent.set_exp_info(exp_name=f"{self.exp_name}_{stage_name}", exp_index=stage_index)
 
@@ -480,11 +490,40 @@ class PhyMasterExp(BaseExp):
                 description=description,
                 input_data={},
             )
-            trajectory = agent.run(task)
+            with self._temporary_agent_workspace(agent, workspace_path):
+                trajectory = agent.run(task)
             response = self._extract_agent_response(trajectory)
             return response or ""
         finally:
             agent._prompt_format_kwargs = original_kwargs
+
+    @contextmanager
+    def _temporary_agent_workspace(self, agent, workspace_path: str | None):
+        """Temporarily override an agent workspace for one run."""
+        if not workspace_path:
+            yield
+            return
+
+        session = getattr(agent, "session", None)
+        config = getattr(session, "config", None)
+        if config is None:
+            yield
+            return
+
+        new_workspace = str(Path(workspace_path).resolve())
+        original_workspace = getattr(config, "workspace_path", None)
+        original_working = getattr(config, "working_dir", None)
+        try:
+            if original_workspace is not None:
+                config.workspace_path = new_workspace
+            if original_working is not None:
+                config.working_dir = new_workspace
+            yield
+        finally:
+            if original_workspace is not None:
+                config.workspace_path = original_workspace
+            if original_working is not None:
+                config.working_dir = original_working
 
     def _initialize_tree(self, task_description: str, plan: dict[str, Any]) -> None:
         self.contract = plan.get("contract", {}) if isinstance(plan, dict) else {}
@@ -663,8 +702,6 @@ class PhyMasterExp(BaseExp):
         critic_feedback: dict[str, Any],
     ) -> list[str]:
         node = self.nodes[node_id]
-        if node.depth >= self.max_depth:
-            return []
 
         verdict = str(critic_feedback.get("verdict", "")).lower()
         decision = str(critic_feedback.get("decision", "")).lower()
@@ -800,20 +837,15 @@ class PhyMasterExp(BaseExp):
     def _can_expand_node(self, node: SearchNode) -> bool:
         if node.node_id == self.root_id:
             return False
-        if node.depth >= self.max_depth:
-            return False
         if len(node.children) >= self.max_children_per_node:
             return False
-        if self.beam_width > 0 and node.node_id not in self.beam_expandable_node_ids:
+        if self.active_beam_width > 0 and node.node_id not in self.beam_expandable_node_ids:
             return False
         return True
 
     def _can_select_node(self, node: SearchNode) -> bool:
         if node.node_id == self.root_id:
             return False
-        # Terminal-depth nodes are still selectable once to avoid empty placeholder nodes.
-        if node.depth >= self.max_depth:
-            return node.visits == 0
         if node.status not in {"open", "expanded"}:
             return False
         if node.visits == 0:
@@ -821,19 +853,17 @@ class PhyMasterExp(BaseExp):
         return self._can_expand_node(node)
 
     def _apply_beam_pruning(self) -> None:
-        if self.beam_width <= 0:
+        if self.active_beam_width <= 0:
             self.beam_expandable_node_ids = {
                 node.node_id
                 for node in self.nodes.values()
-                if node.node_id != self.root_id and node.depth < self.max_depth and len(node.children) < self.max_children_per_node
+                if node.node_id != self.root_id and len(node.children) < self.max_children_per_node
             }
             return
 
         by_depth: dict[int, list[SearchNode]] = {}
         for node in self.nodes.values():
             if node.node_id == self.root_id:
-                continue
-            if node.depth >= self.max_depth:
                 continue
             if len(node.children) >= self.max_children_per_node:
                 continue
@@ -850,14 +880,14 @@ class PhyMasterExp(BaseExp):
                     n.node_id,
                 ),
             )
-            for node in ranked[: self.beam_width]:
+            for node in ranked[: self.active_beam_width]:
                 expandable_ids.add(node.node_id)
 
         self.beam_expandable_node_ids = expandable_ids
         for node in self.nodes.values():
             if node.node_id == self.root_id:
                 continue
-            if node.depth >= self.max_depth or len(node.children) >= self.max_children_per_node:
+            if len(node.children) >= self.max_children_per_node:
                 node.status = "closed"
                 continue
             if node.node_id in self.beam_expandable_node_ids:
@@ -1456,7 +1486,7 @@ class PhyMasterExp(BaseExp):
         return fallback
 
     def _node_workspace_path(self, node_id: str, agent) -> Path:
-        base = Path(agent.session.config.workspace_path)
+        base = self._task_workspace_root or Path(agent.session.config.workspace_path).resolve()
         m = re.match(r"^n(\d+)$", str(node_id).strip().lower())
         suffix = m.group(1).zfill(3) if m else re.sub(r"[^a-zA-Z0-9_-]+", "_", str(node_id)).strip("_") or "unknown"
         node_dir = base / f"node_{suffix}"

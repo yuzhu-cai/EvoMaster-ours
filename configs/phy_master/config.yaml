@@ -1,5 +1,14 @@
 # PHY Master configuration (Clarifier -> Supervisor/Theoretician/Critic MCTS loop -> Summarize)
 
+phy_mcts:
+  max_rounds: 12
+  max_children_per_node: 3
+  active_beam_width: 2
+  parallel_nodes: 3
+  exploration_constant: 1.4
+  min_score: 0.0
+  max_score: 1.0
+
 llm:
   openai:
     provider: "openai"
@@ -17,7 +26,9 @@ llm:
 agents:
   clarifier:
     llm: "openai"
-    max_turns: 4
+    max_turns: 1
+    max_tool_rounds: 20
+    force_final_response: true
     enable_tools: true
     context:
       max_tokens: 128000
@@ -30,7 +41,9 @@ agents:
 
   supervisor:
     llm: "openai"
-    max_turns: 4
+    max_turns: 1
+    max_tool_rounds: 20
+    force_final_response: true
     enable_tools: false
     context:
       max_tokens: 128000
@@ -42,7 +55,9 @@ agents:
 
   theoretician:
     llm: "openai"
-    max_turns: 10
+    max_turns: 1
+    max_tool_rounds: 30
+    force_final_response: true
     enable_tools: true
     context:
       max_tokens: 128000
@@ -54,7 +69,9 @@ agents:
 
   critic:
     llm: "openai"
-    max_turns: 4
+    max_turns: 1
+    max_tool_rounds: 20
+    force_final_response: true
     enable_tools: false
     context:
       max_tokens: 128000
@@ -66,7 +83,9 @@ agents:
 
   summarizer:
     llm: "openai"
-    max_turns: 4
+    max_turns: 1
+    max_tool_rounds: 20
+    force_final_response: true
     enable_tools: false
     context:
       max_tokens: 128000
@@ -79,17 +98,6 @@ agents:
 skills:
   enabled: true
   skills_root: "evomaster/skills"
-
-# Custom workflow knobs for PHY Master MCTS
-phy_mcts:
-  max_rounds: 3
-  max_depth: 4
-  max_children_per_node: 3
-  beam_width: 3
-  parallel_nodes: 3
-  exploration_constant: 1.4
-  min_score: 0.0
-  max_score: 1.0
 
 mcp:
   config_file: "mcp_config.json"

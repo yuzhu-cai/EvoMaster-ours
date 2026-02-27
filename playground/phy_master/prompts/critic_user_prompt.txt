@@ -10,6 +10,10 @@ Based on the result above, perform a critical evaluation and provide:
 - A brief summary suitable for short-term memory.
 - Your critical evaluation of the result, including a score and concise opinion.
 
+Notice:
+- Do not be too strict when you give the decision, only give "to_improve" when the answer very incomprehensive and not rigirous enough while the method is generally correct.
+- When the method is wrong or there are factual errors, give "to_revise".
+
 Output requirements:
 Return a JSON object with the following keys:
 - decision: one of ["to_revise", "to_improve", "to_redraft", "complete"]

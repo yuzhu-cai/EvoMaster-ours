@@ -337,9 +337,16 @@ class BasePlayground:
 
         # 提取 Agent 配置
         max_turns = agent_config.get('max_turns', 20)
+        max_tool_rounds = agent_config.get('max_tool_rounds', 20)
+        force_final_response = agent_config.get('force_final_response', True)
         context_config_dict = agent_config.get('context', {})
         context_config = ContextConfig(**context_config_dict)
-        agent_cfg = AgentConfig(max_turns=max_turns, context_config=context_config)
+        agent_cfg = AgentConfig(
+            max_turns=max_turns,
+            max_tool_rounds=max_tool_rounds,
+            force_final_response=force_final_response,
+            context_config=context_config,
+        )
 
         # 获取输出配置
         output_config = self._get_output_config()

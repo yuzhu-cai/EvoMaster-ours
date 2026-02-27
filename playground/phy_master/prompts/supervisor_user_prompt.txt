@@ -12,3 +12,11 @@ Current tree snapshot:
 
 Round index:
 {round_index}
+
+Current node output path:
+{path}
+
+NOTICE:
+- For this node, treat the path above as your effective working directory.
+- Any files mentioned in your dispatch description must be written into the node path above.
+- Do not write outputs to the parent task workspace root.
