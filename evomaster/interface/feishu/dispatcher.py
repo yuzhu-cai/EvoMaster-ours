@@ -308,6 +308,7 @@ class TaskDispatcher:
                 if reporter:
                     try:
                         reporter.finalize("completed", answer)
+                        return None  # 卡片已包含回答，不需要额外消息
                     except Exception:
                         logger.exception("Failed to finalize step reporter")
 
@@ -364,6 +365,10 @@ class TaskDispatcher:
             result_text = f"任务超时（超过 {self._task_timeout} 秒）"
         except Exception as e:
             result_text = f"任务执行异常: {e}"
+
+        # None 表示 reporter 卡片已包含回答，无需再发消息
+        if result_text is None:
+            return
 
         if self._on_result:
             try:
