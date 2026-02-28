@@ -67,8 +67,12 @@ class ClusterPoolConfig(BaseConfig):
 
 class ClusterConfig(BaseConfig):
     """集群配置"""
-    debug_pool: ClusterPoolConfig = Field(description="Debug 池配置")
-    train_pool: ClusterPoolConfig = Field(description="训练池配置")
+    debug_pool: ClusterPoolConfig = Field(
+        default_factory=lambda: ClusterPoolConfig(type="cpu"), description="Debug 池配置"
+    )
+    train_pool: ClusterPoolConfig = Field(
+        default_factory=lambda: ClusterPoolConfig(type="cpu"), description="训练池配置"
+    )
 
 
 class DockerEnvConfig(BaseConfig):
@@ -89,9 +93,9 @@ class SchedulerConfig(BaseConfig):
 class EnvConfig(BaseConfig):
     """环境配置（集群 / Docker / 调度器）。
     Bohrium 鉴权（BOHRIUM_ACCESS_KEY, BOHRIUM_PROJECT_ID 等）由 .env 提供，供 MCP calculation path adaptor 注入到 executor/storage。"""
-    cluster: ClusterConfig = Field(description="集群配置")
-    docker: DockerEnvConfig = Field(description="Docker 配置")
-    scheduler: SchedulerConfig = Field(description="调度器配置")
+    cluster: ClusterConfig = Field(default_factory=ClusterConfig, description="集群配置")
+    docker: DockerEnvConfig = Field(default_factory=DockerEnvConfig, description="Docker 配置")
+    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig, description="调度器配置")
 
 
 # ============================================

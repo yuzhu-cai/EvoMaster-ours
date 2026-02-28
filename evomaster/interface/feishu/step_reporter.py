@@ -50,9 +50,16 @@ class FeishuStepReporter:
         self._document_id: str | None = None
         self._document_url: str | None = None
 
+        # TODO 进度清单
+        self._todo_items: list[dict] = []  # [{"label": "...", "done": False}, ...]
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+
+    def set_todo_items(self, items: list[str]) -> None:
+        """设置 TODO 列表项目（用于 agent_builder 等支持进度追踪的场景）。"""
+        self._todo_items = [{"label": item, "done": False} for item in items]
 
     def send_initial_card(self, task_text: str) -> bool:
         """发送初始 "正在处理" 卡片，捕获 message_id 用于后续 PATCH。"""
@@ -86,6 +93,9 @@ class FeishuStepReporter:
 
         self._step_count = step_number
 
+        # 检查 TODO 完成标记（通过 think 工具的 PROGRESS 标记）
+        self._check_todo_progress(step_record)
+
         # 卡片：仅更新进度
         content = self._build_progress_content(step_number, max_steps, running=True)
         self._patch(
@@ -101,8 +111,16 @@ class FeishuStepReporter:
             except Exception:
                 logger.exception("Failed to append step %d to document", step_number)
 
-    def finalize(self, status: str, final_answer: str = "") -> None:
-        """最终更新卡片（任务完成/失败）。"""
+    def finalize(
+        self, status: str, final_answer: str = "", actions: list[dict] | None = None
+    ) -> None:
+        """最终更新卡片（任务完成/失败）。
+
+        Args:
+            status: 完成状态 ("completed", "failed" 等)
+            final_answer: 最终回答文本
+            actions: 可选按钮列表，格式同 build_card_with_actions
+        """
         if self._card_message_id is None:
             return
 
@@ -125,7 +143,12 @@ class FeishuStepReporter:
         else:
             template, title = "red", f"❌ 任务{status}"
 
-        self._patch(title=title, content=content, template=template)
+        if actions:
+            self._patch_with_actions(
+                title=title, content=content, template=template, actions=actions
+            )
+        else:
+            self._patch(title=title, content=content, template=template)
 
         # 文档：追加总结
         self._finalize_document(status, elapsed, final_answer)
@@ -137,11 +160,17 @@ class FeishuStepReporter:
     def _build_progress_content(
         self, current_step: int, max_steps: int, running: bool
     ) -> str:
-        """构建卡片内容：任务信息 + 进度 + 文档链接。"""
+        """构建卡片内容：任务信息 + TODO 清单 + 进度 + 文档链接。"""
         parts = [f"**任务:** {self._task_text}"]
 
         if self._document_url:
             parts.append(f"[📄 查看完整轨迹]({self._document_url})")
+
+        # TODO 清单
+        todo_content = self._build_todo_content()
+        if todo_content:
+            parts.append("---")
+            parts.append(todo_content)
 
         parts.append("---")
 
@@ -168,6 +197,85 @@ class FeishuStepReporter:
             )
         except Exception:
             logger.exception("Failed to patch card %s", self._card_message_id)
+
+    def _patch_with_actions(
+        self, title: str, content: str, template: str, actions: list[dict]
+    ) -> None:
+        """执行 PATCH 调用（带按钮）。"""
+        from .sender import build_card_with_actions, patch_card_message
+
+        try:
+            card_json = build_card_with_actions(
+                title=title,
+                content=content,
+                actions=actions,
+                header_template=template,
+            )
+            patch_card_message(
+                self._client,
+                self._card_message_id,
+                card_json=card_json,
+            )
+        except Exception:
+            logger.exception("Failed to patch card with actions %s", self._card_message_id)
+
+    # ------------------------------------------------------------------
+    # Internal — TODO Progress
+    # ------------------------------------------------------------------
+
+    def _build_todo_content(self) -> str:
+        """构建 TODO 清单的 markdown 内容。"""
+        if not self._todo_items:
+            return ""
+        lines = ["**构建进度:**"]
+        for item in self._todo_items:
+            check = "✅" if item["done"] else "⬜"
+            lines.append(f"{check} {item['label']}")
+        done_count = sum(1 for i in self._todo_items if i["done"])
+        lines.append(f"\n> {done_count}/{len(self._todo_items)} 完成")
+        return "\n".join(lines)
+
+    def _check_todo_progress(self, step_record: Any) -> None:
+        """检测 builder 是否通过 think 工具上报了 PROGRESS 标记。"""
+        if not self._todo_items:
+            return
+
+        assistant_msg = getattr(step_record, "assistant_message", None)
+        if not assistant_msg:
+            return
+
+        tool_calls = getattr(assistant_msg, "tool_calls", None) or []
+        for tc in tool_calls:
+            func = getattr(tc, "function", None)
+            if func and getattr(func, "name", "") == "think":
+                raw_args = getattr(func, "arguments", "")
+                try:
+                    args_obj = json.loads(raw_args)
+                    thought = (
+                        args_obj.get("thought", "")
+                        or args_obj.get("content", "")
+                        or ""
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    thought = str(raw_args)
+
+                if "PROGRESS:" in thought and "[x]" in thought:
+                    progress_text = thought.split("PROGRESS:", 1)[1].strip()
+                    label = progress_text.replace("[x]", "").strip()
+                    self._fuzzy_mark_done(label)
+
+    def _fuzzy_mark_done(self, completed_label: str) -> None:
+        """模糊匹配并标记完成的 TODO 项。"""
+        completed_lower = completed_label.lower()
+        for item in self._todo_items:
+            if not item["done"]:
+                item_lower = item["label"].lower()
+                if (
+                    completed_lower in item_lower
+                    or item_lower in completed_lower
+                ):
+                    item["done"] = True
+                    break
 
     # ------------------------------------------------------------------
     # Internal — Document

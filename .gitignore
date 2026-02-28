@@ -194,3 +194,5 @@ playground/*/workspace
 showcase/
 test_tool.py
 playground/*/ppt
+
+_generated/

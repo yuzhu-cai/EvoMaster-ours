@@ -81,6 +81,13 @@ def _extract_final_answer(result: dict[str, Any]) -> str:
     return f"任务完成（状态: {status}，步骤: {steps}），但未提取到文本回答。"
 
 
+# 需要多轮会话的子任务 agent（使用独立会话 key）
+_SESSION_SUBTASK_AGENTS = {"agent_builder"}
+
+# 完成后需要确认按钮的子任务 agent（Phase 1 结束后显示「确认生成」按钮）
+_CONFIRM_SUBTASK_AGENTS = {"agent_builder"}
+
+
 class TaskDispatcher:
     """任务调度器：通过会话管理实现多轮对话上下文延续"""
 
@@ -97,6 +104,7 @@ class TaskDispatcher:
         feishu_app_id: Optional[str] = None,
         feishu_app_secret: Optional[str] = None,
         feishu_domain: str = "https://open.feishu.cn",
+        feishu_doc_folder_token: Optional[str] = None,
     ):
         """
         Args:
@@ -111,6 +119,7 @@ class TaskDispatcher:
             feishu_app_id: 飞书 App ID（用于注入飞书特有工具）
             feishu_app_secret: 飞书 App Secret
             feishu_domain: 飞书 API 域名
+            feishu_doc_folder_token: 飞书文件夹 token（用于文档写入工具）
         """
         from .session_manager import ChatSessionManager
 
@@ -127,7 +136,23 @@ class TaskDispatcher:
         self._active_tasks: dict[str, Any] = {}
         self._session_manager = ChatSessionManager(max_sessions=max_sessions)
 
-        # 飞书特有工具
+        # 存储飞书凭证（用于动态创建工具）
+        self._feishu_app_id = feishu_app_id
+        self._feishu_app_secret = feishu_app_secret
+        self._feishu_domain = feishu_domain
+        self._feishu_doc_folder_token = feishu_doc_folder_token
+
+        # 飞书 Client（用于 patch 卡片等操作）
+        self._feishu_client = None
+        if feishu_app_id and feishu_app_secret:
+            from .client import create_feishu_client
+            self._feishu_client = create_feishu_client(
+                app_id=feishu_app_id,
+                app_secret=feishu_app_secret,
+                domain=feishu_domain,
+            )
+
+        # 飞书特有工具（所有 agent 共用）
         self._feishu_tools: list = []
         if feishu_app_id and feishu_app_secret:
             from .doc_reader_tool import FeishuDocReadTool
@@ -139,6 +164,10 @@ class TaskDispatcher:
                     domain=feishu_domain,
                 )
             )
+
+        # 确保 _generated 目录存在（agent_builder 生成的 agent 放在这里）
+        (project_root / "configs" / "_generated").mkdir(parents=True, exist_ok=True)
+        (project_root / "playground" / "_generated").mkdir(parents=True, exist_ok=True)
 
         # 预加载 playgrounds
         _ensure_playgrounds_imported(project_root)
@@ -162,6 +191,9 @@ class TaskDispatcher:
         # /new 命令：清除会话
         if stripped == "/new":
             self._session_manager.remove(chat_id)
+            # 同时清除该 chat 的所有会话级子任务会话
+            for agent_name in _SESSION_SUBTASK_AGENTS:
+                self._session_manager.remove(f"{chat_id}:{agent_name}")
             if self._on_result:
                 self._on_result(chat_id, message_id, "新会话已开始，上下文已清除。")
             return
@@ -207,10 +239,13 @@ class TaskDispatcher:
         """创建 playground 实例（不调用 setup）。"""
         from evomaster.core import get_playground_class
 
-        if self._default_config_path:
+        if agent_name == self._default_agent and self._default_config_path:
             config_path = self._project_root / self._default_config_path
         else:
             config_path = self._project_root / "configs" / agent_name / "config.yaml"
+            # Fallback: 检查 _generated 目录（agent_builder 生成的 agent 放在这里）
+            if not config_path.exists():
+                config_path = self._project_root / "configs" / "_generated" / agent_name / "config.yaml"
 
         if not config_path.exists():
             raise FileNotFoundError(f"配置文件不存在: {config_path}")
@@ -267,7 +302,13 @@ class TaskDispatcher:
             try:
                 # 子任务模式：/agent 指定了非默认 agent
                 if agent_name != self._default_agent:
-                    answer = self._run_subtask(agent_name, task_text, on_step)
+                    # 会话级子任务：支持多轮对话（如 agent_builder）
+                    if agent_name in _SESSION_SUBTASK_AGENTS:
+                        answer = self._run_session_subtask(
+                            chat_id, agent_name, task_text, on_step, sender_open_id
+                        )
+                    else:
+                        answer = self._run_subtask(agent_name, task_text, on_step)
 
                     # 将结果注入 chat_agent 的 dialog 作为上下文
                     if session.initialized and session.agent:
@@ -280,7 +321,37 @@ class TaskDispatcher:
 
                     if reporter:
                         try:
-                            reporter.finalize("completed", answer)
+                            # 确认类 agent：finalize 时添加确认/取消按钮
+                            if agent_name in _CONFIRM_SUBTASK_AGENTS:
+                                session_key = f"{chat_id}:{agent_name}"
+                                # 截断 answer 嵌入按钮 value，回调时用于保留原始卡片内容
+                                _answer_for_button = answer[:2000] if answer else ""
+                                actions = [
+                                    {
+                                        "text": "✅ 确认生成",
+                                        "type": "primary",
+                                        "value": {
+                                            "action": "confirm_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": agent_name,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                    {
+                                        "text": "❌ 取消",
+                                        "type": "danger",
+                                        "value": {
+                                            "action": "cancel_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": agent_name,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                ]
+                                reporter.finalize("completed", answer, actions=actions)
+                            else:
+                                reporter.finalize("completed", answer)
+                            return None  # 卡片已包含回答
                         except Exception:
                             logger.exception("Failed to finalize step reporter")
 
@@ -385,6 +456,310 @@ class TaskDispatcher:
         for agent in playground.agents.values():
             for tool in self._feishu_tools:
                 agent.tools.register(tool)
+
+    def _run_session_subtask(
+        self,
+        chat_id: str,
+        agent_name: str,
+        task_text: str,
+        on_step: Optional[Callable] = None,
+        sender_open_id: Optional[str] = None,
+    ) -> str:
+        """运行会话级子任务：支持多轮对话的独立 agent 会话。
+
+        使用 {chat_id}:{agent_name} 作为会话 key，支持 continue_run()。
+        """
+        from evomaster.utils.types import TaskInstance
+
+        session_key = f"{chat_id}:{agent_name}"
+        session = self._session_manager.get_or_create(
+            session_key,
+            playground_factory=lambda: self._create_playground(agent_name),
+        )
+
+        # 会话级子任务也串行处理
+        with session.lock:
+            session.last_activity = time.monotonic()
+            session.message_count += 1
+
+            try:
+                if not session.initialized:
+                    logger.info(
+                        "First message in session subtask key=%s, agent=%s",
+                        session_key, agent_name,
+                    )
+                    session.playground.setup()
+                    session.playground._setup_trajectory_file()
+                    session.agent = session.playground.agent
+
+                    self._inject_feishu_tools(session.playground)
+                    self._inject_doc_write_tool(session.playground, sender_open_id)
+
+                    task = TaskInstance(
+                        task_id=f"session_subtask_{agent_name}",
+                        task_type="session_subtask",
+                        description=task_text,
+                    )
+                    trajectory = session.agent.run(task, on_step=on_step)
+                    session.initialized = True
+                else:
+                    logger.info(
+                        "Continuing session subtask key=%s (message #%d)",
+                        session_key, session.message_count,
+                    )
+                    trajectory = session.agent.continue_run(
+                        task_text, on_step=on_step
+                    )
+
+                return _extract_final_answer(
+                    {"trajectory": trajectory, "status": trajectory.status}
+                )
+
+            except Exception as e:
+                logger.exception(
+                    "Session subtask failed: key=%s, agent=%s", session_key, agent_name
+                )
+                return f"会话子任务执行出错: {e}"
+
+    def _inject_doc_write_tool(self, playground, sender_open_id: str | None) -> None:
+        """将飞书文档写入工具注入 playground 的所有 agent。"""
+        if not self._feishu_app_id or not self._feishu_app_secret:
+            return
+
+        from .client import create_feishu_client
+        from .document_writer import FeishuDocumentWriter
+        from playground.agent_builder.tools.feishu_doc_write import FeishuDocWriteTool
+
+        client = create_feishu_client(
+            app_id=self._feishu_app_id,
+            app_secret=self._feishu_app_secret,
+            domain=self._feishu_domain,
+        )
+        writer = FeishuDocumentWriter(
+            client,
+            folder_token=self._feishu_doc_folder_token,
+            domain=self._feishu_domain,
+        )
+        tool = FeishuDocWriteTool(
+            document_writer=writer,
+            sender_open_id=sender_open_id,
+        )
+
+        for agent in playground.agents.values():
+            agent.tools.register(tool)
+
+    def dispatch_card_action(
+        self,
+        chat_id: str,
+        session_key: str,
+        agent_name: str,
+        task_text: str,
+        sender_open_id: str | None = None,
+        card_message_id: str | None = None,
+        original_answer: str = "",
+    ) -> None:
+        """处理卡片按钮回调，触发会话级子任务的 continue_run。
+
+        Args:
+            chat_id: 聊天 ID（用于发送结果）
+            session_key: 会话 key（格式 {chat_id}:{agent_name}）
+            agent_name: agent 名称
+            task_text: 发送给 agent 的文本（如 "确认"）
+            sender_open_id: 操作者 open_id
+            card_message_id: 触发按钮的卡片消息 ID
+            original_answer: Phase 1 的原始回答内容（用于更新卡片时保留）
+        """
+        message_id = card_message_id or f"card_action_{session_key}"
+        future = self._executor.submit(
+            self._continue_session_subtask,
+            chat_id,
+            session_key,
+            agent_name,
+            task_text,
+            sender_open_id,
+            card_message_id,
+            original_answer,
+        )
+        self._active_tasks[message_id] = future
+        future.add_done_callback(
+            lambda f: self._on_task_done(f, chat_id, message_id)
+        )
+
+    def _continue_session_subtask(
+        self,
+        chat_id: str,
+        session_key: str,
+        agent_name: str,
+        task_text: str,
+        sender_open_id: str | None = None,
+        card_message_id: str | None = None,
+        original_answer: str = "",
+    ) -> str | None:
+        """继续已有的会话级子任务（由卡片按钮触发）。"""
+        session = self._session_manager.get(session_key)
+        if session is None or not session.initialized:
+            logger.warning(
+                "No active session for card action: key=%s", session_key
+            )
+            return f"会话已过期或不存在，请重新发起 /agent {agent_name} 命令。"
+
+        with session.lock:
+            session.last_activity = time.monotonic()
+            session.message_count += 1
+
+            # 创建进度报告器
+            reporter = None
+            on_step = None
+            if self._step_reporter_factory:
+                try:
+                    reporter = self._step_reporter_factory(
+                        chat_id, card_message_id, sender_open_id
+                    )
+                    # agent_builder: 延迟发送卡片，等 TODO 解析后一次性发送
+                    if agent_name not in _CONFIRM_SUBTASK_AGENTS:
+                        reporter.send_initial_card(f"[{agent_name}] {task_text}")
+                    on_step = reporter.on_step
+                except Exception:
+                    logger.exception("Failed to create step reporter for card action")
+
+            try:
+                logger.info(
+                    "Continuing session subtask via card action: key=%s (message #%d)",
+                    session_key, session.message_count,
+                )
+
+                # agent_builder 双 agent 模式：Phase 2 使用 builder_agent（全新 run）
+                if (
+                    agent_name == "agent_builder"
+                    and hasattr(session.playground, "agents")
+                    and hasattr(session.playground.agents, "builder_agent")
+                ):
+                    from evomaster.utils.types import TaskInstance
+
+                    # 解析 planner 输出中的 TODO 清单，设置到 reporter
+                    todo_items = self._parse_plan_todos(original_answer)
+                    if reporter:
+                        if todo_items:
+                            reporter.set_todo_items(todo_items)
+                        reporter.send_initial_card(
+                            f"[{agent_name}] 正在生成 Agent 文件..."
+                        )
+                        on_step = reporter.on_step
+
+                    builder_agent = session.playground.agents.builder_agent
+                    # 注入飞书工具到 builder agent（setup 时已注入，但确保可用）
+                    if self._feishu_tools:
+                        for tool in self._feishu_tools:
+                            builder_agent.tools.register(tool)
+                    # 构造 handoff 任务：将 planner 的方案摘要传递给 builder
+                    plan_task = TaskInstance(
+                        task_id=f"builder_{agent_name}",
+                        task_type="builder",
+                        description=(
+                            "请根据以下设计方案生成 Agent 文件。\n\n"
+                            f"## 方案摘要\n{original_answer}\n\n"
+                            "请使用 feishu_doc_read 工具读取飞书文档获取完整方案，然后生成所有文件。"
+                        ),
+                    )
+                    trajectory = builder_agent.run(plan_task, on_step=on_step)
+                else:
+                    trajectory = session.agent.continue_run(
+                        task_text, on_step=on_step
+                    )
+                answer = _extract_final_answer(
+                    {"trajectory": trajectory, "status": trajectory.status}
+                )
+
+                # 将结果注入 chat_agent 上下文
+                chat_session = self._session_manager.get(chat_id)
+                if chat_session and chat_session.initialized and chat_session.agent:
+                    summary = (
+                        f"[子任务结果 - {agent_name} Phase 2]\n"
+                        f"结果: {answer}"
+                    )
+                    chat_session.agent.add_user_message(summary)
+
+                if reporter:
+                    try:
+                        reporter.finalize("completed", answer)
+                    except Exception:
+                        logger.exception("Failed to finalize step reporter")
+
+                # 更新 Phase 1 卡片：从 "生成中" 变为 "完成"，保留原始计划内容
+                phase1_content = original_answer + "\n\n---\n> ✅ Agent 已成功创建。详情请查看下方回复。" if original_answer else "Agent 已成功创建。\n\n详情请查看下方回复。"
+                self._patch_phase1_card(
+                    card_message_id, "✅ Agent 创建完成",
+                    phase1_content, "green",
+                )
+
+                return None
+
+            except Exception as e:
+                logger.exception(
+                    "Card action subtask failed: key=%s", session_key
+                )
+                if reporter:
+                    try:
+                        reporter.finalize("failed")
+                    except Exception:
+                        logger.exception("Failed to finalize reporter on error")
+
+                # 更新 Phase 1 卡片：显示失败状态，保留原始计划内容
+                phase1_content = original_answer + f"\n\n---\n> ❌ Agent 创建过程中出错：{str(e)[:500]}" if original_answer else f"Agent 创建过程中出错。\n\n{str(e)[:500]}"
+                self._patch_phase1_card(
+                    card_message_id, "❌ Agent 创建失败",
+                    phase1_content, "red",
+                )
+
+                return f"会话子任务执行出错: {e}"
+
+    def _patch_phase1_card(
+        self,
+        card_message_id: str | None,
+        title: str,
+        content: str,
+        header_template: str,
+    ) -> None:
+        """更新 Phase 1 卡片状态（Phase 2 完成/失败后调用）。"""
+        if not card_message_id or not self._feishu_client:
+            return
+        try:
+            from .sender import patch_card_message
+            patch_card_message(
+                self._feishu_client,
+                card_message_id,
+                title=title,
+                content=content,
+                header_template=header_template,
+            )
+        except Exception:
+            logger.exception("Failed to update Phase 1 card: %s", card_message_id)
+
+    @staticmethod
+    def _parse_plan_todos(plan_text: str) -> list[str]:
+        """从 planner 输出中解析 TODO 列表。
+
+        格式::
+
+            ---PLAN_TODO---
+            - [ ] 创建目录结构
+            - [ ] 创建 system_prompt.txt
+            ---END_TODO---
+        """
+        todos: list[str] = []
+        in_todo = False
+        for line in plan_text.split("\n"):
+            stripped = line.strip()
+            if "---PLAN_TODO---" in stripped:
+                in_todo = True
+                continue
+            if "---END_TODO---" in stripped:
+                break
+            if in_todo and stripped.startswith("- [ ]"):
+                label = stripped[5:].strip()
+                if label:
+                    todos.append(label)
+        return todos
 
     def _on_task_done(self, future, chat_id: str, message_id: str) -> None:
         """任务完成回调"""

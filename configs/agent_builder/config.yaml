@@ -1,0 +1,147 @@
+# Agent Builder 配置文件
+# 元级 Agent，用于根据用户需求创建新的 EvoMaster Agent
+
+# ============================================
+# LLM 配置
+# ============================================
+llm:
+  openai:
+    provider: "openai"
+    model: "${GPT_CHAT_MODEL}"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    temperature: 0.3
+    max_tokens: 16384
+    timeout: 120
+    max_retries: 3
+    retry_delay: 1.0
+
+  anthropic:
+    provider: "anthropic"
+    model: "${ANTHROPIC_MODEL}"
+    api_key: "${ANTHROPIC_API_KEY}"
+    base_url: "${ANTHROPIC_BASE_URL}"
+    temperature: 0.3
+    max_tokens: 16384
+    timeout: 120
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "openai"
+
+# ============================================
+# Agent 配置（双 agent 系统：planner + builder）
+# ============================================
+agents:
+  planner:
+    llm: "openai"
+    max_turns: 100
+    enable_tools: true
+    finish_on_text_response: false
+
+    context:
+      max_tokens: 128000
+      truncation_strategy: "summary"
+      preserve_system_messages: true
+      preserve_recent_turns: 10
+
+    system_prompt_file: "prompts/planner_system_prompt.txt"
+    user_prompt_file: "prompts/user_prompt.txt"
+
+  builder:
+    llm: "openai"
+    max_turns: 40
+    enable_tools: true
+    finish_on_text_response: false
+
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+
+    system_prompt_file: "prompts/builder_system_prompt.txt"
+    user_prompt_file: "prompts/builder_user_prompt.txt"
+
+# ============================================
+# MCP 配置
+# ============================================
+mcp:
+  config_file: "mcp_config.json"
+  enabled: False
+
+# ============================================
+# Session 配置
+# ============================================
+session:
+  type: "local"
+
+  local:
+    working_dir: "./playground/agent_builder/workspace"
+    timeout: 120
+    gpu_devices: "0"
+    cpu_devices: "0-15"
+    symlinks:
+      "playground": "playground"
+      "configs": "configs"
+      "evomaster": "evomaster"
+
+  docker:
+    image: "evomaster/base:latest"
+    container_name: null
+    use_existing_container: null
+    working_dir: "/workspace"
+    memory_limit: "64g"
+    cpu_limit: 16.0
+    gpu_devices: "0"
+    network_mode: "host"
+    volumes: {"./playground/agent_builder/workspace": "/workspace"}
+    env_vars: {}
+    auto_remove: false
+    timeout: 300
+
+# ============================================
+# Env 配置
+# ============================================
+env:
+  cluster:
+    debug_pool:
+      type: "cpu"
+      max_concurrent: 1
+    train_pool:
+      type: "cpu"
+      max_concurrent: 1
+  docker:
+    base_image: "python:3.11-slim"
+    registry: "docker.io"
+    pull_policy: "if_not_present"
+  scheduler:
+    type: "local"
+    queue_timeout: 300
+    retry_failed: false
+    max_retries: 1
+
+# ============================================
+# LLM 输出显示配置
+# ============================================
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+# ============================================
+# 日志配置
+# ============================================
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+  log_path: "./logs/evomaster.log"
+
+# ============================================
+# 其他配置
+# ============================================
+project_root: "."
+workspace: "./workspace"
+results_dir: "./results"
+debug: false

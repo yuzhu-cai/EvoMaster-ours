@@ -86,6 +86,18 @@ class ChatSessionManager:
             logger.info("Created new session for chat_id=%s", chat_id)
             return session
 
+    def get(self, chat_id: str) -> Optional[PlaygroundSession]:
+        """获取已有会话（不创建）。
+
+        Args:
+            chat_id: 聊天 ID 或会话 key
+
+        Returns:
+            PlaygroundSession 或 None
+        """
+        with self._global_lock:
+            return self._sessions.get(chat_id)
+
     def remove(self, chat_id: str) -> None:
         """移除并清理一个会话（\\new 命令时调用）。"""
         with self._global_lock:

@@ -372,6 +372,17 @@ class BaseAgent(ABC):
                 except Exception as e:
                     self.logger.info(f"📝 Finish Tool Raw Args: {tool_call.function.arguments}")
                 should_finish = True
+
+                # 为 finish 工具创建 ToolMessage，确保 continue_run 时对话历史合法
+                tool_message = ToolMessage(
+                    content="Task marked as finished.",
+                    tool_call_id=tool_call.id,
+                    name=tool_call.function.name,
+                    meta={"info": {"task_completed": True}}
+                )
+                self.current_dialog.add_message(tool_message)
+                step_record.tool_responses.append(tool_message)
+
                 break
 
             # 执行工具
