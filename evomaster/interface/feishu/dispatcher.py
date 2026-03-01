@@ -357,6 +357,56 @@ class TaskDispatcher:
 
                     return answer
 
+                # === 活跃子任务路由 ===
+                # 如果有活跃的子任务会话（如 agent_builder planner），
+                # 后续消息直接路由过去，支持多轮修改 plan
+                active_subtask = self._find_active_subtask(chat_id)
+                if active_subtask:
+                    answer = self._run_session_subtask(
+                        chat_id, active_subtask, task_text, on_step, sender_open_id
+                    )
+                    if session.initialized and session.agent:
+                        summary = (
+                            f"[子任务结果 - {active_subtask}]\n"
+                            f"用户请求: {task_text}\n"
+                            f"结果: {answer}"
+                        )
+                        session.agent.add_user_message(summary)
+                    if reporter:
+                        try:
+                            if active_subtask in _CONFIRM_SUBTASK_AGENTS:
+                                session_key = f"{chat_id}:{active_subtask}"
+                                _answer_for_button = answer[:2000] if answer else ""
+                                actions = [
+                                    {
+                                        "text": "✅ 确认生成",
+                                        "type": "primary",
+                                        "value": {
+                                            "action": "confirm_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": active_subtask,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                    {
+                                        "text": "❌ 取消",
+                                        "type": "danger",
+                                        "value": {
+                                            "action": "cancel_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": active_subtask,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                ]
+                                reporter.finalize("completed", answer, actions=actions)
+                            else:
+                                reporter.finalize("completed", answer)
+                            return None
+                        except Exception:
+                            logger.exception("Failed to finalize step reporter")
+                    return answer
+
                 # 正常 chat_agent 流程
                 if not session.initialized:
                     # 首次消息：完整 setup + agent.run()
@@ -389,6 +439,91 @@ class TaskDispatcher:
                         task_text, on_step=on_step
                     )
 
+                # === 委派检测 ===
+                # chat_agent 可能通过 delegate_to_agent 工具触发了委派
+                delegation = self._check_delegation(session)
+                if delegation:
+                    delegated_agent = delegation["agent_name"]
+                    delegated_task = delegation["task"]
+                    logger.info(
+                        "Delegation detected: agent=%s, task=%s",
+                        delegated_agent, delegated_task[:100],
+                    )
+
+                    # 先 finalize chat_agent 的卡片（显示委派消息）
+                    chat_answer = _extract_final_answer(
+                        {"trajectory": trajectory, "status": trajectory.status}
+                    )
+                    if reporter:
+                        try:
+                            reporter.finalize("completed", chat_answer)
+                        except Exception:
+                            logger.exception("Failed to finalize chat reporter")
+
+                    # 创建子任务的 reporter
+                    subtask_reporter = None
+                    subtask_on_step = None
+                    if self._step_reporter_factory:
+                        try:
+                            subtask_reporter = self._step_reporter_factory(
+                                chat_id, message_id, sender_open_id
+                            )
+                            subtask_reporter.send_initial_card(
+                                f"[{delegated_agent}] {delegated_task[:200]}"
+                            )
+                            subtask_on_step = subtask_reporter.on_step
+                        except Exception:
+                            logger.exception("Failed to create subtask reporter")
+
+                    answer = self._run_session_subtask(
+                        chat_id, delegated_agent, delegated_task,
+                        subtask_on_step, sender_open_id,
+                    )
+                    if session.initialized and session.agent:
+                        summary = (
+                            f"[子任务结果 - {delegated_agent}]\n"
+                            f"用户请求: {delegated_task}\n"
+                            f"结果: {answer}"
+                        )
+                        session.agent.add_user_message(summary)
+                    if subtask_reporter:
+                        try:
+                            if delegated_agent in _CONFIRM_SUBTASK_AGENTS:
+                                session_key = f"{chat_id}:{delegated_agent}"
+                                _answer_for_button = answer[:2000] if answer else ""
+                                actions = [
+                                    {
+                                        "text": "✅ 确认生成",
+                                        "type": "primary",
+                                        "value": {
+                                            "action": "confirm_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": delegated_agent,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                    {
+                                        "text": "❌ 取消",
+                                        "type": "danger",
+                                        "value": {
+                                            "action": "cancel_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": delegated_agent,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                ]
+                                subtask_reporter.finalize(
+                                    "completed", answer, actions=actions
+                                )
+                            else:
+                                subtask_reporter.finalize("completed", answer)
+                            return None
+                        except Exception:
+                            logger.exception("Failed to finalize subtask reporter")
+                    return None
+
+                # 无委派：正常返回
                 answer = _extract_final_answer(
                     {"trajectory": trajectory, "status": trajectory.status}
                 )
@@ -692,6 +827,9 @@ class TaskDispatcher:
                     phase1_content, "green",
                 )
 
+                # Phase 2 完成，清理子任务会话，后续消息重新走 chat_agent
+                self._session_manager.remove(session_key)
+
                 return None
 
             except Exception as e:
@@ -734,6 +872,44 @@ class TaskDispatcher:
             )
         except Exception:
             logger.exception("Failed to update Phase 1 card: %s", card_message_id)
+
+    @staticmethod
+    def _check_delegation(session) -> dict[str, str] | None:
+        """检查 chat_agent 是否通过 delegate_to_agent 触发了委派。
+
+        扫描 trajectory 最近几步的 ToolMessage，查找 delegated=True 标记。
+        """
+        if not session.initialized or not session.agent:
+            return None
+        traj = session.agent.trajectory
+        if not traj or not traj.steps:
+            return None
+        for step in reversed(traj.steps[-3:]):
+            for resp in step.tool_responses:
+                if getattr(resp, "name", "") == "delegate_to_agent":
+                    info = (getattr(resp, "meta", None) or {}).get("info", {})
+                    if info.get("delegated"):
+                        return {
+                            "agent_name": info["agent_name"],
+                            "task": info["task"],
+                        }
+        return None
+
+    def _find_active_subtask(self, chat_id: str) -> str | None:
+        """查找该 chat 下是否有活跃的子任务会话。
+
+        如果存在，后续消息直接路由到子任务会话（支持多轮修改 plan 等）。
+        """
+        for agent_name in _SESSION_SUBTASK_AGENTS:
+            session_key = f"{chat_id}:{agent_name}"
+            sub = self._session_manager.get(session_key)
+            if sub and sub.initialized:
+                logger.info(
+                    "Active subtask session found: key=%s, routing there",
+                    session_key,
+                )
+                return agent_name
+        return None
 
     @staticmethod
     def _parse_plan_todos(plan_text: str) -> list[str]:

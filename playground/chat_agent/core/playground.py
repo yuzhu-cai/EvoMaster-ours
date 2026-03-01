@@ -25,6 +25,7 @@ class ChatAgentPlayground(BasePlayground):
     def setup(self):
         super().setup()
         self._register_web_search_tool()
+        self._register_delegate_tool()
 
     def _register_web_search_tool(self):
         """从配置中读取 web_search 段，注册到所有 agent 的 tool registry。"""
@@ -52,3 +53,13 @@ class ChatAgentPlayground(BasePlayground):
             agent.tools.register(tool)
 
         self.logger.info("Registered web_search tool (model: %s)", model)
+
+    def _register_delegate_tool(self):
+        """注册委派工具，允许 chat_agent 将任务转交给专业 Agent。"""
+        from playground.chat_agent.tools.delegate import DelegateToAgentTool
+
+        tool = DelegateToAgentTool()
+        for agent in self.agents.values():
+            agent.tools.register(tool)
+
+        self.logger.info("Registered delegate_to_agent tool")
