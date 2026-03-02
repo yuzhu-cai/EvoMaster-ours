@@ -18,7 +18,7 @@ llm:
 
   anthropic:
     provider: "anthropic"
-    model: "claude-haiku-4-5-20251001"
+    model: "${ANTHROPIC_MODEL}"
     api_key: "${ANTHROPIC_API_KEY}"
     base_url: "${ANTHROPIC_BASE_URL}"
     temperature: 0.7
@@ -27,14 +27,14 @@ llm:
     max_retries: 3
     retry_delay: 1.0
 
-  default: "openai"
+  default: "anthropic"
 
 # ============================================
 # Agent 配置
 # ============================================
 agents:
   general:
-    llm: "openai"
+    llm: "anthropic"
     max_turns: 50
     enable_tools: true
     finish_on_text_response: true

@@ -659,6 +659,8 @@ class AnthropicLLM(BaseLLM):
         client_kwargs = {"api_key": self.config.api_key}
         if self.config.base_url:
             client_kwargs["base_url"] = self.config.base_url
+            # 设置 auth_token 使 SDK 发送正确的 Bearer token。
+            client_kwargs["auth_token"] = self.config.api_key
 
         self.client = Anthropic(**client_kwargs)
 
@@ -709,6 +711,98 @@ class AnthropicLLM(BaseLLM):
                 converted.append(block)
         return converted
 
+    @staticmethod
+    def _convert_tools_for_anthropic(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """将 OpenAI 格式的 tools 转换为 Anthropic 格式。
+
+        OpenAI: {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
+        Anthropic: {"name": "...", "description": "...", "input_schema": {...}}
+        """
+        converted = []
+        for tool in tools:
+            func = tool.get("function", {})
+            anthropic_tool = {
+                "name": func.get("name", ""),
+                "description": func.get("description", ""),
+                "input_schema": func.get("parameters", {}),
+            }
+            converted.append(anthropic_tool)
+        return converted
+
+    @staticmethod
+    def _convert_messages_for_anthropic(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
+        """将 OpenAI 格式的消息列表转换为 Anthropic 格式。
+
+        转换规则：
+        - system 消息提取为独立字段
+        - assistant + tool_calls → content 包含 text + tool_use blocks
+        - role:"tool" → role:"user" + tool_result content blocks（连续的合并）
+        """
+        import json as _json
+
+        system_message = None
+        anthropic_messages: list[dict[str, Any]] = []
+
+        i = 0
+        while i < len(messages):
+            msg = messages[i]
+            role = msg.get("role", "")
+
+            if role == "system":
+                system_message = msg.get("content", "")
+                i += 1
+                continue
+
+            if role == "assistant":
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    # 构建 Anthropic 格式的 content blocks
+                    content_blocks = []
+                    text = msg.get("content")
+                    if text and str(text).strip():
+                        content_blocks.append({"type": "text", "text": str(text)})
+                    for tc in tool_calls:
+                        func = tc.get("function", {})
+                        try:
+                            input_data = _json.loads(func.get("arguments", "{}"))
+                        except (_json.JSONDecodeError, TypeError):
+                            input_data = {}
+                        content_blocks.append({
+                            "type": "tool_use",
+                            "id": tc.get("id", ""),
+                            "name": func.get("name", ""),
+                            "input": input_data,
+                        })
+                    anthropic_messages.append({"role": "assistant", "content": content_blocks})
+                else:
+                    content = msg.get("content", "")
+                    anthropic_messages.append({"role": "assistant", "content": content or " "})
+                i += 1
+                continue
+
+            if role == "tool":
+                # 收集连续的 tool messages，合并为一个 user 消息
+                tool_results = []
+                while i < len(messages) and messages[i].get("role") == "tool":
+                    t = messages[i]
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": t.get("tool_call_id", ""),
+                        "content": t.get("content", "") or " ",
+                    })
+                    i += 1
+                anthropic_messages.append({"role": "user", "content": tool_results})
+                continue
+
+            # user 或其他
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = AnthropicLLM._convert_content_for_anthropic(content)
+            anthropic_messages.append({"role": role, "content": content})
+            i += 1
+
+        return system_message, anthropic_messages
+
     def _call(
         self,
         messages: list[dict[str, Any]],
@@ -716,19 +810,8 @@ class AnthropicLLM(BaseLLM):
         **kwargs: Any,
     ) -> LLMResponse:
         """调用 Anthropic API"""
-        # Anthropic 需要分离 system message
-        system_message = None
-        user_messages = []
-
-        for msg in messages:
-            if msg["role"] == "system":
-                system_message = msg["content"]
-            else:
-                # 转换多模态内容格式
-                converted_msg = msg.copy()
-                if "content" in converted_msg:
-                    converted_msg["content"] = self._convert_content_for_anthropic(converted_msg["content"])
-                user_messages.append(converted_msg)
+        # 转换 OpenAI 格式消息为 Anthropic 格式
+        system_message, user_messages = self._convert_messages_for_anthropic(messages)
 
         # 构建请求参数
         request_params = {
@@ -743,7 +826,7 @@ class AnthropicLLM(BaseLLM):
             request_params["system"] = system_message
 
         if tools:
-            request_params["tools"] = tools
+            request_params["tools"] = self._convert_tools_for_anthropic(tools)
             request_params["tool_choice"] = kwargs.get("tool_choice", {"type": "auto"})
 
         # 调用 API

@@ -27,14 +27,14 @@ llm:
     max_retries: 3
     retry_delay: 1.0
 
-  default: "openai"
+  default: "anthropic"
 
 # ============================================
 # Agent 配置（双 agent 系统：planner + builder）
 # ============================================
 agents:
   planner:
-    llm: "openai"
+    llm: "anthropic"
     max_turns: 100
     enable_tools: true
     finish_on_text_response: false
@@ -49,8 +49,8 @@ agents:
     user_prompt_file: "prompts/user_prompt.txt"
 
   builder:
-    llm: "openai"
-    max_turns: 40
+    llm: "anthropic"
+    max_turns: 100
     enable_tools: true
     finish_on_text_response: false
 
