@@ -184,6 +184,7 @@ class TaskDispatcher:
 
         特殊命令：
         - /new: 清除当前会话上下文
+        - /help: 显示使用帮助
         - /shutdown: 关闭 bot 进程
         """
         stripped = task_text.strip()
@@ -194,8 +195,12 @@ class TaskDispatcher:
             # 同时清除该 chat 的所有会话级子任务会话
             for agent_name in _SESSION_SUBTASK_AGENTS:
                 self._session_manager.remove(f"{chat_id}:{agent_name}")
-            if self._on_result:
-                self._on_result(chat_id, message_id, "新会话已开始，上下文已清除。")
+            self._send_welcome_card(chat_id, message_id)
+            return
+
+        # /help 命令：显示使用帮助
+        if stripped == "/help":
+            self._send_help_card(chat_id, message_id)
             return
 
         # /shutdown 命令：关闭 bot
@@ -993,6 +998,81 @@ class TaskDispatcher:
             os.kill(os.getpid(), signal.SIGTERM)
 
         threading.Thread(target=_do_shutdown, daemon=True).start()
+
+    def _send_welcome_card(self, chat_id: str, message_id: str) -> None:
+        """发送欢迎卡片，介绍 bot 功能和使用方法。"""
+        if not self._feishu_client:
+            # fallback: 纯文本
+            if self._on_result:
+                self._on_result(
+                    chat_id, message_id,
+                    "新会话已开始。直接发送消息即可对话，或使用 /agent <名称> <任务> 调用专属智能体。",
+                )
+            return
+
+        from .sender import send_card_message
+
+        content = (
+            "**直接对话**\n"
+            "发送任何消息即可开始对话，我会记住上下文进行多轮交流。\n\n"
+            "**创建智能体**\n"
+            "直接告诉我你想创建什么智能体，例如：「帮我创建一个能总结文档的 agent」，"
+            "我会自动委派给 Agent Builder 完成设计与构建。\n\n"
+            "**指定智能体执行任务**\n"
+            "`/agent <名称> <任务描述>`\n"
+            "例如：`/agent doc_summarizer 总结这个文件 README.md`\n\n"
+            "---\n"
+            "**常用命令**\n"
+            "`/help` — 显示本帮助信息\n"
+            "`/new` — 清除上下文，开始新会话\n"
+            "`/shutdown` — 关闭 Bot 进程"
+        )
+
+        send_card_message(
+            self._feishu_client,
+            chat_id,
+            title="👋 新会话已开始",
+            content=content,
+            reply_to_message_id=message_id,
+            header_template="green",
+        )
+
+    def _send_help_card(self, chat_id: str, message_id: str) -> None:
+        """发送使用帮助卡片。"""
+        if not self._feishu_client:
+            if self._on_result:
+                self._on_result(
+                    chat_id, message_id,
+                    "使用帮助：直接发消息对话；/agent <名称> <任务> 调用智能体；/new 新会话；/shutdown 关闭 Bot。",
+                )
+            return
+
+        from .sender import send_card_message
+
+        content = (
+            "**直接对话**\n"
+            "发送任何消息即可开始多轮对话，我会记住上下文。\n\n"
+            "**创建智能体**\n"
+            "直接描述你的需求，例如：「帮我创建一个能总结文档的 agent」，"
+            "我会自动委派给 Agent Builder 完成设计与构建。\n\n"
+            "**指定智能体执行任务**\n"
+            "`/agent <名称> <任务描述>`\n"
+            "例如：`/agent doc_summarizer 总结这个文件 README.md`\n\n"
+            "---\n"
+            "**命令列表**\n"
+            "`/help` — 显示本帮助信息\n"
+            "`/new` — 清除上下文，开始新会话\n"
+            "`/shutdown` — 关闭 Bot 进程"
+        )
+
+        send_card_message(
+            self._feishu_client,
+            chat_id,
+            title="📖 使用帮助",
+            content=content,
+            reply_to_message_id=message_id,
+            header_template="blue",
+        )
 
     def shutdown(self, wait: bool = False) -> None:
         """关闭调度器和所有会话"""
