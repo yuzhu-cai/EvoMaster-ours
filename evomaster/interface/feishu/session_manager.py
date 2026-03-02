@@ -27,6 +27,7 @@ class PlaygroundSession:
     message_count: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
     initialized: bool = False
+    last_card_message_id: str | None = None  # 最后一张带按钮的卡片 ID（多轮时移除旧按钮）
 
 
 class ChatSessionManager:

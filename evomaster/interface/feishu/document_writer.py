@@ -13,17 +13,23 @@ if TYPE_CHECKING:
     import lark_oapi as lark
 
 from lark_oapi.api.docx.v1 import (
+    BatchDeleteDocumentBlockChildrenRequest,
+    BatchDeleteDocumentBlockChildrenRequestBody,
     Block,
     CreateDocumentBlockChildrenRequest,
     CreateDocumentBlockChildrenRequestBody,
     CreateDocumentRequest,
     CreateDocumentRequestBody,
     Divider,
+    ListDocumentBlockRequest,
+    PatchDocumentBlockRequest,
     Text,
     TextElement,
     TextElementStyle,
     TextRun,
     TextStyle,
+    UpdateBlockRequest,
+    UpdateTextElementsRequest,
 )
 from lark_oapi.api.drive.v1 import (
     Owner,
@@ -56,6 +62,14 @@ _LANG_MAP = {
     "plaintext": _LANG_PLAIN,
     "json": _LANG_JSON,
     "python": _LANG_PYTHON,
+}
+
+# Block type → human-readable name (for list_blocks output)
+_BLOCK_TYPE_NAMES = {
+    1: "page", 2: "text",
+    3: "heading1", 4: "heading2", 5: "heading3", 6: "heading4",
+    7: "heading5", 8: "heading6", 9: "heading7", 10: "heading8", 11: "heading9",
+    14: "code", 22: "divider",
 }
 
 
@@ -239,6 +253,198 @@ class FeishuDocumentWriter:
         block = _build_divider_block()
         return self.append_blocks(document_id, [block])
 
+    # ---- Block editing methods ----
+
+    def list_blocks(self, document_id: str) -> list[dict] | None:
+        """列出文档所有 blocks，返回简化的结构列表。
+
+        Returns:
+            A list of dicts: {index, block_id, block_type, block_type_name, text_content}
+            Returns None on failure.
+        """
+        all_blocks: list = []
+        page_token = None
+
+        while True:
+            builder = (
+                ListDocumentBlockRequest.builder()
+                .document_id(document_id)
+                .page_size(500)
+            )
+            if page_token:
+                builder = builder.page_token(page_token)
+
+            request = builder.build()
+            try:
+                response = self._client.docx.v1.document_block.list(request)
+                if not response.success():
+                    logger.warning(
+                        "Failed to list blocks: code=%s, msg=%s",
+                        response.code, response.msg,
+                    )
+                    return None
+
+                items = response.data.items or []
+                all_blocks.extend(items)
+
+                if not response.data.has_more:
+                    break
+                page_token = response.data.page_token
+            except Exception:
+                logger.exception("Exception listing blocks for document %s", document_id)
+                return None
+
+        result = []
+        for idx, block in enumerate(all_blocks):
+            block_type = block.block_type
+            result.append({
+                "index": idx,
+                "block_id": block.block_id,
+                "block_type": block_type,
+                "block_type_name": _BLOCK_TYPE_NAMES.get(block_type, f"unknown({block_type})"),
+                "text_content": _extract_block_text(block),
+            })
+        return result
+
+    def update_block_text(
+        self, document_id: str, block_id: str, new_text: str
+    ) -> bool:
+        """更新指定 block 的文本内容（替换全部 TextElements）
+
+        适用于 text、heading、code 类型的 block。
+        """
+        request = (
+            PatchDocumentBlockRequest.builder()
+            .document_id(document_id)
+            .block_id(block_id)
+            .document_revision_id(-1)
+            .request_body(
+                UpdateBlockRequest.builder()
+                .update_text_elements(
+                    UpdateTextElementsRequest.builder()
+                    .elements([_build_text_run(new_text)])
+                    .build()
+                )
+                .build()
+            )
+            .build()
+        )
+
+        try:
+            response = self._client.docx.v1.document_block.patch(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to update block %s: code=%s, msg=%s",
+                    block_id, response.code, response.msg,
+                )
+                return False
+            return True
+        except Exception:
+            logger.exception(
+                "Exception updating block %s in document %s", block_id, document_id
+            )
+            return False
+
+    def delete_blocks(
+        self, document_id: str, start_index: int, end_index: int
+    ) -> bool:
+        """删除文档根 block 下 [start_index, end_index) 范围的子 block"""
+        request = (
+            BatchDeleteDocumentBlockChildrenRequest.builder()
+            .document_id(document_id)
+            .block_id(document_id)
+            .document_revision_id(-1)
+            .request_body(
+                BatchDeleteDocumentBlockChildrenRequestBody.builder()
+                .start_index(start_index)
+                .end_index(end_index)
+                .build()
+            )
+            .build()
+        )
+
+        try:
+            response = self._client.docx.v1.document_block_children.batch_delete(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to delete blocks [%d, %d): code=%s, msg=%s",
+                    start_index, end_index, response.code, response.msg,
+                )
+                return False
+            return True
+        except Exception:
+            logger.exception(
+                "Exception deleting blocks [%d, %d) in document %s",
+                start_index, end_index, document_id,
+            )
+            return False
+
+    def insert_blocks(
+        self, document_id: str, blocks: list[Block], index: int
+    ) -> bool:
+        """在文档指定位置插入 blocks"""
+        if not blocks:
+            return True
+
+        request = (
+            CreateDocumentBlockChildrenRequest.builder()
+            .document_id(document_id)
+            .block_id(document_id)
+            .request_body(
+                CreateDocumentBlockChildrenRequestBody.builder()
+                .children(blocks)
+                .index(index)
+                .build()
+            )
+            .build()
+        )
+
+        try:
+            response = self._client.docx.v1.document_block_children.create(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to insert blocks at index %d: code=%s, msg=%s",
+                    index, response.code, response.msg,
+                )
+                return False
+            return True
+        except Exception:
+            logger.exception(
+                "Exception inserting blocks at index %d in document %s",
+                index, document_id,
+            )
+            return False
+
+    # ---- Insert convenience methods ----
+
+    def insert_heading(
+        self, document_id: str, text: str, index: int, level: int = 3
+    ) -> bool:
+        """在指定位置插入标题块"""
+        block = _build_heading_block(text, level)
+        return self.insert_blocks(document_id, [block], index)
+
+    def insert_text(
+        self, document_id: str, text: str, index: int, bold: bool = False
+    ) -> bool:
+        """在指定位置插入文本段落"""
+        block = _build_text_block(text, bold=bold)
+        return self.insert_blocks(document_id, [block], index)
+
+    def insert_code_block(
+        self, document_id: str, code: str, index: int, language: str = "plaintext"
+    ) -> bool:
+        """在指定位置插入代码块"""
+        if len(code) > _MAX_CODE_BLOCK_CHARS:
+            code = code[:_MAX_CODE_BLOCK_CHARS] + "\n... (content truncated)"
+        block = _build_code_block(code, language)
+        return self.insert_blocks(document_id, [block], index)
+
+    def insert_divider(self, document_id: str, index: int) -> bool:
+        """在指定位置插入分割线"""
+        block = _build_divider_block()
+        return self.insert_blocks(document_id, [block], index)
+
 
 # ---- Block builder helpers ----
 
@@ -316,3 +522,30 @@ def _build_code_block(code: str, language: str = "plaintext") -> Block:
 def _build_divider_block() -> Block:
     """构建分割线 Block"""
     return Block.builder().block_type(_BT_DIVIDER).divider(Divider.builder().build()).build()
+
+
+def _extract_block_text(block) -> str:
+    """从 Block 对象中提取纯文本内容"""
+    text_obj = getattr(block, "text", None)
+    if text_obj is None:
+        for level in range(1, 10):
+            text_obj = getattr(block, f"heading{level}", None)
+            if text_obj is not None:
+                break
+    if text_obj is None:
+        text_obj = getattr(block, "code", None)
+    if text_obj is None:
+        return ""
+
+    elements = getattr(text_obj, "elements", None)
+    if not elements:
+        return ""
+
+    parts = []
+    for elem in elements:
+        text_run = getattr(elem, "text_run", None)
+        if text_run:
+            content = getattr(text_run, "content", "")
+            if content:
+                parts.append(content)
+    return "".join(parts)

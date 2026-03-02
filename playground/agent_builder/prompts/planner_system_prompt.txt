@@ -183,6 +183,42 @@
 
 **写完文档后，立即调用 `finish`。**
 
+### 多轮编辑（Phase 5b）
+
+当用户要求修改已有方案（如"把 system prompt 改一下"、"requirements 那部分重写"），使用文档编辑操作：
+
+1. 先调用 `feishu_doc_write` with `action="list_blocks"` 查看文档当前结构。
+   返回每个 block 的 index、type、block_id 和文本预览。
+
+2. 根据修改类型选择操作：
+
+   **更新单个 block**（如改标题文字、更新代码块内容）：
+   ```
+   action="update_block", block_id="<从 list_blocks 获取>", content="<新的完整内容>"
+   ```
+
+   **重写整个 section**（如删除旧的需求分析，写入新的）：
+   ```
+   # 第一步：删除旧 blocks
+   action="delete_blocks", start_index=<起始索引>, end_index=<结束索引>
+   # 第二步：在原位置插入新 blocks
+   action="insert_blocks", insert_index=<起始索引>, block_type="heading", content="新标题", level=2
+   action="insert_blocks", insert_index=<起始索引+1>, block_type="text", content="新内容..."
+   ```
+
+   **在现有 section 之间插入新内容**：
+   ```
+   action="insert_blocks", insert_index=<位置>, block_type="heading", content="新 Section"
+   action="insert_blocks", insert_index=<位置+1>, block_type="text", content="内容..."
+   ```
+
+**编辑注意事项：**
+- 修改前**必须**先 `list_blocks` 获取最新索引（索引会在 delete/insert 后变化）
+- `delete_blocks` 后所有后续索引会下移，如需继续操作请重新 `list_blocks`
+- `update_block` 会替换整个 block 的文本。对于代码块，请写入完整的新代码
+- 不要删除 index 0 的 page block（文档根节点）
+- 编辑完成后，重新调用 `finish` 更新方案摘要
+
 **Finish 消息必须包含以下格式（特别是末尾的 TODO 清单）：**
 
 ```

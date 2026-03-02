@@ -57,6 +57,11 @@ class FeishuStepReporter:
     # Public API
     # ------------------------------------------------------------------
 
+    @property
+    def card_message_id(self) -> str | None:
+        """当前卡片的 message_id（finalize 后可用于外部存储）。"""
+        return self._card_message_id
+
     def set_todo_items(self, items: list[str]) -> None:
         """设置 TODO 列表项目（用于 agent_builder 等支持进度追踪的场景）。"""
         self._todo_items = [{"label": item, "done": False} for item in items]

@@ -362,6 +362,18 @@ class TaskDispatcher:
                 # 后续消息直接路由过去，支持多轮修改 plan
                 active_subtask = self._find_active_subtask(chat_id)
                 if active_subtask:
+                    # 多轮修改：patch 旧卡片移除按钮
+                    sub_session_key = f"{chat_id}:{active_subtask}"
+                    sub_session = self._session_manager.get(sub_session_key)
+                    if sub_session and sub_session.last_card_message_id and self._feishu_client:
+                        self._patch_phase1_card(
+                            sub_session.last_card_message_id,
+                            "📝 方案修改中",
+                            "用户正在修改方案，请以最新卡片为准。",
+                            "grey",
+                        )
+                        sub_session.last_card_message_id = None
+
                     answer = self._run_session_subtask(
                         chat_id, active_subtask, task_text, on_step, sender_open_id
                     )
@@ -400,6 +412,9 @@ class TaskDispatcher:
                                     },
                                 ]
                                 reporter.finalize("completed", answer, actions=actions)
+                                # 存储当前卡片 ID，下次多轮时可 patch 移除按钮
+                                if sub_session:
+                                    sub_session.last_card_message_id = reporter.card_message_id
                             else:
                                 reporter.finalize("completed", answer)
                             return None
@@ -516,6 +531,10 @@ class TaskDispatcher:
                                 subtask_reporter.finalize(
                                     "completed", answer, actions=actions
                                 )
+                                # 存储卡片 ID，下次多轮时可 patch 移除旧按钮
+                                sub_session = self._session_manager.get(session_key)
+                                if sub_session:
+                                    sub_session.last_card_message_id = subtask_reporter.card_message_id
                             else:
                                 subtask_reporter.finalize("completed", answer)
                             return None
