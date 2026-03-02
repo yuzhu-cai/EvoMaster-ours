@@ -13,16 +13,45 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict
+import random
 
 from evomaster.config import ConfigManager
 from evomaster.utils import LLMConfig, create_llm
-from evomaster.agent import create_default_registry
+from evomaster.agent import create_default_registry, create_registry, BaseAgent, Agent, AgentConfig
+from evomaster.agent.context import ContextConfig
 from evomaster.agent.session import LocalSession, LocalSessionConfig, DockerSession, DockerSessionConfig
 from evomaster.agent.tools import MCPToolManager
 from evomaster.skills import SkillRegistry
-
 from .exp import BaseExp
+from typing import List, Any, Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
+
+class AgentSlots(dict):
+    """兼容 dict 与属性访问的 Agent 容器（self.agents.xxx）。"""
+
+    def declare(self, *names: str) -> "AgentSlots":
+        """预声明槽位，便于 IDE 补全/避免到处复制 YAML 里的字符串。"""
+        for name in names:
+            self.setdefault(name, None)
+        return self
+
+    def __getattr__(self, name: str):
+        if name in self:
+            value = self[name]
+            if value is None:
+                raise ValueError(f"Agent 未初始化: {name}")
+            return value
+        raise AttributeError(name)
+
+    def __setattr__(self, name: str, value):
+        self[name] = value
+
+    def __dir__(self):
+        return sorted(set(super().__dir__()) | set(self.keys()))
+
+    def get_random_agent(self) -> BaseAgent:
+        return random.choice(list(self.values()))
 
 class BasePlayground:
     """Playground 基类
@@ -72,9 +101,12 @@ class BasePlayground:
 
         # 组件存储
         self.session = None
-        self.agent = None
+        self.agents = AgentSlots()
+        self.exps = {}
         self.tools = None
-    
+        self.mcp_manager = None
+        self._base_skill_registry = None
+
     def _start_loop_in_thread(self) -> threading.Thread:
 
         def _runner():
@@ -235,14 +267,65 @@ class BasePlayground:
         else:
             self.log_path = None
 
-    def _setup_llm_config(self) -> dict:
-        """准备 LLM 配置
+    def _get_agents_config(self) -> dict:
+        return self.config_manager.get_agents_config()
 
-        Returns:
-            LLM 配置字典
-        """
-        llm_config_dict = self.config_manager.get_llm_config()
-        return llm_config_dict
+    def _get_agent_config(self, name: str) -> dict:
+        return self.config_manager.get_agent_config(name)
+
+    def _setup_agent_llm(self, agent_name: str) -> dict:
+        return self.config_manager.get_agent_llm_config(agent_name)
+    
+    def _setup_agent_tools(self, agent_name: str) -> dict:
+        return self.config_manager.get_agent_tools_config(agent_name)
+    
+    def _setup_agent_skills(self, agent_name: str) -> dict:
+        return self.config_manager.get_agent_skills_config(agent_name)
+        
+
+    def _get_or_create_skill_registry(self, skill_config: dict | None = None) -> SkillRegistry:
+        """按 agent 配置创建 SkillRegistry；当 skills 为 '*' 时缓存全量 registry。"""
+        if skill_config is None:
+            skill_config = {}
+
+        skills_root = Path(skill_config.get("skill_dir", "./evomaster/skills"))
+        skills = skill_config.get("skills")
+
+        if skills == "*" or skills == ["*"]:
+            if self._base_skill_registry is None:
+                self.logger.info(f"Loading full skill registry from: {skills_root}")
+                self._base_skill_registry = SkillRegistry(skills_root)
+                self.logger.info(f"Loaded {len(self._base_skill_registry.get_all_skills())} skills")
+            return self._base_skill_registry
+
+        if isinstance(skills, str):
+            skills = [skills]
+
+        self.logger.info(f"Loading selected skills from: {skills_root} -> {skills}")
+        return SkillRegistry(skills_root, skills=skills)
+
+
+    def _resolve_skill_registry(self, skill_config: dict | None) -> SkillRegistry | None:
+        """根据 skill_config 解析 SkillRegistry（可为子集）。"""
+        if not skill_config:
+            return None
+
+        skills_config = skill_config.get("skills")
+
+        if not skills_config:
+            return None
+
+        if isinstance(skills_config, str):
+            skills_config = [skills_config]
+        if not isinstance(skills_config, list):
+            raise ValueError(
+                "Invalid skills config. "
+                "Expected list[str], '*', or omitted."
+            )
+
+        normalized_skill_config = skill_config.copy()
+        normalized_skill_config["skills"] = skills_config
+        return self._get_or_create_skill_registry(normalized_skill_config)
 
     def _setup_session(self) -> None:
         """创建并打开 Session（如果尚未创建）
@@ -284,19 +367,73 @@ class BasePlayground:
         else:
             self.logger.debug("Session already open, reusing existing session")
 
-    def _setup_tools(self, skill_registry=None) -> None:
-        """创建工具注册表并初始化 MCP 工具（如果配置了）
-        
-        Args:
-            skill_registry: 可选的 SkillRegistry 实例，如果提供则注册 SkillTool
-        """
-        # 创建工具注册表（传入 skill_registry）
-        self.tools = create_default_registry(skill_registry)
+    def _setup_tools(
+        self,
+        skill_config: dict | None = None,
+        tool_config: dict[str, Any] | None = None,
+    ):
+        """创建工具注册表并按需初始化 MCP 工具。
 
-        # 初始化 MCP 工具（如果配置了）
-        self.mcp_manager = None
-        if hasattr(self.config, 'mcp') or hasattr(self.config, 'mcp_servers'):
-            self.mcp_manager = self._setup_mcp_tools()
+        无论 tool_config 中是否启用了某些工具，所有内置工具都会被注册到 registry 中，
+        以便代码中可以手动调用未启用的工具。工具的"启用/禁用"仅影响是否将工具信息
+        暴露给 LLM（通过 enable_tools 和 _get_tool_specs 控制）。
+
+        Args:
+            skill_config: Skill 配置，内部会按需解析 SkillRegistry
+            tool_config: per-agent 工具配置，形如 {"builtin": list[str], "mcp": str}
+                         其中 mcp 为 MCP 配置文件路径，空字符串表示不启用
+        """
+        skill_registry = self._resolve_skill_registry(skill_config)
+        tool_config = tool_config or {"builtin": ["*"], "mcp": ""}
+
+        mcp_config_file = tool_config.get("mcp", "")
+
+        # 始终注册所有内置工具，确保代码中可以手动调用任何工具
+        tool_registry = create_registry(
+            builtin_names=["*"],
+            skill_registry=skill_registry,
+        )
+        self.tools = tool_registry
+
+        # MCP: 当 mcp_config_file 非空时加载 MCP 工具
+        if mcp_config_file:
+            # 只初始化一次连接，后续 agent 复用并注册到新的 registry
+            if self.mcp_manager is None:
+                self.mcp_manager = self._setup_mcp_tools(mcp_config_file)
+            elif self.mcp_manager is not None:
+                self.mcp_manager.register_tools(tool_registry)
+
+        return tool_registry
+
+    def _setup_agents(self) -> None:
+        """按配置创建所有 Agent, 初始化self.agents"""
+        agents_config = self._get_agents_config()
+
+        for agent_name, agent_config in agents_config.items():
+            llm_config = self._setup_agent_llm(agent_name)
+            tool_config = self._setup_agent_tools(agent_name)
+            skill_config = self._setup_agent_skills(agent_name)
+
+            agent = self._create_agent(
+                name=agent_name,
+                agent_config=agent_config,
+                llm_config=llm_config,
+                tool_config=tool_config,
+                skill_config=skill_config,
+            )
+            setattr(self.agents, f"{agent_name}_agent", agent)
+
+            self.logger.info(f"{agent_name.capitalize()} Agent created with:")
+            self.logger.info(f"  - LLM: {llm_config['model']}")
+            self.logger.info(f"  - Tools: {agent.tools.get_tool_names()}")
+            self.logger.info(f"  - Skills: {skill_config.get('skills', [])}")
+
+        #向后兼容
+        self.agent = self.agents.get_random_agent()
+
+    def _setup_exps(self) -> None:
+        #TODO: 根据配置文件中的exp配置，创建exp实例并存入self.exps字典。当前仅为列表简化
+        pass
 
     def _get_output_config(self) -> dict:
         """获取 LLM 输出配置
@@ -313,10 +450,10 @@ class BasePlayground:
     def _create_agent(
         self,
         name: str,
-        agent_config: dict,
-        enable_tools: bool = True,
-        llm_config_dict: dict | None = None,
-        skill_registry: SkillRegistry | None = None,
+        agent_config: dict | None = None,
+        llm_config: dict | None = None,
+        tool_config: dict | None = None,
+        skill_config: dict | None = None,
     ):
         """创建 Agent 实例
 
@@ -325,17 +462,37 @@ class BasePlayground:
         Args:
             name: Agent 名称
             agent_config: Agent 配置字典
-            enable_tools: 是否启用工具调用
-            llm_config_dict: LLM 配置字典（如果为 None，则从配置管理器获取）
-
+            llm_config: LLM 配置字典
+            tool_config: 工具配置字典，形如 {"builtin": list[str], "mcp": list[str]}
+            skill_config: Skill 配置字典
         Returns:
             Agent 实例
         """
-        from evomaster.agent import Agent, AgentConfig
-        from evomaster.agent.context import ContextConfig
-        from evomaster.utils import LLMConfig, create_llm
+        # 向后兼容：未传参时自动获取
+        if agent_config is None:
+            agent_config = self._get_agent_config(name)
+        if llm_config is None:
+            llm_config = self._setup_agent_llm(name)
+        if tool_config is None:
+            tool_config = self._setup_agent_tools(name)
+        if skill_config is None:
+            skill_config = self._setup_agent_skills(name)
 
-        # 提取 Agent 配置
+        # 根据 tool_config 推断是否启用工具
+        builtin = tool_config.get("builtin", ["*"])
+        mcp_config_file = tool_config.get("mcp", "")
+        enable_tools = bool(builtin) or bool(mcp_config_file)
+
+        # 计算启用的工具名称列表（用于过滤暴露给 LLM 的工具）
+        # builtin 为 ["*"] 时表示所有工具都启用，为 [] 时不启用任何工具
+        enabled_tool_names = builtin if builtin else []
+
+        # 创建工具注册表（始终注册所有工具）
+        tools = self._setup_tools(
+            skill_config=skill_config,
+            tool_config=tool_config,
+        )
+
         max_turns = agent_config.get('max_turns', 20)
         context_config_dict = agent_config.get('context', {})
         context_config = ContextConfig(**context_config_dict)
@@ -345,41 +502,36 @@ class BasePlayground:
         output_config = self._get_output_config()
 
         # 为每个 Agent 创建独立的 LLM 实例
-        if llm_config_dict is None:
-            llm_config_dict = self._setup_llm_config()
-        llm = create_llm(LLMConfig(**llm_config_dict), output_config=output_config)
+        llm = create_llm(LLMConfig(**llm_config), output_config=output_config)
         self.logger.debug(f"Created independent LLM instance for {name} agent")
 
         # 获取提示词文件路径
         system_prompt_file = agent_config.get('system_prompt_file')
         user_prompt_file = agent_config.get('user_prompt_file')
 
-
         playground_base = Path(str(self.config_dir).replace("configs", "playground"))
         # 解析 system_prompt_file
         if system_prompt_file:
             prompt_path = Path(system_prompt_file)
             if not prompt_path.is_absolute():
-                # 修改：相对于 playground_base 解析
                 system_prompt_file = str((playground_base / prompt_path).resolve())
-        
+
         # 解析 user_prompt_file
         if user_prompt_file:
             prompt_path = Path(user_prompt_file)
             if not prompt_path.is_absolute():
-                # 修改：相对于 playground_base 解析
                 user_prompt_file = str((playground_base / prompt_path).resolve())
 
         # 获取提示词格式化参数（如果有）
         prompt_format_kwargs = agent_config.get('prompt_format_kwargs', {})
 
+        skill_registry = self._resolve_skill_registry(skill_config)
+
         # 创建 Agent
-        # 注意：无论 enable_tools 是什么值，都传递 tools 给 Agent
-        # enable_tools 只控制工具信息是否出现在提示词中，不影响工具注册
         agent = Agent(
             llm=llm,
             session=self.session,
-            tools=self.tools,  # 始终传递 tools，工具始终注册
+            tools=tools,
             system_prompt_file=system_prompt_file,
             user_prompt_file=user_prompt_file,
             prompt_format_kwargs=prompt_format_kwargs,
@@ -387,152 +539,128 @@ class BasePlayground:
             skill_registry=skill_registry,
             output_config=output_config,
             config_dir=self.config_dir,
-            enable_tools=enable_tools,  # 控制工具信息是否出现在提示词中
+            enable_tools=enable_tools,
+            enabled_tool_names=enabled_tool_names,
         )
-        
+
         # 设置Agent名称（用于轨迹文件中标识不同的agent）
         agent.set_agent_name(name)
 
         return agent
 
+    def copy_agent(self, agent, new_agent_name: str | None = None):
+        """复制 Agent 实例，创建新的上下文但共享其他配置
+
+        创建一个新的 Agent 实例，该实例：
+        - 拥有独立的 LLM 实例（复制时必创建新 LLM，不共享）
+        - 共享 session, tools, skill_registry, config_dir, enable_tools 等配置
+        - 拥有独立的上下文（context_manager, current_dialog, trajectory 等）
+        - 上下文相关的状态会被重置（current_dialog=None, trajectory=None, _step_count=0 等）
+
+        Args:
+            agent: 要复制的 Agent 实例
+            new_agent_name: 新 Agent 的名称（可选，用于标识）
+
+        Returns:
+            新的 Agent 实例，类型与输入 agent 相同
+        """
+        from evomaster.agent import AgentConfig
+        from evomaster.utils import LLMConfig, create_llm
+
+        # 复制 AgentConfig，特别是 context_config 需要独立
+        if agent.config:
+            new_config = agent.config.model_copy(deep=True)
+        else:
+            new_config = AgentConfig()
+
+        agent_class = agent.__class__
+
+        if hasattr(agent.llm, "config"):
+            # 兼容 Pydantic v2 (.model_dump()) 和 v1 (.dict())
+            cfg_obj = agent.llm.config
+            llm_config_dict = cfg_obj.model_dump() if hasattr(cfg_obj, "model_dump") else cfg_obj.dict()
+        else:
+            # 降级方案：如果无法从对象获取，尝试通过 agent 名称从配置管理器重新读取
+            source_name = getattr(agent, "name", "default")
+            llm_config_dict = self._setup_agent_llm(source_name)
+        output_config = agent.output_config.copy() if agent.output_config else self._get_output_config()
+        new_llm = create_llm(LLMConfig(**llm_config_dict), output_config=output_config)
+        self.logger.debug(f"Created independent LLM instance for copied agent: {new_agent_name}")
+
+        shared_kwargs = {
+            'llm': new_llm,
+            'session': agent.session,
+            'tools': agent.tools,
+            'config': new_config,
+            'skill_registry': agent.skill_registry,
+            'output_config': agent.output_config.copy() if agent.output_config else None,
+            'config_dir': agent.config_dir,
+            'enable_tools': agent.enable_tools,
+            'enabled_tool_names': getattr(agent, 'enabled_tool_names', None),
+        }
+
+        if agent_class.__name__ == 'Agent':
+            shared_kwargs['prompt_format_kwargs'] = (
+                getattr(agent, '_prompt_format_kwargs', {}).copy()
+                if hasattr(agent, '_prompt_format_kwargs') else None
+            )
+
+        new_agent = agent_class(**shared_kwargs)
+
+        if agent_class.__name__ == 'Agent':
+            if hasattr(agent, '_system_prompt') and agent._system_prompt is not None:
+                new_agent._system_prompt = agent._system_prompt
+            if hasattr(agent, '_user_prompt') and agent._user_prompt is not None:
+                new_agent._user_prompt = agent._user_prompt
+
+        if new_agent_name:
+            new_agent.set_agent_name(new_agent_name)
+
+        new_agent.current_dialog = None
+        new_agent.trajectory = None
+        new_agent._step_count = 0
+        new_agent._initial_system_prompt = None
+        new_agent._initial_user_prompt = None
+
+        return new_agent
+
     def setup(self) -> None:
         """初始化所有组件
 
-        支持单 agent 和多 agent 两种模式：
-        - 如果配置中有 `agents:` 字段，则创建多个 agent（多 agent 模式）
-        - 否则，如果配置中有 `agent:` 字段，则创建单个 agent（单 agent 模式，向后兼容）
-
         具体实现包括：
-        1. 准备 LLM 配置
-        2. 创建 Session（如果尚未创建）
-        3. 加载 Skills（如果启用）
-        3. 创建工具注册表并初始化 MCP 工具
-        4. 创建 Agent(s)
-
-        子类可以覆盖此方法添加额外逻辑。
+        1. 创建 Session（如果尚未创建）
+        2. 初始化 Agent(s)（内部按 agent 处理 llm/tools/skills）
+        3. 初始化 Exp(s) #TODO
         """
         self.logger.info("Setting up playground...")
 
-        # 1. 准备 LLM 配置
-        llm_config_dict = self._setup_llm_config()
-        self._llm_config_dict = llm_config_dict  # 保存供子类使用
-
-        # 2. 创建 Session（如果尚未创建）
         self._setup_session()
+        self._setup_agents()
+        # TODO: self._setup_exps()
 
-        # 3. 加载 Skills（如果启用）- 在多 agent 和单 agent 模式下都需要
-        skill_registry = None
-        config_dict = self.config.model_dump()
-        skills_config = config_dict.get("skills", {})
-        if skills_config.get("enabled", False):
-            self.logger.info("Skills enabled, loading skill registry...")
-            from pathlib import Path
-            from evomaster.skills import SkillRegistry
+        self.logger.info("Multi-agent playground setup complete")
 
-            skills_root = Path(skills_config.get("skills_root", "evomaster/skills"))
-            skill_registry = SkillRegistry(skills_root)
-            self.logger.info(f"Loaded {len(skill_registry.get_all_skills())} skills")
-
-        # 4. 创建工具注册表并初始化 MCP 工具（传入 skill_registry）
-        self._setup_tools(skill_registry)
-
-        # 5. 创建 Agent(s)
-        agents_config = getattr(self.config, 'agents', None)
-        if agents_config:
-            # 多 agent 模式
-            if not isinstance(agents_config, dict) or not agents_config:
-                raise ValueError(
-                    "Invalid 'agents' configuration. "
-                    "Expected a non-empty dictionary with agent names as keys."
-                )
-            
-            # 创建多个 agent
-            for agent_name, agent_config in agents_config.items():
-                enable_tools = agent_config.get('enable_tools', True)
-                self.agent = self._create_agent(
-                    name=agent_name,
-                    agent_config=agent_config,
-                    enable_tools=enable_tools,
-                    llm_config_dict=llm_config_dict,
-                    skill_registry=skill_registry,  # 传递 skill_registry
-                )
-                self.logger.info(f"{agent_name.capitalize()} Agent created")
-            
-            self.logger.info("Multi-agent playground setup complete")
-        else:
-            # 单 agent 模式（向后兼容）
-            # skill_registry 已经在上面加载了，这里不需要重复加载
-
-            agent_config_dict = getattr(self.config, 'agent', None)
-            if not agent_config_dict:
-                raise ValueError(
-                    "No agent configuration found. "
-                    "Please add either 'agent' or 'agents' section to config.yaml"
-                )
-            
-            # 获取提示词文件路径（如果配置了）并添加到 agent_config_dict
-            system_prompt_file = getattr(self.config, 'system_prompt_file', None)
-            user_prompt_file = getattr(self.config, 'user_prompt_file', None)
-            
-            # 将提示词文件路径添加到 agent_config_dict（如果存在）
-            if system_prompt_file:
-                agent_config_dict = agent_config_dict.copy()
-                agent_config_dict['system_prompt_file'] = system_prompt_file
-            
-            if user_prompt_file:
-                if not isinstance(agent_config_dict, dict):
-                    agent_config_dict = agent_config_dict.copy() if hasattr(agent_config_dict, 'copy') else dict(agent_config_dict)
-                agent_config_dict['user_prompt_file'] = user_prompt_file
-            
-            # 创建单个 agent
-            enable_tools = agent_config_dict.get('enable_tools', True)
-            self.agent = self._create_agent(
-                name="default",
-                agent_config=agent_config_dict,
-                enable_tools=enable_tools,
-                llm_config_dict=llm_config_dict,
-                skill_registry=skill_registry,
-            )
-            
-            self.logger.info("Single-agent playground setup complete")
-
-    def _setup_mcp_tools(self):
+    def _setup_mcp_tools(self, config_file: str):
         """初始化 MCP 工具
 
         从 MCP 配置文件（JSON 格式）读取服务器列表，初始化连接并注册工具。
 
+        Args:
+            config_file: MCP 配置文件路径（相对于 config_dir 或绝对路径）
+
         Returns:
             MCPToolManager 实例，如果配置无效则返回 None
         """
-        # 1. 检查 MCP 配置
-        mcp_config = getattr(self.config, 'mcp', None)
-        if not mcp_config:
-            self.logger.debug("MCP not configured, skipping")
-            return None
-
-        # 2. 检查配置格式
-        if not isinstance(mcp_config, dict):
-            self.logger.error("Invalid MCP config format, expected dict")
-            return None
-
-        # 3. 检查是否启用
-        if not mcp_config.get('enabled', True):
-            self.logger.info("MCP is disabled in config")
-            return None
-
-        # 4. 获取配置文件路径
-        config_file = mcp_config.get('config_file', 'mcp_config.json')
-
-        # 5. 解析配置文件路径
+        # 1. 解析配置文件路径
         config_path = Path(config_file)
         if not config_path.is_absolute():
             config_path = self.config_manager.config_dir / config_path
 
         if not config_path.exists():
-            self.logger.warning(f"MCP config file not found: {config_path}")
+            self.logger.error(f"MCP config file not found: {config_path}")
             return None
 
-        # 5. 加载 MCP 配置
+        # 2. 加载 MCP 配置
         self.logger.info(f"Loading MCP config from: {config_path}")
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -575,6 +703,7 @@ class BasePlayground:
         manager = MCPToolManager()
 
         # 子类可以复写此方法来注入自定义逻辑（如 path adaptor、tool_include_only）
+        mcp_config = getattr(self.config, 'mcp', {}) or {}
         self._configure_mcp_manager(manager, mcp_config)
 
         # 8. 异步初始化 MCP 服务器
@@ -724,12 +853,13 @@ class BasePlayground:
         
         return trajectory_file
 
-    def run(self, task_description: str, output_file: str | None = None) -> dict:
+    def run(self, task_description: str, output_file: str | None = None, images: list[str] | None = None) -> dict:
         """运行工作流
 
         Args:
             task_description: 任务描述
             output_file: 结果保存文件（可选，如果设置了 run_dir 则自动保存到 trajectories/）
+            images: 图片文件路径列表（可选，用于多模态任务）
 
         Returns:
             运行结果
@@ -744,7 +874,7 @@ class BasePlayground:
             exp = self._create_exp()
 
             self.logger.info("Running experiment...")
-            result = exp.run(task_description)
+            result = exp.run(task_description, images=images)
 
             return result
 
@@ -812,3 +942,82 @@ class BasePlayground:
             else:
                 # 只标记关闭状态，但不实际关闭 session（容器继续运行）
                 self.logger.debug("Session marked as closed but container kept running")
+
+    def execute_parallel_tasks(self, tasks: List[Callable], max_workers: int = 3) -> List[Any]:
+            """通用并行任务执行器
+
+            Args:
+                tasks: 这里的每个元素应该是一个可调用的对象。
+                    如果是带参数的函数，请使用 functools.partial 封装。
+                    例如: [partial(exp1.run, task="A"), partial(exp2.run, task="B")]
+                max_workers: 最大并行线程数
+
+            Returns:
+                List[Any]: 按照输入 tasks 的顺序返回结果列表。
+                        如果任务抛出异常，结果列表中对应位置将是该 Exception 对象。
+            """
+            self.logger.info(f"Starting parallel execution of {len(tasks)} tasks with {max_workers} workers.")
+            
+            results = [None] * len(tasks)
+            
+            # 检查是否启用了并行资源分配
+            session_config = self.config.session.get("local", {})
+            parallel_config = session_config.get("parallel", {})
+            parallel_enabled = parallel_config.get("enabled", False)
+            
+            # 检查是否启用了 split_workspace_for_exp
+            split_workspace = parallel_config.get("split_workspace_for_exp", False)
+            
+            # 包装任务函数，设置并行索引和独立工作空间
+            def wrap_task(task_func, parallel_index):
+                def wrapped():
+                    try:
+                        # 如果启用了并行资源分配，设置 session 的并行索引
+                        if parallel_enabled and self.session is not None:
+                            from evomaster.agent.session.local import LocalSession
+                            if isinstance(self.session, LocalSession):
+                                self.session.set_parallel_index(parallel_index)
+                                self.logger.debug(f"设置并行索引: {parallel_index}")
+                                
+                                # 如果启用了 split_workspace_for_exp，为当前 exp 创建独立工作空间
+                                if split_workspace:
+                                    import os
+                                    main_workspace = self.session.config.workspace_path
+                                    exp_workspace = os.path.join(main_workspace, f"exp_{parallel_index}")
+                                    # 通过 env 创建 exp 工作空间（含软链接）
+                                    self.session._env.setup_exp_workspace(exp_workspace)
+                                    # 设置线程本地的工作空间路径
+                                    self.session.set_workspace_path(exp_workspace)
+                                    self.logger.info(
+                                        f"Exp {parallel_index} 使用独立工作空间: {exp_workspace}"
+                                    )
+                        return task_func()
+                    finally:
+                        # 清理线程本地状态
+                        if parallel_enabled and self.session is not None:
+                            from evomaster.agent.session.local import LocalSession
+                            if isinstance(self.session, LocalSession):
+                                self.session.set_parallel_index(None)
+                                if split_workspace:
+                                    self.session.set_workspace_path(None)
+                return wrapped
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # 提交所有任务，建立 future 到 index 的映射，以保证返回顺序
+                wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
+                future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
+
+                # 处理完成的任务
+                for future in as_completed(future_to_index):
+                    index = future_to_index[future]
+                    try:
+                        # 获取返回值
+                        result = future.result()
+                        results[index] = result
+                    except Exception as exc:
+                        self.logger.error(f"Task {index} generated an exception: {exc}")
+                        # 将异常对象作为结果返回，避免打断其他任务
+                        results[index] = exc
+
+            self.logger.info("Parallel execution completed.")
+            return results

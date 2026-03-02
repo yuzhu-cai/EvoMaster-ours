@@ -44,9 +44,10 @@ llm:
 # ============================================
 agents:
   analyze:
-    llm: "local_sglang"
+    llm: "openai"
     max_turns: 10
-    enable_tools: true
+    # 默认使用builtin工具集: execute_bash, str_replace_editor, think, finish, 默认不使用mcp工具
+    # 默认不使用skills
 
     context:
       max_tokens: 128000
@@ -58,9 +59,10 @@ agents:
     user_prompt_file: "prompts/analyze_user_prompt.txt"
 
   plan:
-    llm: "local_sglang"
+    llm: "openai"
     max_turns: 10
-    enable_tools: false
+    tools: # 显式指定无 tools
+    skills:  # 显式指定无 skill
 
     context:
       max_tokens: 128000
@@ -72,9 +74,11 @@ agents:
     user_prompt_file: "prompts/plan_user_prompt.txt"
 
   search:
-    llm: "local_sglang"
+    llm: "openai"
     max_turns: 30
-    enable_tools: true
+    tools: "default" # 默认使用builtin工具集: execute_bash, str_replace_editor, think, finish, 默认不使用mcp工具
+    skills:  # 通配符 → 全部 skill
+      - "*"
 
     context:
       max_tokens: 128000
@@ -86,9 +90,19 @@ agents:
     user_prompt_file: "prompts/search_user_prompt.txt"
 
   summarize:
-    llm: "local_sglang"
+    llm: "openai"
     max_turns: 20
-    enable_tools: true
+    tools: 
+      builtin: # 指定子集: 
+        - "execute_bash"
+        - "think"
+        - "finish"
+      mcp: [] # 指定不使用mcp工具
+
+    skills:  # 指定子集
+      - "rag"
+      - "pdf"
+
 
     context:
       max_tokens: 128000
@@ -100,18 +114,28 @@ agents:
     user_prompt_file: "prompts/summarize_user_prompt.txt"
 
 # ============================================
-# Skills 配置（RAG 必须启用）
+# Embedding 配置（RAG 向量检索使用）
+# Embedding 配置（RAG 向量检索使用）
 # ============================================
-skills:
-  enabled: true
-  skills_root: "./evomaster/skills"
+embedding:
+  # 类型：local（本地 transformer 模型）或 openai（OpenAI API）
+  type: "openai"
+  
+  # OpenAI embedding 配置（当 type 为 openai 时使用）
+  openai:
+    model: "text-embedding-3-large"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    dimensions: 3072  # text-embedding-3-large 支持 512, 768, 1024, 2048, 3072
+  
+  # 本地模型配置（当 type 为 local 时使用）
+  local:
+    model: "evomaster/skills/rag/local_models/all-mpnet-base-v2"
+    device: "cpu"
 
 # ============================================
 # MCP 配置
 # ============================================
-mcp:
-  config_file: "mcp_config.json"
-  enabled: false
 
 # ============================================
 # Session 配置

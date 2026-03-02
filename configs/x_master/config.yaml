@@ -2,10 +2,12 @@
 # X-Master 工作流配置
 # ============================================
 xmaster:
-  # 每个阶段并行执行的 Agent 数量（TODO: 并行执行暂未实现，当前仅支持 agent_num=1）
+  # 每个阶段并行执行的 Agent 数量
   agent_num: 1
-  # 线程池大小（TODO: 并行执行暂未实现）
+  # 线程池大小
   max_workers: 1
+  # 是否进行并行化
+  parallel: false
 
 # ============================================
 # LLM 配置
@@ -47,6 +49,7 @@ llm:
 
   default: "local_sglang"
 
+
 # ============================================
 # agent 配置
 # ============================================
@@ -56,7 +59,9 @@ agents:
   Solver:
     llm: "local_sglang"
     max_turns: 50
-    enable_tools: True  # General Agent使用工具调用
+    tools:
+      builtin: ["*"]
+      mcp: "mcp_config.json"
 
     context:
       max_tokens: 128000
@@ -71,7 +76,9 @@ agents:
   Critic:
     llm: "local_sglang"
     max_turns: 50
-    enable_tools: True  # General Agent使用工具调用
+    tools:
+      builtin: ["*"]
+      mcp: "mcp_config.json"
 
     context:
       max_tokens: 128000
@@ -86,7 +93,9 @@ agents:
   Rewriter:
     llm: "local_sglang"
     max_turns: 50
-    enable_tools: True  # General Agent使用工具调用
+    tools:
+      builtin: ["*"]
+      mcp: "mcp_config.json"
 
     context:
       max_tokens: 128000
@@ -101,7 +110,9 @@ agents:
   Selector:
     llm: "local_sglang"
     max_turns: 50
-    enable_tools: True  # General Agent使用工具调用
+    tools:
+      builtin: ["*"]
+      mcp: "mcp_config.json"
 
     context:
       max_tokens: 128000
@@ -114,15 +125,11 @@ agents:
     user_prompt_file: "prompts/select_user.txt"
 
 # ============================================
-# MCP 配置
+# MCP 配置（高级选项，per-agent MCP 通过 tools.mcp 启用）
 # ============================================
-mcp:
-  # MCP 配置文件路径（相对于 config_dir）
-  config_file: "mcp_config.json"
-
-  # 是否启用 MCP（可选，默认 true）
-  enabled: true
-
+# mcp:
+#   path_adaptor: "calculation"
+#   calculation_servers: ["server1"]
 
 # ============================================
 # Session 配置
