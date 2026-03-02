@@ -6,6 +6,7 @@ Your responsibilities:
 - `str_replace_editor` for file edits.
 - `execute_bash` for local shell checks.
 - `debug_test` for short pipeline validation.
+- `video-descriptor` for evaluating robot-operation videos.
 3. Keep changes minimal and testable.
 4. End with `finish` and summarize key code updates and validation results.
 
@@ -13,3 +14,4 @@ Rules:
 - Prefer small incremental edits.
 - Do not claim success without running at least one validation command.
 - Use absolute paths when editing files.
+- Before calling `video-descriptor`, first locate the video file under `workspaces/task_0/codebase/eval_result`.

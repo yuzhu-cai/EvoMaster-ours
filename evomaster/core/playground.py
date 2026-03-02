@@ -683,10 +683,10 @@ class BasePlayground:
         """设置轨迹文件路径
 
         确定轨迹文件路径并设置到 BaseAgent。优先级：
-        1. 如果提供了 output_file，则使用该路径
+        1. 如果提供了 output_file，则优先使用该路径（`.json` 会自动切换为 `.jsonl`）
         2. 如果设置了 run_dir，则自动保存到 trajectories/
-           - 批量任务模式：trajectories/{task_id}/trajectory.json
-           - 单任务模式：trajectories/trajectory.json
+           - 批量任务模式：trajectories/{task_id}/trajectory.jsonl
+           - 单任务模式：trajectories/trajectory.jsonl
 
         Args:
             output_file: 结果保存文件路径（可选）
@@ -696,17 +696,25 @@ class BasePlayground:
         """
         trajectory_file = None
         if output_file:
-            trajectory_file = Path(output_file)
+            output_path = Path(output_file)
+            if output_path.suffix.lower() == ".json":
+                trajectory_file = output_path.with_suffix(".jsonl")
+                self.logger.info(
+                    "Trajectory output switched from .json to .jsonl for incremental write: "
+                    f"{trajectory_file}"
+                )
+            else:
+                trajectory_file = output_path
         elif self.run_dir:
             # 如果设置了 run_dir，则自动保存到 trajectories/
             if hasattr(self, 'task_id') and self.task_id:
-                # 批量任务模式：保存到 trajectories/{task_id}/trajectory.json
+                # 批量任务模式：保存到 trajectories/{task_id}/trajectory.jsonl
                 trajectory_dir = self.run_dir / "trajectories" / self.task_id
                 trajectory_dir.mkdir(parents=True, exist_ok=True)
-                trajectory_file = trajectory_dir / "trajectory.json"
+                trajectory_file = trajectory_dir / "trajectory.jsonl"
             else:
-                # 单任务模式：保存到 trajectories/trajectory.json
-                trajectory_file = self.run_dir / "trajectories" / "trajectory.json"
+                # 单任务模式：保存到 trajectories/trajectory.jsonl
+                trajectory_file = self.run_dir / "trajectories" / "trajectory.jsonl"
         
         # 设置轨迹文件路径到BaseAgent（所有agent共享同一个文件）
         if trajectory_file:

@@ -61,8 +61,18 @@ debug_test:
   use_k8s_debug_pod: false
   k8s_fallback_to_local: true
 
+video_descriptor:
+  enabled: true
+  base_url: "127.0.0.1:30030"
+  api_key: ""
+  model: "Qwen/Qwen3-VL-235B-A22B-Instruct"
+  temperature: 0.2
+  max_tokens: 1024
+  timeout: 120
+  max_frames: 12
+
 tool_policy:
-  allowed: ["finish", "str_replace_editor", "debug_test"]
+  allowed: ["finish", "str_replace_editor", "debug_test", "video-descriptor"]
   disable_execute_bash: true
 
 experiment:
@@ -89,6 +99,7 @@ k8s_runner:
   poll_interval_seconds: 15
   job_timeout_seconds: 9600
   cleanup_on_success: true
+  cleanup_on_timeout: true
   manifest_path: "/data/zixing/code/simulators/RoboTwin/robotwin.yaml"
   job_name_prefix: "robotwin-adjust-bottle"
   container_workspace: "/workspace"
@@ -96,6 +107,10 @@ k8s_runner:
   apply_mounts_to_all_containers: false
   codebase_volume_name: "robowin-workspace"
   codebase_mount_path: "/workspace/RoboTwin"
+  enable_assets_alias_mount: true
+  assets_subdir: "assets"
+  assets_alias_mount_path: "/workspace/assets"
+  assets_alias_volume_name: "robowin-assets-alias"
   enable_submission_mount: true
   submission_volume_name: "submission"
   submission_mount_path: "/workspace/submission"

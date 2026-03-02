@@ -23,7 +23,7 @@ llm:
 agents:
   coding:
     llm: "gpugeek_vendor2_claude45"
-    max_turns: 60
+    max_turns: 100
     enable_tools: true
     context:
       max_tokens: 128000
@@ -77,7 +77,7 @@ tool_policy:
 
 experiment:
   # 对齐 launch.json: agent.steps=20, agent.time_limit=86400
-  steps: 1
+  steps: 10
   time_limit_seconds: 86400
   metric_mode: "maximize"
   # 可按日志格式调整
@@ -100,7 +100,7 @@ k8s_runner:
   enabled: true
   namespace: "default"
   poll_interval_seconds: 15
-  job_timeout_seconds: 9600
+  job_timeout_seconds: 14400
   cleanup_on_success: true
   cleanup_on_timeout: true
   manifest_path: "configs/embomaster/k8s_template/robotwin-adjust_bottle.yaml"

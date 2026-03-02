@@ -20,7 +20,7 @@
                 "--agent",
                 "embomaster",
                 "--config",
-                "${workspaceFolder}/configs/embomaster/config_robotwin_adjust_bottle_dsv32_e2e_once.yaml",
+                "${workspaceFolder}/configs/embomaster/config_robotwin_adjust_bottle_dsv32_e2e_10s.yaml",
                 "--task",
                 "/data/zixing/code/EvoMaster-ours/playground/embomaster/PRDs/robotwin_task_2.md"
             ]

@@ -35,6 +35,7 @@ class K8SExperimentRunner:
         self.poll_interval_seconds = int(self.config.get("poll_interval_seconds", 15))
         self.job_timeout_seconds = int(self.config.get("job_timeout_seconds", 3600))
         self.cleanup_on_success = bool(self.config.get("cleanup_on_success", False))
+        self.cleanup_on_timeout = bool(self.config.get("cleanup_on_timeout", True))
         debug_pod_cfg = self.config.get("debug_pod", {})
         self.debug_pod_config = debug_pod_cfg if isinstance(debug_pod_cfg, dict) else {}
 
@@ -66,7 +67,11 @@ class K8SExperimentRunner:
             "logs": logs,
         }
 
-        if wait_result.get("status") == "succeeded" and self.cleanup_on_success:
+        wait_status = str(wait_result.get("status", "")).lower()
+        if wait_status == "succeeded" and self.cleanup_on_success:
+            result["cleanup"] = self.cleanup_job(job_name)
+        elif wait_status == "timeout" and self.cleanup_on_timeout:
+            # Timeout means the job may still be running in cluster; delete it to stop its pod.
             result["cleanup"] = self.cleanup_job(job_name)
 
         return result
@@ -506,6 +511,43 @@ class K8SExperimentRunner:
                 volume_mounts,
                 {"name": codebase_volume_name, "mountPath": codebase_mount_path},
             )
+
+        # Optional compatibility mount:
+        # Some RoboTwin configs reference assets under /workspace/assets/* while
+        # the codebase itself is mounted at /workspace/RoboTwin.
+        enable_assets_alias_mount = bool(self.config.get("enable_assets_alias_mount", False))
+        if enable_assets_alias_mount:
+            assets_subdir = str(self.config.get("assets_subdir", "assets")).strip().strip("/")
+            assets_alias_mount_path = str(
+                self.config.get("assets_alias_mount_path", f"{container_workspace}/assets")
+            ).strip()
+            assets_alias_volume_name = self._safe_volume_name(
+                str(self.config.get("assets_alias_volume_name", "assets-alias")).strip()
+            )
+            assets_host_path = (
+                codebase_host_path / assets_subdir
+                if assets_subdir
+                else codebase_host_path
+            )
+            if assets_host_path.exists() and assets_host_path.is_dir():
+                self._upsert_volume(
+                    volumes,
+                    {
+                        "name": assets_alias_volume_name,
+                        "hostPath": {"path": str(assets_host_path), "type": "Directory"},
+                    },
+                )
+                for container in containers:
+                    volume_mounts = self._ensure_volume_mounts(container)
+                    self._upsert_volume_mount(
+                        volume_mounts,
+                        {"name": assets_alias_volume_name, "mountPath": assets_alias_mount_path},
+                    )
+            else:
+                self.logger.warning(
+                    "enable_assets_alias_mount=true but assets path missing: %s",
+                    assets_host_path,
+                )
 
         enable_submission_mount = bool(self.config.get("enable_submission_mount", True))
         if enable_submission_mount:

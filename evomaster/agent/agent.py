@@ -614,17 +614,8 @@ class BaseAgent(ABC):
         每次step完成后，将prompt、response和tool_responses追加保存到轨迹文件。
         使用文件锁确保多个agent写入同一文件时的线程安全。
 
-        保存格式与现有轨迹格式保持一致：
-        [
-            {
-                "task_id": "...",
-                "status": "...",
-                "steps": ...,
-                "trajectory": {...}
-            }
-        ]
-
-        每次step会追加一个新的条目，包含本次调用的prompt、response和tool_responses。
+        默认使用 JSONL（每行一个 entry，增量追加）。
+        当输出文件后缀为 .json 时，保留旧版 JSON 数组写入逻辑以兼容历史行为。
 
         Args:
             dialog_for_query: 发送给LLM的对话（prompt）
@@ -635,18 +626,7 @@ class BaseAgent(ABC):
 
         try:
             with self._trajectory_file_lock:
-                # 读取现有数据
-                existing_data = []
-                if self._trajectory_file_path.exists():
-                    try:
-                        with open(self._trajectory_file_path, 'r', encoding='utf-8') as f:
-                            existing_data = json.load(f)
-                    except (json.JSONDecodeError, FileNotFoundError):
-                        # 如果文件损坏或不存在，从空列表开始
-                        existing_data = []
-
                 # 构建新的轨迹条目
-                # 格式与现有轨迹格式保持一致，但保存的是每次LLM调用的信息
                 task_id = self.trajectory.task_id if self.trajectory else "unknown"
                 status = self.trajectory.status if self.trajectory else "running"
 
@@ -727,11 +707,25 @@ class BaseAgent(ABC):
                     }
                 }
 
-                # 追加新条目
-                existing_data.append(entry)
+                # 默认走 JSONL 增量追加；仅 .json 后缀保留旧版兼容写法
+                if self._trajectory_file_path.suffix.lower() != ".json":
+                    line = json.dumps(entry, default=str, ensure_ascii=False)
+                    with open(self._trajectory_file_path, "a", encoding="utf-8") as f:
+                        f.write(line)
+                        f.write("\n")
+                    return
 
-                # 写回文件
-                with open(self._trajectory_file_path, 'w', encoding='utf-8') as f:
+                # 旧版 JSON 数组写法（兼容历史输出路径）
+                existing_data = []
+                if self._trajectory_file_path.exists():
+                    try:
+                        with open(self._trajectory_file_path, "r", encoding="utf-8") as f:
+                            existing_data = json.load(f)
+                    except (json.JSONDecodeError, FileNotFoundError):
+                        existing_data = []
+
+                existing_data.append(entry)
+                with open(self._trajectory_file_path, "w", encoding="utf-8") as f:
                     json.dump(existing_data, f, indent=2, default=str, ensure_ascii=False)
 
         except Exception as e:

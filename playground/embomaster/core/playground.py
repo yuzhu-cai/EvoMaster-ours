@@ -16,7 +16,7 @@ from evomaster.core import BasePlayground, register_playground
 
 from .exp import EmboMasterExp
 from .services import K8SExperimentRunner
-from .tools import DebugTestTool
+from .tools import DebugTestTool, VideoDescriptorTool
 
 
 @register_playground("embomaster")
@@ -61,12 +61,34 @@ class EmboMasterPlayground(BasePlayground):
             self.tools.register(tool)
             self.logger.info("Custom tool registered: %s", tool.name)
 
+        video_cfg = self._config_section("video_descriptor")
+        if video_cfg.get("enabled", True):
+            base_llm_cfg = self._llm_config_dict if isinstance(self._llm_config_dict, dict) else {}
+            api_key = str(video_cfg.get("api_key") or base_llm_cfg.get("api_key") or "").strip()
+            base_url = (
+                video_cfg.get("base_url")
+                or base_llm_cfg.get("base_url")
+                or "http://127.0.0.1:30030/v1"
+            )
+            tool = VideoDescriptorTool(
+                api_key=api_key,
+                base_url=str(base_url) if base_url else None,
+                model=str(
+                    video_cfg.get("model", "Qwen/Qwen3-VL-235B-A22B-Instruct")
+                ).strip(),
+                temperature=float(video_cfg.get("temperature", 0.2)),
+                max_tokens=int(video_cfg.get("max_tokens", 1024)),
+                timeout=int(video_cfg.get("timeout", 120)),
+            )
+            self.tools.register(tool)
+            self.logger.info("Custom tool registered: %s", tool.name)
+
     def _apply_tool_policy(self) -> None:
         """Apply tool allow/deny policy from config.
 
         Config section:
           tool_policy:
-            allowed: ["finish", "str_replace_editor", "debug_test"]   # optional
+            allowed: ["finish", "str_replace_editor", "debug_test", "video-descriptor"]   # optional
             disabled: ["execute_bash"]                                # optional
             disable_execute_bash: true                                # optional shortcut
         """

@@ -53,6 +53,10 @@ COPY_EXCLUDE_REL_PREFIXES = [
     "XDG_CACHE_HOME/uv/archive-v0",
     "policy/TinyVLA/model_param",
     "policy/TinyVLA/src/nvidia-curobo",
+    "policy/ACT/act_ckpt",
+]
+LOCAL_WORKSPACE_DIR_PREFIXES = [
+    "policy/ACT/act_ckpt",
 ]
 UV_EPHEMERAL_SEGMENT_PREFIXES = ("git-v", "sdists-v", "simple-v", ".tmp")
 COPY_PLAN_CACHE_FILENAME = ".embomaster_copy_plan.json"
@@ -90,6 +94,13 @@ def _contains_keyword(name: str) -> bool:
 
 def _normalize_rel_path(rel_path: str) -> str:
     return rel_path.replace("\\", "/").strip().strip("/")
+
+
+def _workspace_dir_name(workspace_id: str) -> str:
+    workspace_id_norm = _normalize_rel_path(workspace_id)
+    if not workspace_id_norm:
+        return "workspace"
+    return workspace_id_norm.replace("/", "-")
 
 
 def _is_excluded_rel_path(rel_path: str) -> bool:
@@ -538,6 +549,8 @@ def _copy_from_parent_filtered(
         rel_path = str(item.get("rel", ""))
         if not rel_path:
             continue
+        if _is_excluded_rel_path(rel_path):
+            continue
         target_dir = dst_dir / rel_path
         target_dir.mkdir(parents=True, exist_ok=True)
         inherited.append(item.copy())
@@ -549,7 +562,9 @@ def load_large_dirs(codebase_dir: Path) -> list[dict]:
     if file_path.exists():
         try:
             with file_path.open("r", encoding="utf-8") as f:
-                return json.load(f)
+                payload = json.load(f)
+            if isinstance(payload, list):
+                return _normalize_large_dirs(payload, src_root=codebase_dir)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load %s: %s", file_path, e)
     return []
@@ -563,9 +578,24 @@ def save_large_dirs(codebase_dir: Path, large_dirs: list[dict]) -> None:
         json.dump(large_dirs, f, indent=2, ensure_ascii=False)
 
 
+def ensure_local_workspace_dirs(codebase_dir: Path) -> list[str]:
+    created_dirs: list[str] = []
+    for rel_path in LOCAL_WORKSPACE_DIR_PREFIXES:
+        rel_norm = _normalize_rel_path(rel_path)
+        if not rel_norm:
+            continue
+        target_dir = codebase_dir / rel_norm
+        if target_dir.exists() and not target_dir.is_dir():
+            logger.warning("Skip local dir creation because non-dir exists: %s", target_dir)
+            continue
+        target_dir.mkdir(parents=True, exist_ok=True)
+        created_dirs.append(rel_norm)
+    return created_dirs
+
+
 def get_workspace_codebase_path(session_dir: Path, workspace_id: str) -> Path:
-    short_id = workspace_id[:8]
-    return session_dir / "round_workspaces" / short_id / f"codebase_{short_id}"
+    workspace_dir_name = _workspace_dir_name(workspace_id)
+    return session_dir / "round_workspaces" / workspace_dir_name / f"codebase_{workspace_dir_name}"
 
 
 def get_parent_workspace_codebase_path(
@@ -573,22 +603,32 @@ def get_parent_workspace_codebase_path(
 ) -> Path | None:
     if not parent_workspace_id:
         return None
-    short_id = parent_workspace_id[:8]
-    parent_workspace_dir = session_dir / "round_workspaces" / short_id
-    if not parent_workspace_dir.exists():
-        return None
 
-    symlink_path = parent_workspace_dir / "codebase"
-    if symlink_path.exists() or symlink_path.is_symlink():
-        resolved = symlink_path.resolve()
-        if resolved.exists():
-            return resolved
+    preferred_dir = _workspace_dir_name(parent_workspace_id)
+    legacy_dir = parent_workspace_id[:8]
+    candidates: list[str] = []
+    for item in (preferred_dir, legacy_dir):
+        if item and item not in candidates:
+            candidates.append(item)
 
-    candidates = [
-        p for p in parent_workspace_dir.iterdir() if p.is_dir() and p.name.startswith("codebase_")
-    ]
-    if candidates:
-        return candidates[0].resolve()
+    for workspace_dir_name in candidates:
+        parent_workspace_dir = session_dir / "round_workspaces" / workspace_dir_name
+        if not parent_workspace_dir.exists():
+            continue
+
+        symlink_path = parent_workspace_dir / "codebase"
+        if symlink_path.exists() or symlink_path.is_symlink():
+            resolved = symlink_path.resolve()
+            if resolved.exists():
+                return resolved
+
+        codebase_candidates = [
+            p
+            for p in parent_workspace_dir.iterdir()
+            if p.is_dir() and p.name.startswith("codebase_")
+        ]
+        if codebase_candidates:
+            return codebase_candidates[0].resolve()
     return None
 
 
@@ -611,11 +651,11 @@ def prepare_workspace_codebase(
     use_copy_plan_cache: bool = True,
     force_rebuild_copy_plan: bool = False,
 ) -> WorkspaceCodebaseInfo:
-    short_id = workspace_id[:8]
-    workspace_dir = session_dir / "round_workspaces" / short_id
+    workspace_dir_name = _workspace_dir_name(workspace_id)
+    workspace_dir = session_dir / "round_workspaces" / workspace_dir_name
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
-    dest_codebase = workspace_dir / f"codebase_{short_id}"
+    dest_codebase = workspace_dir / f"codebase_{workspace_dir_name}"
     symlink_path = workspace_dir / "codebase"
 
     existing: Path | None = None
@@ -625,6 +665,7 @@ def prepare_workspace_codebase(
         existing = dest_codebase
 
     if existing and existing.exists():
+        ensure_local_workspace_dirs(existing)
         return WorkspaceCodebaseInfo(
             path=existing,
             large_dirs=load_large_dirs(existing),
@@ -638,6 +679,7 @@ def prepare_workspace_codebase(
         inherited_large_dirs = _copy_from_parent_filtered(parent_codebase, dest_codebase, parent_large_dirs)
         save_large_dirs(dest_codebase, inherited_large_dirs)
         _create_codebase_symlink(symlink_path, dest_codebase)
+        ensure_local_workspace_dirs(dest_codebase)
         return WorkspaceCodebaseInfo(
             path=dest_codebase,
             large_dirs=inherited_large_dirs,
@@ -656,6 +698,7 @@ def prepare_workspace_codebase(
         )
         save_large_dirs(dest_codebase, large_dirs)
         _create_codebase_symlink(symlink_path, dest_codebase)
+        ensure_local_workspace_dirs(dest_codebase)
         return WorkspaceCodebaseInfo(
             path=dest_codebase,
             large_dirs=large_dirs,
@@ -665,6 +708,7 @@ def prepare_workspace_codebase(
 
     dest_codebase.mkdir(parents=True, exist_ok=True)
     _create_codebase_symlink(symlink_path, dest_codebase)
+    ensure_local_workspace_dirs(dest_codebase)
     return WorkspaceCodebaseInfo(
         path=dest_codebase,
         large_dirs=[],
@@ -673,8 +717,17 @@ def prepare_workspace_codebase(
     )
 
 
-def cleanup_eval_result(codebase_dir: Path) -> None:
+def cleanup_eval_result(codebase_dir: Path) -> dict[str, str]:
+    status: dict[str, str] = {}
     for dirname in ["eval_result", "run_results"]:
         target = codebase_dir / dirname
-        if target.exists():
-            shutil.rmtree(target, ignore_errors=True)
+        if not target.exists():
+            status[dirname] = "missing"
+            continue
+        try:
+            shutil.rmtree(target)
+            status[dirname] = "removed"
+        except OSError as e:
+            status[dirname] = "failed"
+            logger.warning("Failed to clean up workspace output %s: %s", target, e)
+    return status

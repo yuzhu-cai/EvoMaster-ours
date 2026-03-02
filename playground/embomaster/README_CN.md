@@ -48,6 +48,39 @@ python run.py --agent embomaster \
 - `k8s_runner.manifest_path/job_name_prefix`: 启用 K8S 时必填
 - `k8s_runner.debug_pod.*`: debug pod 的镜像、名称前缀、挂载路径等参数
 
+## Trajectory 输出与监控
+
+- 默认轨迹文件已切换为 `trajectory.jsonl`（每行一个 step entry，增量追加）
+- 仍兼容读取历史 `trajectory.json`（旧格式 JSON 数组）
+- 监控页支持：
+  - 选择不同 run / 不同 `trajectory.jsonl|json`
+  - 展开不同 `exp_index` 的内容
+  - 查询 `debug_test` 记录
+  - 查询 pod/job 并拉取 pod 运行日志
+  - 查看每轮运行结果（K8S status / metric / log tail）
+
+启动实时监控页面：
+
+```bash
+python playground/embomaster/scripts/traj_monitor_server.py \
+  --source playground/embomaster/workspaces \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+只看单个轨迹文件（兼容参数）：
+
+```bash
+python playground/embomaster/scripts/traj_monitor_server.py \
+  --trajectory /path/to/trajectories/task_0/trajectory.jsonl
+```
+
+然后打开：
+
+```text
+http://127.0.0.1:8765
+```
+
 ## 术语迁移
 
 为对齐 EvoMaster 框架语义，embomaster 已统一使用 `workspace/round` 概念：

@@ -443,7 +443,13 @@ class EmboMasterExp(BaseExp):
                 use_copy_plan_cache=use_copy_plan_cache,
                 force_rebuild_copy_plan=force_rebuild_copy_plan,
             )
-            cleanup_eval_result(codebase_info.path)
+            cleanup_status = cleanup_eval_result(codebase_info.path)
+            if any(value == "failed" for value in cleanup_status.values()):
+                self.logger.warning(
+                    "Workspace cleanup incomplete for %s: %s",
+                    codebase_info.path,
+                    cleanup_status,
+                )
         except Exception as exc:
             self.logger.warning(
                 "Failed to prepare isolated workspace (fallback to shared codebase): %r", exc

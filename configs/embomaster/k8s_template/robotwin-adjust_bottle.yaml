@@ -54,9 +54,9 @@ spec:
         - >
           cd /workspace/RoboTwin/policy/ACT &&
           bash train_and_eval_ml-master-2.sh
-          "/workspace/RoboTwin"                # CODEBASE
-          "${HOSTNAME:-robotwin-job}"          # NODE_ID 占位，可按需替换
-          "/workspace/submission"              # SUBMISSION_DIR
+          "/workspace/RoboTwin"
+          "${HOSTNAME:-robotwin-job}"
+          "/workspace/submission"
           "${TASK_NAME}"
           "${TASK_CONFIG}"
           "${EXPERT_DATA_NUM}"
