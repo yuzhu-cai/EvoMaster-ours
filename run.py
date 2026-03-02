@@ -348,13 +348,22 @@ def auto_import_playgrounds():
         return
 
     imported_count = 0
-    for agent_dir in playground_dir.iterdir():
-        if not agent_dir.is_dir() or agent_dir.name.startswith('_'):
-            continue
 
-        # 尝试导入 playground.{agent}.core.playground
-        # 注意：目录名可以包含连字符，importlib 可以直接导入
-        module_name = f"playground.{agent_dir.name}.core.playground"
+    # 收集需要扫描的 agent 目录：顶层 + _generated/ 子目录
+    agent_dirs: list[tuple[Path, str]] = []  # (dir_path, module_prefix)
+    for child in playground_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name == "_generated":
+            # 扫描 _generated/ 下的每个子目录
+            for gen_dir in child.iterdir():
+                if gen_dir.is_dir() and not gen_dir.name.startswith("_"):
+                    agent_dirs.append((gen_dir, f"playground._generated.{gen_dir.name}"))
+        elif not child.name.startswith("_"):
+            agent_dirs.append((child, f"playground.{child.name}"))
+
+    for agent_dir, module_prefix in agent_dirs:
+        module_name = f"{module_prefix}.core.playground"
         try:
             importlib.import_module(module_name)
             logger.info(f"✅ Successfully imported {module_name}")

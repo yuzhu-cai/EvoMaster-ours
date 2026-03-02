@@ -43,11 +43,21 @@ def _ensure_playgrounds_imported(project_root: Path) -> None:
         return
 
     imported_count = 0
-    for agent_dir in playground_dir.iterdir():
-        if not agent_dir.is_dir() or agent_dir.name.startswith("_"):
-            continue
 
-        module_name = f"playground.{agent_dir.name}.core.playground"
+    # 收集需要扫描的 agent 目录：顶层 + _generated/ 子目录
+    agent_dirs: list[tuple[Path, str]] = []  # (dir_path, module_prefix)
+    for child in playground_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if child.name == "_generated":
+            for gen_dir in child.iterdir():
+                if gen_dir.is_dir() and not gen_dir.name.startswith("_"):
+                    agent_dirs.append((gen_dir, f"playground._generated.{gen_dir.name}"))
+        elif not child.name.startswith("_"):
+            agent_dirs.append((child, f"playground.{child.name}"))
+
+    for agent_dir, module_prefix in agent_dirs:
+        module_name = f"{module_prefix}.core.playground"
         try:
             importlib.import_module(module_name)
             logger.info("Imported playground: %s", module_name)
@@ -255,6 +265,9 @@ class TaskDispatcher:
         if not config_path.exists():
             raise FileNotFoundError(f"配置文件不存在: {config_path}")
 
+        # 动态导入 _generated 下的 playground（可能在 bot 启动后才生成）
+        self._try_import_generated_playground(agent_name)
+
         playground = get_playground_class(agent_name, config_path=config_path)
 
         # 创建 run 目录
@@ -264,6 +277,26 @@ class TaskDispatcher:
         playground.set_run_dir(run_dir, task_id=task_id)
 
         return playground
+
+    def _try_import_generated_playground(self, agent_name: str) -> None:
+        """尝试动态导入 _generated 下的 playground 模块。
+
+        agent_builder 生成的 agent 可能在 bot 启动后才创建，
+        启动时的 _ensure_playgrounds_imported 不会扫描到它们。
+        """
+        from evomaster.core.registry import _PLAYGROUND_REGISTRY
+
+        if agent_name in _PLAYGROUND_REGISTRY:
+            return  # 已注册，无需再导入
+
+        module_name = f"playground._generated.{agent_name}.core.playground"
+        try:
+            importlib.import_module(module_name)
+            logger.info("Dynamically imported generated playground: %s", module_name)
+        except ImportError:
+            pass  # 没有自定义 playground，将 fallback 到 BasePlayground
+        except Exception:
+            logger.warning("Error importing generated playground: %s", module_name, exc_info=True)
 
     def _run_task_with_session(
         self,
