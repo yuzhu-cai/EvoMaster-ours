@@ -26,15 +26,26 @@ llm:
     timeout: 120
     max_retries: 3
     retry_delay: 1.0
+  
+  local_sglang:
+    provider: "deepseek"
+    model: "deepseek-v3.2"
+    api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
+    base_url: "${DEEPSEEK_API_BASE}"
+    temperature: 0.7
+    max_tokens: 16384
+    timeout: 300  
+    max_retries: 3
+    retry_delay: 1.0
 
-  default: "anthropic"
+  default: "local_sglang"
 
 # ============================================
 # Agent 配置（双 agent 系统：planner + builder）
 # ============================================
 agents:
   planner:
-    llm: "anthropic"
+    llm: "local_sglang"
     max_turns: 100
     enable_tools: true
     finish_on_text_response: false
@@ -49,7 +60,7 @@ agents:
     user_prompt_file: "prompts/user_prompt.txt"
 
   builder:
-    llm: "anthropic"
+    llm: "local_sglang"
     max_turns: 100
     enable_tools: true
     finish_on_text_response: false
