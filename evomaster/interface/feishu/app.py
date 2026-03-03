@@ -146,6 +146,9 @@ class FeishuBot:
         # 消息去重
         self._dedup = MessageDedup()
 
+        # 获取 bot 自己的 open_id（用于群聊 @mention 过滤）
+        self._bot_open_id = self._fetch_bot_open_id()
+
         # 实时进度报告工厂
         client = self._client
         doc_writer = FeishuDocumentWriter(
@@ -198,9 +201,10 @@ class FeishuBot:
             return
 
         # 群聊场景：仅处理 @Bot 的消息
-        if ctx.chat_type == "group" and not ctx.mentions:
-            logger.debug("Ignoring group message without @mention: %s", ctx.message_id)
-            return
+        if ctx.chat_type == "group":
+            if not ctx.mentions or self._bot_open_id not in ctx.mentions:
+                logger.debug("Ignoring group message not mentioning bot: %s", ctx.message_id)
+                return
 
         # 忽略非文本消息
         if ctx.message_type not in ("text", "post"):
@@ -409,6 +413,31 @@ class FeishuBot:
         if match:
             return match.group(1), match.group(2).strip()
         return None, text
+
+    def _fetch_bot_open_id(self) -> str:
+        """启动时获取 bot 自己的 open_id（用于群聊 @mention 过滤）。"""
+        import json as _json
+        try:
+            from lark_oapi.core.model import BaseRequest
+            from lark_oapi.core import HttpMethod, AccessTokenType
+
+            req = BaseRequest.builder() \
+                .http_method(HttpMethod.GET) \
+                .uri("/open-apis/bot/v3/info/") \
+                .token_types({AccessTokenType.TENANT}) \
+                .build()
+            resp = self._client.request(req)
+            body = _json.loads(resp.raw.content)
+            bot_info = body.get("bot", {})
+            open_id = bot_info.get("open_id", "")
+            if open_id:
+                logger.info("Bot open_id: %s", open_id)
+            else:
+                logger.warning("Failed to get bot open_id from API response: %s", body)
+            return open_id
+        except Exception:
+            logger.exception("Failed to fetch bot open_id")
+            return ""
 
     def _send_result(self, chat_id: str, message_id: str, result_text: str) -> None:
         """结果回调：发送结果到飞书
