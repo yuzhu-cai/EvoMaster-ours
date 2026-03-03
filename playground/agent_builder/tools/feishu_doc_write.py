@@ -155,7 +155,7 @@ class FeishuDocWriteTool(BaseTool):
 
     def _do_create(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
         """创建新文档"""
-        title = params.title
+        title = params.title or params.content
         if not title:
             return "Title is required for 'create' action.", {"error": "missing_title"}
 

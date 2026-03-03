@@ -378,6 +378,13 @@ class LocalEnv(BaseEnv):
             # 创建目标目录（如果不存在）
             target_path.mkdir(parents=True, exist_ok=True)
             
+            # 确保 _generated/ 子目录存在于源目录（playground/configs），
+            # 以便 agent_builder 生成的文件通过 symlink 直接写入项目根目录
+            if source_path.name in ("playground", "configs"):
+                generated_dir = source_path / "_generated"
+                if not generated_dir.exists():
+                    generated_dir.mkdir(exist_ok=True)
+
             # 将源目录下的所有内容链接到目标目录
             self._link_directory_contents(source_path, target_path)
             self.logger.info(f"创建软链接: {source_dir} 下的内容 -> {target_path}")
