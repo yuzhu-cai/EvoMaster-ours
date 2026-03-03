@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import importlib
 import logging
-import os
-import signal
 import sys
 import threading
 import time
@@ -195,7 +193,6 @@ class TaskDispatcher:
         特殊命令：
         - /new: 清除当前会话上下文
         - /help: 显示使用帮助
-        - /shutdown: 关闭 bot 进程
         """
         stripped = task_text.strip()
 
@@ -211,11 +208,6 @@ class TaskDispatcher:
         # /help 命令：显示使用帮助
         if stripped == "/help":
             self._send_help_card(chat_id, message_id)
-            return
-
-        # /shutdown 命令：关闭 bot
-        if stripped == "/shutdown":
-            self._handle_shutdown(chat_id, message_id)
             return
 
         agent = agent_name or self._default_agent
@@ -1015,23 +1007,6 @@ class TaskDispatcher:
             except Exception:
                 logger.exception("Error in on_result callback")
 
-    def _handle_shutdown(self, chat_id: str, message_id: str) -> None:
-        """处理 /shutdown 命令：关闭 bot 进程。"""
-        logger.info("Shutdown requested from chat_id=%s", chat_id)
-        if self._on_result:
-            try:
-                self._on_result(chat_id, message_id, "Bot 正在关闭...")
-            except Exception:
-                logger.exception("Error sending shutdown message")
-
-        # 在新线程中执行关闭，避免阻塞当前回调
-        def _do_shutdown():
-            time.sleep(1)  # 等待回复消息发送完成
-            self.shutdown()
-            os.kill(os.getpid(), signal.SIGTERM)
-
-        threading.Thread(target=_do_shutdown, daemon=True).start()
-
     def _send_welcome_card(self, chat_id: str, message_id: str) -> None:
         """发送欢迎卡片，介绍 bot 功能和使用方法。"""
         if not self._feishu_client:
@@ -1057,8 +1032,7 @@ class TaskDispatcher:
             "---\n"
             "**常用命令**\n"
             "`/help` — 显示本帮助信息\n"
-            "`/new` — 清除上下文，开始新会话\n"
-            "`/shutdown` — 关闭 Bot 进程"
+            "`/new` — 清除上下文，开始新会话"
         )
 
         send_card_message(
@@ -1076,7 +1050,7 @@ class TaskDispatcher:
             if self._on_result:
                 self._on_result(
                     chat_id, message_id,
-                    "使用帮助：直接发消息对话；/agent <名称> <任务> 调用智能体；/new 新会话；/shutdown 关闭 Bot。",
+                    "使用帮助：直接发消息对话；/agent <名称> <任务> 调用智能体；/new 新会话。",
                 )
             return
 
@@ -1094,8 +1068,7 @@ class TaskDispatcher:
             "---\n"
             "**命令列表**\n"
             "`/help` — 显示本帮助信息\n"
-            "`/new` — 清除上下文，开始新会话\n"
-            "`/shutdown` — 关闭 Bot 进程"
+            "`/new` — 清除上下文，开始新会话"
         )
 
         send_card_message(
