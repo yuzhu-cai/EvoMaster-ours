@@ -812,7 +812,7 @@ class TaskDispatcher:
     @staticmethod
     def _inject_ask_user_tool(agent) -> None:
         """注入 ask_user 工具（仅在交互式上下文中使用）。"""
-        from .tools.ask_user import AskUserTool
+        from evomaster.interface.tools.ask_user import AskUserTool
         agent.tools.register(AskUserTool())
 
     @staticmethod
