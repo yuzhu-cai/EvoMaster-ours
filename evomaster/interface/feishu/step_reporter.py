@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import lark_oapi as lark
-    from .document_writer import FeishuDocumentWriter
+    from .messaging.document import FeishuDocumentWriter
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class FeishuStepReporter:
 
     def send_initial_card(self, task_text: str) -> bool:
         """发送初始 "正在处理" 卡片，捕获 message_id 用于后续 PATCH。"""
-        from .sender import send_card_message
+        from .messaging.sender import send_card_message
 
         self._task_text = task_text[:200]
         self._start_time = time.time()
@@ -243,7 +243,7 @@ class FeishuStepReporter:
 
     def _patch(self, title: str, content: str, template: str) -> None:
         """执行 PATCH 调用。"""
-        from .sender import patch_card_message
+        from .messaging.sender import patch_card_message
 
         try:
             patch_card_message(
@@ -260,7 +260,7 @@ class FeishuStepReporter:
         self, title: str, content: str, template: str, actions: list[dict]
     ) -> None:
         """执行 PATCH 调用（带按钮）。"""
-        from .sender import build_card_with_actions, patch_card_message
+        from .messaging.sender import build_card_with_actions, patch_card_message
 
         try:
             card_json = build_card_with_actions(
@@ -373,7 +373,7 @@ class FeishuStepReporter:
         self, step_record: Any, step_num: int, max_steps: int
     ) -> None:
         """向飞书文档追加完整步骤内容（无截断）。"""
-        from .document_writer import (
+        from .messaging.document import (
             _build_code_block,
             _build_divider_block,
             _build_heading_block,

@@ -69,7 +69,7 @@ class FeishuDocReadTool(BaseTool):
     def _get_client(self):
         """延迟创建/获取缓存的飞书 Client"""
         if self._client is None:
-            from .client import create_feishu_client
+            from ..messaging.client import create_feishu_client
 
             self._client = create_feishu_client(
                 app_id=self.app_id,

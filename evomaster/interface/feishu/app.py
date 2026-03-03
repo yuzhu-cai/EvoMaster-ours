@@ -19,13 +19,13 @@ from lark_oapi.event.callback.model.p2_card_action_trigger import (
     CallBackToast,
 )
 
-from .client import create_feishu_client
+from .messaging.client import create_feishu_client
 from .config import FeishuBotConfig
 from .dedup import MessageDedup
 from .dispatcher import TaskDispatcher
-from .document_writer import FeishuDocumentWriter
+from .messaging.document import FeishuDocumentWriter
 from .event_handler import parse_event
-from .sender import send_card_message, send_text_message
+from .messaging.sender import send_card_message, send_text_message
 from .step_reporter import FeishuStepReporter
 
 logger = logging.getLogger(__name__)
@@ -289,7 +289,7 @@ class FeishuBot:
 
                 # 通过回调响应原地更新卡片：保留原始内容，移除按钮，追加状态行
                 import json
-                from .sender import _build_card_json
+                from .messaging.sender import _build_card_json
                 content_parts = []
                 if original_answer:
                     content_parts.append(original_answer)
@@ -323,7 +323,7 @@ class FeishuBot:
 
                 # 通过回调响应原地更新卡片：保留原始内容，移除按钮，追加取消状态
                 import json
-                from .sender import _build_card_json
+                from .messaging.sender import _build_card_json
                 original_answer = action_value.get("original_answer", "")
                 content_parts = []
                 if original_answer:
@@ -366,7 +366,7 @@ class FeishuBot:
 
                 # 即时更新卡片：移除按钮，显示已选择的选项
                 import json
-                from .sender import _build_card_json
+                from .messaging.sender import _build_card_json
                 card_dict = json.loads(_build_card_json(
                     title="💬 已回复",
                     content=f"你选择了: **{answer_text}**\n\n> 正在继续处理...",

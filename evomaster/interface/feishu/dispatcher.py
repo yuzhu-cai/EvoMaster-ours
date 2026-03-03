@@ -158,7 +158,7 @@ class TaskDispatcher:
         # 飞书 Client（用于 patch 卡片等操作）
         self._feishu_client = None
         if feishu_app_id and feishu_app_secret:
-            from .client import create_feishu_client
+            from .messaging.client import create_feishu_client
             self._feishu_client = create_feishu_client(
                 app_id=feishu_app_id,
                 app_secret=feishu_app_secret,
@@ -168,7 +168,7 @@ class TaskDispatcher:
         # 飞书特有工具（所有 agent 共用）
         self._feishu_tools: list = []
         if feishu_app_id and feishu_app_secret:
-            from .doc_reader_tool import FeishuDocReadTool
+            from .tools.doc_reader import FeishuDocReadTool
 
             self._feishu_tools.append(
                 FeishuDocReadTool(
@@ -787,8 +787,8 @@ class TaskDispatcher:
         if not self._feishu_app_id or not self._feishu_app_secret:
             return
 
-        from .client import create_feishu_client
-        from .document_writer import FeishuDocumentWriter
+        from .messaging.client import create_feishu_client
+        from .messaging.document import FeishuDocumentWriter
         from playground.agent_builder.tools.feishu_doc_write import FeishuDocWriteTool
 
         client = create_feishu_client(
@@ -812,7 +812,7 @@ class TaskDispatcher:
     @staticmethod
     def _inject_ask_user_tool(agent) -> None:
         """注入 ask_user 工具（仅在交互式上下文中使用）。"""
-        from .ask_user_tool import AskUserTool
+        from .tools.ask_user import AskUserTool
         agent.tools.register(AskUserTool())
 
     @staticmethod
@@ -1112,7 +1112,7 @@ class TaskDispatcher:
         if not card_message_id or not self._feishu_client:
             return
         try:
-            from .sender import patch_card_message
+            from .messaging.sender import patch_card_message
             patch_card_message(
                 self._feishu_client,
                 card_message_id,
@@ -1219,7 +1219,7 @@ class TaskDispatcher:
                 )
             return
 
-        from .sender import send_card_message
+        from .messaging.sender import send_card_message
 
         content = (
             "**直接对话**\n"
@@ -1255,7 +1255,7 @@ class TaskDispatcher:
                 )
             return
 
-        from .sender import send_card_message
+        from .messaging.sender import send_card_message
 
         content = (
             "**直接对话**\n"
