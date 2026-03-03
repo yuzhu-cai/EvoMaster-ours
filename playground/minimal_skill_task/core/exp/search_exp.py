@@ -67,7 +67,8 @@ class SearchExp(BaseExp):
         params1 = parse_plan_output(plan_output_1)
         if not params1.get("query"):
             params1["query"] = DEFAULT_QUERY
-        update_agent_format_kwargs(self.search_agent, **params1, **db)
+        # 将 Plan 的完整输出也传给 Search，用于执行多轮检索策略
+        update_agent_format_kwargs(self.search_agent, plan_output=plan_output_1, **params1, **db)
         search_task_1 = TaskInstance(
             task_id=f"{task_id}_search1",
             task_type="search",
@@ -80,13 +81,8 @@ class SearchExp(BaseExp):
 
         # ---------- Round 2: Plan (second params) ----------
         first_round_empty = _is_result_empty(search_results_1 or "")
-        stage_input_2 = (
-            "第一轮检索结果：\n"
-            + (search_results_1 or "(无)")
-            + "\n\n请给出第二轮 query、top_k、threshold（格式：query: ... top_k: ... threshold: ...）。"
-            + ("**第一轮无有效结果，第二轮请务必放宽 threshold（建议 1.5～2.0 或更高），不要沿用过严的 threshold。** " if first_round_empty else "")
-            + "query 仍须符合 Analyze 的 (2) query 写作规范，可沿用首轮 query 或在其规范内微调。若认为第一轮已足够可说明仅用第一轮。"
-        )
+        # 第二轮计划仅提供「第一轮检索结果」作为 stage_input，具体多轮策略由 plan_system_prompt 约束
+        stage_input_2 = "第一轮检索结果：\n" + (search_results_1 or "(无)")
         update_agent_format_kwargs(
             self.plan_agent,
             task_description=task_description,
@@ -107,7 +103,8 @@ class SearchExp(BaseExp):
         params2 = parse_plan_output(plan_output_2)
         if not params2.get("query"):
             params2 = params1
-        update_agent_format_kwargs(self.search_agent, **params2, **db)
+        # 第二轮同样传入对应的 Plan 输出，供 Search 参考策略与上下文
+        update_agent_format_kwargs(self.search_agent, plan_output=plan_output_2, **params2, **db)
         search_task_2 = TaskInstance(
             task_id=f"{task_id}_search2",
             task_type="search",
@@ -123,7 +120,8 @@ class SearchExp(BaseExp):
         if _is_result_empty(search_results_1 or "") and _is_result_empty(search_results_2 or ""):
             self.logger.info("Both rounds empty; retrying with relaxed threshold")
             params_retry = {**params2, "threshold": max(RELAXED_THRESHOLD, params2.get("threshold", 1.5) * 1.2)}
-            update_agent_format_kwargs(self.search_agent, **params_retry, **db)
+            # 重试时沿用第二轮 Plan 输出作为策略参考
+            update_agent_format_kwargs(self.search_agent, plan_output=plan_output_2, **params_retry, **db)
             search_task_3 = TaskInstance(
                 task_id=f"{task_id}_search_retry",
                 task_type="search",

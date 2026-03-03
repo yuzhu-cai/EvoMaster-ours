@@ -8,7 +8,6 @@ from typing import Any
 
 DEFAULT_VEC_DIR = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft"
 DEFAULT_NODES_DATA = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft/draft_407_75_db.json"
-DEFAULT_MODEL = "evomaster/skills/rag/local_models/all-mpnet-base-v2"
 
 # 全局 embedding 配置（由 playground 设置）
 _embedding_config: dict | None = None
@@ -60,10 +59,11 @@ def resolve_db_to_absolute_paths(db: dict, project_root: Path | None = None) -> 
             result["model"] = openai_cfg.get("model", "text-embedding-3-large")
             result["embedding_dimensions"] = openai_cfg.get("dimensions")
         else:
+            # local 模式下不再强制回退到项目内置模型，必须在配置中显式提供 local.model
             local_cfg = embedding_config.get("local", {})
-            result["model"] = _resolve_db_path(
-                local_cfg.get("model", DEFAULT_MODEL), root
-            )
+            local_model = (local_cfg.get("model") or "").strip()
+            if local_model:
+                result["model"] = _resolve_db_path(local_model, root)
             result["embedding_type"] = "local"
     
     return result
@@ -117,7 +117,8 @@ def get_db_from_description(description: str) -> dict:
     db = {
         "vec_dir": DEFAULT_VEC_DIR,
         "nodes_data": DEFAULT_NODES_DATA,
-        "model": DEFAULT_MODEL,
+        # 默认不指定具体模型，避免隐式依赖项目内置路径；由上层配置或描述中显式给出
+        "model": "",
         # 默认 embedding 参数（会被 resolve_db_to_absolute_paths 覆盖/补全）
         "embedding_type": "local",
         "embedding_dimensions": "",

@@ -23,7 +23,7 @@ class VectorDatabaseBuilder:
     def __init__(
         self,
         output_dir: str,
-        model_name: str = "evomaster/skills/rag/local_models/all-mpnet-base-v2",
+        model_name: str | None = None,
         device: str = "cpu"
     ):
         """初始化数据库构建器
@@ -157,9 +157,12 @@ def main():
 
     parser = argparse.ArgumentParser(description="Vector Database Builder CLI")
     parser.add_argument("--output_dir", required=True, help="Output directory")
-    parser.add_argument("--model", 
-                       default="evomaster/skills/rag/local_models/all-mpnet-base-v2",
-                       help="Embedding model path or HuggingFace model name (default: local model)")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Embedding model path or HuggingFace model name "
+             "(required for local embedding; optional for OpenAI when using defaults)",
+    )
     parser.add_argument("--action", choices=["build", "add", "stats"],
                        help="Action to perform")
 

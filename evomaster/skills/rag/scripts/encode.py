@@ -24,7 +24,7 @@ class TextEncoder:
 
     def __init__(
         self,
-        model_name: str = "evomaster/skills/rag/local_models/all-mpnet-base-v2",
+        model_name: str | None = None,
         device: str = "cpu",
         embedding_type: str = "auto",
         embedding_api_key: str | None = None,
@@ -116,9 +116,12 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Text Encoder CLI")
-    parser.add_argument("--model", 
-                       default="evomaster/skills/rag/local_models/all-mpnet-base-v2",
-                       help="Embedding model path, HuggingFace model name, or OpenAI model name (default: local model)")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Embedding model path, HuggingFace model name, or OpenAI model name "
+             "(required for local embedding; optional for OpenAI when using defaults)",
+    )
     parser.add_argument("--text", help="Text to encode")
     parser.add_argument("--file", help="File containing text (one per line)")
     parser.add_argument("--output", help="Output file for embeddings (.npy)")

@@ -178,10 +178,14 @@ def create_embedder(
             dimensions=dimensions,
         )
     else:
-        # 本地模型
-        default_model = "evomaster/skills/rag/local_models/all-mpnet-base-v2"
+        # 本地模型：不再回退到项目内置路径，要求显式提供模型名称/路径
+        if not model:
+            raise ValueError(
+                "Local embedding requires an explicit 'model' name/path. "
+                "Please configure it in your embedding settings or CLI arguments."
+            )
         return LocalTransformerEmbedder(
-            model_name=model or default_model,
+            model_name=model,
             device=device,
         )
 
@@ -231,7 +235,7 @@ class RAGSearcher:
     def __init__(
         self,
         vec_dir: str,
-        model_name: str = "evomaster/skills/rag/local_models/all-mpnet-base-v2",
+        model_name: str | None = None,
         nodes_data_json: str | None = None,
         device: str = "cpu",
         node_id_key: str = "node_id",
@@ -480,9 +484,12 @@ def main():
 
     parser = argparse.ArgumentParser(description="RAG Searcher CLI")
     parser.add_argument("--vec_dir", required=True, help="Vector database directory")
-    parser.add_argument("--model", 
-                       default="evomaster/skills/rag/local_models/all-mpnet-base-v2",
-                       help="Embedding model path, HuggingFace model name, or OpenAI model name (default: local model)")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Embedding model path, HuggingFace model name, or OpenAI model name "
+             "(required for local embedding; optional for OpenAI when using defaults)",
+    )
     parser.add_argument("--nodes_data", help="Nodes data JSON file")
     parser.add_argument(
         "--node_id_key",

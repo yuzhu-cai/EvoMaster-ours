@@ -97,6 +97,7 @@ agents:
         - "execute_bash"
         - "think"
         - "finish"
+        - "use_skill"
       mcp: [] # 指定不使用mcp工具
 
     skills:  # 指定子集
@@ -130,7 +131,7 @@ embedding:
   
   # 本地模型配置（当 type 为 local 时使用）
   local:
-    model: "evomaster/skills/rag/local_models/all-mpnet-base-v2"
+    model: "playground/minimal_skill_task/local_models_bingyang"
     device: "cpu"
 
 # ============================================
