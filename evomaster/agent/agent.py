@@ -25,6 +25,7 @@ from evomaster.utils.types import (
     ToolMessage,
     UserMessage,
 )
+from evomaster.utils.llm import build_multimodal_content
 
 if TYPE_CHECKING:
     from evomaster.utils import BaseLLM
@@ -36,8 +37,6 @@ if TYPE_CHECKING:
 class AgentConfig(BaseModel):
     """Agent 配置"""
     max_turns: int = Field(default=100, description="最大执行轮数")
-    max_tool_rounds: int = Field(default=20, description="单次主请求内允许的最大工具轮次")
-    force_final_response: bool = Field(default=True, description="内部工具轮次耗尽后是否强制生成最终回答")
     context_config: ContextConfig = Field(
         default_factory=ContextConfig,
         description="上下文管理配置"
@@ -78,18 +77,21 @@ class BaseAgent(ABC):
         output_config: dict[str, Any] | None = None,
         config_dir: Path | str | None = None,
         enable_tools: bool = True,
+        enabled_tool_names: list[str] | None = None,
     ):
         """初始化 Agent
 
         Args:
             llm: LLM 实例
             session: 环境会话，用于执行工具
-            tools: 工具注册中心（始终注册，但只有在 enable_tools=True 时才会在提示词中包含工具信息）
+            tools: 工具注册中心（始终注册所有工具，但只有启用的工具才会暴露给 LLM）
             config: Agent 配置
             skill_registry: Skills 注册中心（可选）
             output_config: 输出显示配置
             config_dir: 配置目录路径，用于加载提示词文件
             enable_tools: 是否在提示词中包含工具信息（默认 True）。如果为 False，工具仍然注册但不会出现在提示词中
+            enabled_tool_names: 启用的工具名称列表（可选）。None 或 ["*"] 表示所有已注册工具都启用。
+                仅影响暴露给 LLM 的工具列表，不影响代码中手动调用工具。
         """
         self.llm = llm
         self.session = session
@@ -97,6 +99,7 @@ class BaseAgent(ABC):
         self.config = config or AgentConfig()
         self.skill_registry = skill_registry
         self.enable_tools = enable_tools
+        self.enabled_tool_names = enabled_tool_names
 
         # 输出配置
         self.output_config = output_config or {}
@@ -199,11 +202,17 @@ class BaseAgent(ABC):
         self._initial_system_prompt = system_prompt
         self._initial_user_prompt = user_prompt
 
+        # 构建用户消息内容：如果任务包含图片，构建多模态内容
+        if task.images:
+            user_content = build_multimodal_content(user_prompt, task.images)
+        else:
+            user_content = user_prompt
+
         # 创建对话
         self.current_dialog = Dialog(
             messages=[
                 SystemMessage(content=system_prompt),
-                UserMessage(content=user_prompt),
+                UserMessage(content=user_content),
             ],
             tools=self._get_tool_specs(),
         )
@@ -219,102 +228,89 @@ class BaseAgent(ABC):
         """
         self._step_count += 1
 
-        # 一次主请求内执行多轮: 查询 -> 工具 -> 回灌，直到 finish/最终文本/达到内部上限
-        max_tool_rounds = max(1, int(getattr(self.config, "max_tool_rounds", 20)))
-        force_final_response = bool(getattr(self.config, "force_final_response", True))
+        # 准备对话（可能需要截断）
+        dialog_for_query = self.context_manager.prepare_for_query(self.current_dialog)
 
-        step_record = StepRecord(step_id=self._step_count)
-        last_dialog_for_query = None
-        last_assistant_message: AssistantMessage | None = None
+        # 查询模型（使用 LLM）
+        assistant_message = self.llm.query(dialog_for_query)
+
+        self.current_dialog.add_message(assistant_message)
+
+        # 创建步骤记录
+        step_record = StepRecord(
+            step_id=self._step_count,
+            assistant_message=assistant_message,
+        )
+
+        # 如果没有工具调用
+        if not assistant_message.tool_calls:
+            # 检查Agent是否启用了工具调用
+            # 如果没有启用工具（enable_tools=False），则直接结束
+            # 因为这种Agent只需要给出回答，不需要工具调用
+            if hasattr(self, 'enable_tools') and not self.enable_tools:
+                self.trajectory.add_step(step_record)
+                # 追加保存本次step到轨迹文件（包含tool_responses）
+                self._append_trajectory_entry(dialog_for_query, step_record)
+                return True  # 直接结束
+
+            # 如果启用了工具但没有工具调用，提示继续
+            self._handle_no_tool_call()
+            self.trajectory.add_step(step_record)
+            # 追加保存本次step到轨迹文件（包含tool_responses）
+            self._append_trajectory_entry(dialog_for_query, step_record)
+            return False
+
+        # 处理工具调用
         should_finish = False
+        for tool_call in assistant_message.tool_calls:
+            self.logger.debug(f"Processing tool call: {tool_call.function.name}")
 
-        for _ in range(max_tool_rounds):
-            dialog_for_query = self.context_manager.prepare_for_query(self.current_dialog)
-            last_dialog_for_query = dialog_for_query
-            assistant_message = self.llm.query(dialog_for_query)
-            self.current_dialog.add_message(assistant_message)
-            last_assistant_message = assistant_message
-
-            # 无工具调用：直接结束本次主请求
-            if not assistant_message.tool_calls:
+            # 检查是否是 finish 工具
+            if tool_call.function.name == "finish":
+                # 打印 finish 工具的参数（最终答案）
+                try:
+                    import json
+                    finish_args = json.loads(tool_call.function.arguments)
+                    self.logger.info("=" * 80)
+                    self.logger.info("📝 Finish Tool Arguments:")
+                    for key, value in finish_args.items():
+                        # 截断过长的值用于显示
+                        value_str = str(value)
+                        if len(value_str) > 2000:
+                            value_str = value_str[:1000] + "\n... [truncated] ...\n" + value_str[-1000:]
+                        self.logger.info(f"  {key}: {value_str}")
+                    self.logger.info("=" * 80)
+                except Exception as e:
+                    self.logger.info(f"📝 Finish Tool Raw Args: {tool_call.function.arguments}")
                 should_finish = True
                 break
 
-            # 处理工具调用
-            for tool_call in assistant_message.tool_calls:
-                self.logger.debug(f"Processing tool call: {tool_call.function.name}")
+            # 执行工具
+            observation, info = self._execute_tool(tool_call)
 
-                # finish 工具：视为完成
-                if tool_call.function.name == "finish":
-                    try:
-                        finish_args = json.loads(tool_call.function.arguments)
-                        self.logger.info("=" * 80)
-                        self.logger.info("📝 Finish Tool Arguments:")
-                        for key, value in finish_args.items():
-                            value_str = str(value)
-                            if len(value_str) > 2000:
-                                value_str = value_str[:1000] + "\n... [truncated] ...\n" + value_str[-1000:]
-                            self.logger.info(f"  {key}: {value_str}")
-                        self.logger.info("=" * 80)
-                    except Exception:
-                        self.logger.info(f"📝 Finish Tool Raw Args: {tool_call.function.arguments}")
-                    should_finish = True
-                    break
-
-                observation, info = self._execute_tool(tool_call)
-
-                MAX_TOOL_OUTPUT = 30000
-                if len(observation) > MAX_TOOL_OUTPUT:
-                    observation = (
-                        observation[:MAX_TOOL_OUTPUT // 2]
-                        + "\n\n... [output truncated due to length] ...\n\n"
-                        + observation[-MAX_TOOL_OUTPUT // 2:]
-                    )
-
-                tool_message = ToolMessage(
-                    content=observation,
-                    tool_call_id=tool_call.id,
-                    name=tool_call.function.name,
-                    meta={"info": info}
+            # 截断过长的工具输出，防止 context 溢出
+            MAX_TOOL_OUTPUT = 30000
+            if len(observation) > MAX_TOOL_OUTPUT:
+                observation = (
+                    observation[:MAX_TOOL_OUTPUT // 2]
+                    + "\n\n... [output truncated due to length] ...\n\n"
+                    + observation[-MAX_TOOL_OUTPUT // 2:]
                 )
-                self.current_dialog.add_message(tool_message)
-                step_record.tool_responses.append(tool_message)
 
-            if should_finish:
-                break
-
-        # 内部轮次耗尽后，强制再请求一次最终文本（禁用工具）
-        if not should_finish and force_final_response and self.enable_tools:
-            self.current_dialog.add_message(
-                UserMessage(
-                    content=(
-                        "Provide your final answer now without calling any tools. "
-                        "Summarize concrete results and key outputs."
-                    )
-                )
+            # 创建工具响应消息
+            tool_message = ToolMessage(
+                content=observation,
+                tool_call_id=tool_call.id,
+                name=tool_call.function.name,
+                meta={"info": info}
             )
-            forced_dialog = Dialog(
-                messages=list(self.current_dialog.messages),
-                tools=[],
-                meta=dict(self.current_dialog.meta),
-            )
-            forced_dialog_for_query = self.context_manager.prepare_for_query(forced_dialog)
-            final_assistant = self.llm.query(forced_dialog_for_query)
-            self.current_dialog.add_message(final_assistant)
-            last_assistant_message = final_assistant
-            last_dialog_for_query = forced_dialog_for_query
-            should_finish = True
 
-        step_record.assistant_message = last_assistant_message
-        step_record.meta.update(
-            {
-                "max_tool_rounds": max_tool_rounds,
-                "force_final_response": force_final_response,
-            }
-        )
+            self.current_dialog.add_message(tool_message)
+            step_record.tool_responses.append(tool_message)
 
         self.trajectory.add_step(step_record)
-        self._append_trajectory_entry(last_dialog_for_query or self.current_dialog, step_record)
+        # 追加保存本次step到轨迹文件（包含tool_responses）
+        self._append_trajectory_entry(dialog_for_query, step_record)
         return should_finish
 
     def _execute_tool(self, tool_call) -> tuple[str, dict[str, Any]]:
@@ -407,15 +403,21 @@ class BaseAgent(ABC):
 
     def _get_tool_specs(self) -> list:
         """获取工具规格列表
-        
+
         只有在 enable_tools=True 时才返回工具规格列表。
         如果 enable_tools=False，返回空列表（工具仍然注册，但不会出现在提示词中）。
+        如果设置了 enabled_tool_names，则只返回启用的工具的规格。
         """
         if not self.enable_tools:
             return []
         if self.tools is None:
             return []
-        return self.tools.get_tool_specs()
+        all_specs = self.tools.get_tool_specs()
+        # 如果没有指定 enabled_tool_names 或者包含 "*"，返回所有工具
+        if self.enabled_tool_names is None or "*" in self.enabled_tool_names:
+            return all_specs
+        # 只返回启用的工具的规格
+        return [spec for spec in all_specs if spec.function.name in self.enabled_tool_names]
 
     def load_prompt_from_file(
         self,
@@ -793,6 +795,7 @@ class Agent(BaseAgent):
         output_config: dict[str, Any] | None = None,
         config_dir: Path | str | None = None,
         enable_tools: bool = True,
+        enabled_tool_names: list[str] | None = None,
     ):
         """初始化 Agent
 
@@ -808,8 +811,9 @@ class Agent(BaseAgent):
             output_config: 输出显示配置
             config_dir: 配置目录路径，用于加载提示词文件
             enable_tools: 是否在提示词中包含工具信息（默认 True）。如果为 False，工具仍然注册但不会出现在提示词中，Agent 将不会调用工具
+            enabled_tool_names: 启用的工具名称列表（可选）。None 或 ["*"] 表示所有已注册工具都启用。
         """
-        super().__init__(llm, session, tools, config, skill_registry, output_config, config_dir=config_dir, enable_tools=enable_tools)
+        super().__init__(llm, session, tools, config, skill_registry, output_config, config_dir=config_dir, enable_tools=enable_tools, enabled_tool_names=enabled_tool_names)
 
         # 存储提示词
         self._system_prompt: str | None = None
@@ -852,7 +856,7 @@ You have access to the following tools:
 You can use the 'use_skill' tool to:
 1. Get detailed information about a skill: action='get_info'
 2. Get reference documentation: action='get_reference'
-3. Run scripts from Operator skills: action='run_script'
+3. Run scripts from skills: action='run_script'
 """
 
         prompt += """
@@ -868,7 +872,11 @@ Always be careful with file operations and bash commands.
 
     def _get_system_prompt(self) -> str:
         """获取系统提示词，动态添加工作目录信息；若有 skill_registry 则自动注入 skills 信息"""
-        working_dir = self.session.config.workspace_path
+        # working_dir = self.session.config.workspace_path
+        working_dir = self.session.get_workspace_path()
+        # 如果没有启动并行和工作空间分离，那么get_workspace_path返回None，此时使用session.config.workspace_path
+        if working_dir is None:
+            working_dir = self.session.config.workspace_path
         # 将相对路径转换为绝对路径
         working_dir_abs = str(Path(working_dir).absolute())
         working_dir_info = f"\n\n重要提示：当前工作目录是 {working_dir_abs}。你必须在这个目录下进行所有操作，不能切换工作目录。所有文件操作、命令执行都必须在工作目录 {working_dir_abs} 下进行。"
@@ -882,7 +890,7 @@ Always be careful with file operations and bash commands.
 You can use the 'use_skill' tool to:
 1. Get detailed information about a skill: action='get_info'
 2. Get reference documentation: action='get_reference'
-3. Run scripts from Operator skills: action='run_script'
+3. Run scripts from skills: action='run_script'
 """
         return prompt
 

@@ -1161,11 +1161,6 @@ class PhyMasterExp(BaseExp):
             if isinstance(alt_subtasks, list):
                 contract["subtasks"] = alt_subtasks
 
-        if "sub_tasks" not in contract:
-            alt_subtasks = contract.get("subtasks") or contract.get("initial_subtasks")
-            if isinstance(alt_subtasks, list):
-                contract["sub_tasks"] = alt_subtasks
-
         contract.setdefault("topic", "None")
         contract.setdefault("domain", "None")
         contract.setdefault("subdomain", "None")
@@ -1184,7 +1179,6 @@ class PhyMasterExp(BaseExp):
         )
         contract.setdefault("expected_output", [])
         contract.setdefault("subtasks", [])
-        contract.setdefault("sub_tasks", [])
         return contract
 
     def _normalize_subtasks(self, raw: Any) -> list[str]:
@@ -1349,15 +1343,6 @@ class PhyMasterExp(BaseExp):
                 {"format": "string", "path": "string", "description": "string"}
             ],
             "subtasks": [
-                {
-                    "id": 1,
-                    "subtask_type": "reasoning",
-                    "input": "string",
-                    "expected_output": "string",
-                    "description": "string",
-                }
-            ],
-            "sub_tasks": [
                 {
                     "id": 1,
                     "subtask_type": "reasoning",

@@ -29,7 +29,10 @@ agents:
     max_turns: 1
     max_tool_rounds: 20
     force_final_response: true
-    enable_tools: true
+    tools:
+      builtin: ["use_skill", "finish"]
+    skills:
+      - "workflow-retrieval"
     context:
       max_tokens: 128000
       truncation_strategy: "latest_half"
@@ -44,7 +47,8 @@ agents:
     max_turns: 1
     max_tool_rounds: 20
     force_final_response: true
-    enable_tools: false
+    tools:
+      builtin: []
     context:
       max_tokens: 128000
       truncation_strategy: "latest_half"
@@ -58,7 +62,8 @@ agents:
     max_turns: 1
     max_tool_rounds: 30
     force_final_response: true
-    enable_tools: true
+    tools:
+      builtin: ["*"]
     context:
       max_tokens: 128000
       truncation_strategy: "latest_half"
@@ -72,7 +77,8 @@ agents:
     max_turns: 1
     max_tool_rounds: 20
     force_final_response: true
-    enable_tools: false
+    tools:
+      builtin: []
     context:
       max_tokens: 128000
       truncation_strategy: "latest_half"
@@ -86,7 +92,8 @@ agents:
     max_turns: 1
     max_tool_rounds: 20
     force_final_response: true
-    enable_tools: false
+    tools:
+      builtin: []
     context:
       max_tokens: 128000
       truncation_strategy: "latest_half"
@@ -94,10 +101,6 @@ agents:
       preserve_recent_turns: 5
     system_prompt_file: "prompts/summarizer_system_prompt.txt"
     user_prompt_file: "prompts/summarizer_user_prompt.txt"
-
-skills:
-  enabled: true
-  skills_root: "evomaster/skills"
 
 mcp:
   config_file: "mcp_config.json"

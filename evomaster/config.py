@@ -1,7 +1,7 @@
 """EvoMaster 配置管理
 
-提供统一的配置加载和管理功能，所有配置类都继承自 BaseConfig。
-支持从 .env 加载环境变量，并在配置中将 ${VAR} 替换为 os.environ 中的值。
+提供统一的配置加载和管理功能, 所有配置类都继承自 BaseConfig。
+支持从 .env 加载环境变量, 并在配置中将 ${VAR} 替换为 os.environ 中的值。
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ import re
 from abc import ABC
 from pathlib import Path
 from typing import Any
+import warnings
 
 import yaml
 from pydantic import BaseModel, Field
@@ -20,7 +21,7 @@ try:
 except ImportError:
     load_dotenv = None  # type: ignore[misc, assignment]
 
-# 匹配 ${VAR_NAME}，VAR_NAME 为字母、数字、下划线
+# 匹配 ${VAR_NAME}, VAR_NAME 为字母、数字、下划线
 _ENV_PATTERN = re.compile(r"\$\{([A-Za-z0-9_]+)\}")
 
 
@@ -45,7 +46,7 @@ def _substitute_env(value: Any) -> Any:
 class BaseConfig(BaseModel, ABC):
     """配置基类
 
-    所有配置类都应继承此类，使用 Pydantic 进行验证。
+    所有配置类都应继承此类, 使用 Pydantic 进行验证。
     """
 
     class Config:
@@ -80,48 +81,22 @@ class DockerEnvConfig(BaseConfig):
 class SchedulerConfig(BaseConfig):
     """调度器配置"""
     type: str = Field(default="local", description="调度器类型: local, slurm, kubernetes")
-    queue_timeout: int = Field(default=3600, description="队列超时时间（秒）")
+    queue_timeout: int = Field(default=3600, description="队列超时时间(秒)")
     retry_failed: bool = Field(default=True, description="是否重试失败任务")
     max_retries: int = Field(default=3, description="最大重试次数")
 
 
 class EnvConfig(BaseConfig):
-    """环境配置（集群 / Docker / 调度器）。
-    Bohrium 鉴权（BOHRIUM_ACCESS_KEY, BOHRIUM_PROJECT_ID 等）由 .env 提供，供 MCP calculation path adaptor 注入到 executor/storage。"""
+    """环境配置(集群 / Docker / 调度器)。
+    Bohrium 鉴权(BOHRIUM_ACCESS_KEY, BOHRIUM_PROJECT_ID 等)由 .env 提供, 供 MCP calculation path adaptor 注入到 executor/storage。"""
     cluster: ClusterConfig = Field(description="集群配置")
     docker: DockerEnvConfig = Field(description="Docker 配置")
     scheduler: SchedulerConfig = Field(description="调度器配置")
 
-
-# ============================================
-# Skill 配置
-# ============================================
-
-class KnowledgeSkillConfig(BaseConfig):
-    """Knowledge Skill 配置"""
-    retrieval: dict[str, Any] = Field(
-        default_factory=lambda: {
-            "enabled": True,
-            "embedding_model": "text-embedding-ada-002",
-            "top_k": 5,
-            "similarity_threshold": 0.7,
-        },
-        description="检索配置"
-    )
-
-
-class OperatorSkillConfig(BaseConfig):
-    """Operator Skill 配置"""
-    load_meta_info: bool = Field(default=True, description="是否加载 meta_info")
-    lazy_load_full_info: bool = Field(default=True, description="是否延迟加载 full_info")
-
-
-class SkillConfig(BaseConfig):
-    """Skill 配置"""
-    skill_dir: str = Field(default="./evomaster/skills", description="Skill 目录")
-    knowledge: KnowledgeSkillConfig = Field(default_factory=KnowledgeSkillConfig)
-    operator: OperatorSkillConfig = Field(default_factory=OperatorSkillConfig)
-
+class ToolConfig(BaseConfig):
+    """Tools 配置"""
+    builtin: list[str] = Field(default_factory=list, description="Builtin Tools")
+    mcp: list[str] = Field(default_factory=list, description="MCP Tools")
 
 # ============================================
 # 日志配置
@@ -136,7 +111,7 @@ class LoggingConfig(BaseConfig):
     )
     file: str | None = Field(default=None, description="日志文件路径")
     console: bool = Field(default=True, description="是否输出到控制台")
-    log_path: str | None = Field(default=None, description="日志文件保存路径（程序运行完成后保存）")
+    log_path: str | None = Field(default=None, description="日志文件保存路径(程序运行完成后保存)")
 
 
 # ============================================
@@ -149,22 +124,24 @@ class EvoMasterConfig(BaseConfig):
     包含所有子模块的配置。
     """
 
-    # LLM 配置（存储为字典，按需转换为 LLMConfig）
+    # LLM 配置(存储为字典, 按需转换为 LLMConfig)
     llm: dict[str, Any] = Field(default_factory=dict, description="LLM 配置")
 
-    # Agent 配置（存储为字典，按需转换为 AgentConfig）
-    agent: dict[str, Any] = Field(default_factory=dict, description="Agent 配置")
+    # Agent 配置(存储为字典, 按需转换为 AgentConfig)
+    agents: dict[str, Any] = Field(default_factory=dict, description="Agent 配置")
 
-    # Session 配置（存储为字典，按需转换为 SessionConfig）
+    # Session 配置(存储为字典, 按需转换为 SessionConfig)
     session: dict[str, Any] = Field(default_factory=dict, description="Session 配置")
 
     # Env 配置
     env: EnvConfig = Field(default_factory=EnvConfig, description="环境配置")
 
-    # Skill 配置
-    skill: SkillConfig = Field(default_factory=SkillConfig, description="Skill 配置")
+    # Tools 配置
+    tools: ToolConfig = Field(default_factory=ToolConfig, description="Tools 配置")
+    
 
-    # Skills 加载（Playground 用：enabled=true 时加载 SkillRegistry，skills_root 为技能目录）
+
+    # Skills 加载(Playground 用：enabled=true 时加载 SkillRegistry, skills_root 为技能目录)
     skills: dict[str, Any] = Field(
         default_factory=lambda: {"enabled": False, "skills_root": "evomaster/skills"},
         description="Skills 启用与根目录",
@@ -205,8 +182,8 @@ class ConfigManager:
         """初始化配置管理器
 
         Args:
-            config_dir: 配置文件目录，默认为项目根目录的 configs/
-            config_file: 配置文件名，默认为 config.yaml
+            config_dir: 配置文件目录, 默认为项目根目录的 configs/
+            config_file: 配置文件名, 默认为 config.yaml
         """
         if config_dir is None:
             # 默认配置目录：项目根目录/configs
@@ -220,7 +197,7 @@ class ConfigManager:
     def load(self) -> EvoMasterConfig:
         """加载配置文件
 
-        会尝试从项目根目录加载 .env，并将配置中的 ${VAR} 替换为环境变量值。
+        会尝试从项目根目录加载 .env, 并将配置中的 ${VAR} 替换为环境变量值。
         Returns:
             EvoMaster 配置对象
         """
@@ -228,7 +205,7 @@ class ConfigManager:
             return self._config
 
         if load_dotenv is not None:
-            # 从 config_dir 向上查找 .env（如 configs/mat_master -> 项目根）
+            # 从 config_dir 向上查找 .env(如 configs/mat_master -> 项目根)
             for parent in [self.config_dir] + list(self.config_dir.parents):
                 env_file = parent / ".env"
                 if env_file.exists():
@@ -251,11 +228,18 @@ class ConfigManager:
         self._config = EvoMasterConfig(**config_dict)
         return self._config
 
+    @staticmethod
+    def _require_dict(value: Any, field_name: str) -> dict[str, Any]:
+        """确保配置项为字典类型, 便于统一错误信息。"""
+        if not isinstance(value, dict):
+            raise TypeError(f"Config field '{field_name}' must be a dict, got {type(value).__name__}")
+        return value
+
     def get(self, key: str, default: Any = None) -> Any:
         """获取配置项
 
         Args:
-            key: 配置键（支持点分隔的嵌套键，如 "agent.max_turns"）
+            key: 配置键(支持点分隔的嵌套键, 如 "agent.max_turns")
             default: 默认值
 
         Returns:
@@ -281,45 +265,213 @@ class ConfigManager:
         """获取 LLM 配置
 
         Args:
-            name: LLM 配置名称，None 则使用默认配置
+            name: LLM 配置名称, None 则使用默认配置
 
         Returns:
             LLM 配置字典
         """
         config = self.load()
 
+        llm_root = self._require_dict(config.llm, "llm")
         if name is None:
-            name = config.llm.get("default", "openai")
+            name = llm_root.get("default", "openai")
 
-        llm_config = config.llm.get(name)
+        llm_config = llm_root.get(name)
         if llm_config is None:
             raise ValueError(f"LLM config '{name}' not found")
 
-        return llm_config
+        return self._require_dict(llm_config, f"llm.{name}")
 
-    def get_agent_config(self) -> dict[str, Any]:
+    def get_agent_config(self, name: str | None = None) -> dict[str, Any]:
         """获取 Agent 配置
 
         Returns:
             Agent 配置字典
         """
         config = self.load()
-        return config.agent
+        agents = self._require_dict(config.agents, "agents")
+        if name is None:
+            raise ValueError(f"No {name} configuration found. Add {name} in agents section in config.yaml")
+        if name not in agents:
+            raise ValueError(f"Agent config '{name}' not found")
+        return self._require_dict(agents[name], f"agents.{name}")
+
+    def get_agents_config(self) -> dict[str, Any]:
+        """获取 Agents 配置
+
+        Returns:
+            Agents 配置字典
+        """
+        config = self.load()
+        agents = self._require_dict(config.agents, "agents")
+        if not agents:
+            raise ValueError("No agents configuration found. Add 'agents' section to config.yaml")
+        return agents
+    
+    def get_agent_llm_config(self, name: str) -> dict[str, Any]:
+        """获取 Agent LLM 配置
+
+        Returns:
+            Agent LLM 配置字典
+        """
+        config = self.load()
+        agents = self._require_dict(config.agents, "agents")
+        if name not in agents:
+            raise ValueError(f"Agent config '{name}' not found")
+        agent_cfg = self._require_dict(agents[name], f"agents.{name}")
+        if "llm" not in agent_cfg:
+            warnings.warn(f"Agent '{name}' does not have LLM configuration, trying to use default LLM configuration")
+            return self.get_llm_config()
+        else:
+            return self.get_llm_config(agent_cfg["llm"])
+
+    def get_agent_tools_config(self, name: str) -> dict[str, Any]:
+        """获取 Agent Tools 配置(per-agent)
+
+        YAML 支持以下格式：
+          1) 不配置 tools(键不存在) → {"builtin": ["*"], "mcp": ""}  (默认：全部 builtin, 无 mcp)
+          2) tools: "default"          → 同上
+          3) tools:                    → {"builtin": [], "mcp": ""}  (空值 = 禁用所有工具)
+          4) tools: []                 → {"builtin": [], "mcp": ""}  (空列表 = 禁用所有工具)
+          5) tools:
+               builtin: ["*"]         → 全部 builtin
+               mcp: ["*"]             → 使用默认 mcp_config.json
+          6) tools:
+               builtin: ["execute_bash", "finish"]   → 仅指定的 builtin
+          7) tools:
+               builtin: []            → 禁用所有 builtin
+          8) tools:
+               mcp: "custom_mcp.json" → 使用指定的 MCP 配置文件
+
+        Returns:
+            标准化后的 dict, 形如 {"builtin": list[str], "mcp": str}
+            其中 mcp 为 MCP 配置文件路径（相对于 config_dir），空字符串表示不启用 MCP
+        """
+        _DEFAULT = {"builtin": ["*"], "mcp": ""}
+        _EMPTY = {"builtin": [], "mcp": ""}
+
+        config = self.load()
+        agents = self._require_dict(config.agents, "agents")
+        if name not in agents:
+            raise ValueError(f"Agent config '{name}' not found")
+        agent_cfg = self._require_dict(agents[name], f"agents.{name}")
+
+        # 键不存在 → 默认(全部 builtin)
+        if "tools" not in agent_cfg:
+            return _DEFAULT.copy()
+
+        raw_tools = agent_cfg["tools"]
+
+        # tools:  (空值, YAML 解析为 None)→ 禁用所有工具
+        if raw_tools is None:
+            return _EMPTY.copy()
+
+        # tools: [] (空列表)→ 禁用所有工具
+        if isinstance(raw_tools, list) and len(raw_tools) == 0:
+            return _EMPTY.copy()
+
+        # tools: "default" → 默认
+        if isinstance(raw_tools, str):
+            if raw_tools == "default":
+                return _DEFAULT.copy()
+            raise ValueError(
+                f"Config field 'agents.{name}.tools' string value must be 'default', got '{raw_tools}'"
+            )
+
+        if not isinstance(raw_tools, dict):
+            raise TypeError(
+                f"Config field 'agents.{name}.tools' must be dict, 'default', [], or omitted, "
+                f"got {type(raw_tools).__name__}"
+            )
+
+        # 解析 builtin
+        raw_builtin = raw_tools.get("builtin")
+        if raw_builtin is None:
+            builtin = ["*"]  # 未显式配置 builtin → 全部
+        elif isinstance(raw_builtin, str) and raw_builtin == "*":
+            builtin = ["*"]
+        elif isinstance(raw_builtin, list) and all(isinstance(s, str) for s in raw_builtin):
+            builtin = raw_builtin
+        else:
+            raise TypeError(
+                f"Config field 'agents.{name}.tools.builtin' must be list[str] or '*', "
+                f"got {type(raw_builtin).__name__}"
+            )
+
+        # 解析 mcp
+        raw_mcp = raw_tools.get("mcp")
+        if raw_mcp is None:
+            mcp = ""  # 未显式配置 mcp → 不启用
+        elif isinstance(raw_mcp, str):
+            if raw_mcp == "*":
+                mcp = "mcp_config.json"  # "*" → 默认配置文件
+            else:
+                mcp = raw_mcp  # 直接使用指定的配置文件路径
+        elif isinstance(raw_mcp, list):
+            if len(raw_mcp) == 0:
+                mcp = ""  # 空列表 → 不启用
+            elif raw_mcp == ["*"]:
+                mcp = "mcp_config.json"  # ["*"] → 默认配置文件
+            else:
+                raise ValueError(
+                    f"Config field 'agents.{name}.tools.mcp' list value must be ['*'] or [], "
+                    f"got {raw_mcp}"
+                )
+        else:
+            raise TypeError(
+                f"Config field 'agents.{name}.tools.mcp' must be str, ['*'], [], or omitted, "
+                f"got {type(raw_mcp).__name__}"
+            )
+
+        return {"builtin": builtin, "mcp": mcp}
+    
+    def get_agent_skills_config(self, name: str) -> dict[str, Any]:
+        """获取 Agent Skills 配置
+
+        Returns:
+            Agent Skills 配置字典(标准化后), 形如 {"skills": list[str]}
+        """
+        config = self.load()
+        agents = self._require_dict(config.agents, "agents")
+        if name not in agents:
+            raise ValueError(f"Agent config '{name}' not found")
+        agent_cfg = self._require_dict(agents[name], f"agents.{name}")
+        raw_skills = agent_cfg.get("skills")
+        if raw_skills is None:
+            return {"skills": []}
+
+        # 兼容 skills: "*" 的写法
+        if raw_skills == "*":
+            raw_skills = ["*"]
+
+        if not isinstance(raw_skills, list) or not all(isinstance(skill, str) for skill in raw_skills):
+            raise TypeError(
+                f"Config field 'agents.{name}.skills' must be list[str], '*' or omitted"
+            )
+
+        # '*' 只能单独出现
+        if "*" in raw_skills and raw_skills != ["*"]:
+            raise ValueError(
+                f"Config field 'agents.{name}.skills' cannot mix '*' with specific skill names"
+            )
+        return {"skills": raw_skills}
+
 
     def get_session_config(self, session_type: str = "docker") -> dict[str, Any]:
         """获取 Session 配置
 
         Args:
-            session_type: Session 类型（docker, local）
+            session_type: Session 类型(docker, local)
 
         Returns:
             Session 配置字典
         """
         config = self.load()
-        session_config = config.session.get(session_type)
+        sessions = self._require_dict(config.session, "session")
+        session_config = sessions.get(session_type)
         if session_config is None:
             raise ValueError(f"Session config '{session_type}' not found")
-        return session_config
+        return self._require_dict(session_config, f"session.{session_type}")
 
     def get_env_config(self) -> EnvConfig:
         """获取 Env 配置
@@ -329,15 +481,6 @@ class ConfigManager:
         """
         config = self.load()
         return config.env
-
-    def get_skill_config(self) -> SkillConfig:
-        """获取 Skill 配置
-
-        Returns:
-            Skill 配置对象
-        """
-        config = self.load()
-        return config.skill
 
     def get_logging_config(self) -> LoggingConfig:
         """获取日志配置
@@ -375,7 +518,7 @@ def get_config_manager(config_dir: str | Path | None = None) -> ConfigManager:
     """获取全局配置管理器
 
     Args:
-        config_dir: 配置目录（首次调用时设置）
+        config_dir: 配置目录(首次调用时设置)
 
     Returns:
         配置管理器实例

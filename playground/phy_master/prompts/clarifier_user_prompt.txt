@@ -7,5 +7,6 @@ Schema to follow strictly (JSON):
 Additional notice:
 - The number of items in "related_knowledge" must be <= {max_keys}.
 - Build "constraints" by selecting relevant items from: symmetry, conservation_law, scales, boundary_condition, initial_condition, and other mathematical constraints.
+- Planning and workflow design should not be regarded as a sub-task, as it is redundant.
 
 Now output ONLY the JSON object that adheres to the schema and constraints above.

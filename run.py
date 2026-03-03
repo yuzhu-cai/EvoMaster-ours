@@ -94,6 +94,12 @@ def parse_args():
         help="并行执行多个任务（仅在使用 --task-file 时有效）"
     )
 
+    parser.add_argument(
+        "--images",
+        nargs="+",
+        help="图片文件路径列表（支持 PNG/JPG），用于多模态任务输入"
+    )
+
     return parser.parse_args()
 
 
@@ -108,54 +114,27 @@ def setup_logging():
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def _resolve_task_file(task_input: str) -> Path | None:
-    """解析任务文件路径（支持 .txt/.md/.markdown）。
-
-    返回:
-        - Path: 找到并可读取的任务文件路径
-        - None: 输入不是任务文件路径（按普通任务描述处理）
-    """
-    candidate = Path(task_input).expanduser()
-    suffix = candidate.suffix.lower()
-    task_file_exts = {".txt", ".md", ".markdown"}
-
-    if suffix not in task_file_exts:
-        return None
-
-    search_paths = [candidate]
-    if not candidate.is_absolute():
-        search_paths.append(project_root / candidate)
-
-    for path in search_paths:
-        if path.exists() and path.is_file():
-            return path
-
-    print(
-        f"错误：任务文件不存在: {candidate}\n"
-    )
-    sys.exit(1)
-
-
 def get_task_description(args):
     """获取任务描述
-    如果 args.task 是文件路径（.txt/.md/.markdown），则读取文件内容；
+    
+    如果 args.task 是文件路径（.txt 或 .md），则读取文件内容；
     否则直接返回 args.task 作为任务描述。
     """
     if args.task:
-        task_file = _resolve_task_file(args.task)
-        if task_file:
+        task_path = Path(args.task)
+        # 检查是否是文件路径（.txt 或 .md）
+        if task_path.suffix.lower() in ['.txt', '.md'] and task_path.exists() and task_path.is_file():
             try:
-                with open(task_file, "r", encoding="utf-8") as f:
+                with open(task_path, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
                 if not content:
-                    print(f"❌ 错误：文件 {task_file} 为空")
+                    print(f"❌ 错误：文件 {task_path} 为空")
                     sys.exit(1)
                 return content
             except Exception as e:
-                print(f"❌ 错误：读取文件 {task_file} 失败: {e}")
+                print(f"❌ 错误：读取文件 {task_path} 失败: {e}")
                 sys.exit(1)
-
-        # 不是任务文件路径，直接作为任务描述返回
+        # 不是文件路径或文件不存在，直接作为任务描述返回
         return args.task
 
     if args.interactive:
@@ -224,7 +203,7 @@ def parse_task_file(task_file_path: Path):
 
 
 def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
-                    task_id: str, task_description: str):
+                    task_id: str, task_description: str, images: list[str] | None = None):
     """运行单个任务（在主进程中）
 
     注意：这个函数在主进程中运行，不是在独立进程中。
@@ -236,6 +215,7 @@ def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
         run_dir: 运行目录
         task_id: 任务 ID
         task_description: 任务描述
+        images: 图片文件路径列表（可选）
 
     Returns:
         任务结果字典
@@ -250,7 +230,10 @@ def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
         playground.set_run_dir(run_dir, task_id=task_id)
 
         # 运行任务
-        result = playground.run(task_description=task_description)
+        if images:
+            result = playground.run(task_description=task_description, images=images)
+        else:
+            result = playground.run(task_description=task_description)
         result["task_id"] = task_id
 
         logger.info(f"✅ Task {task_id} completed: {result['status']}")
@@ -267,7 +250,7 @@ def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
 
 
 def run_tasks_sequential(agent_name: str, config_path: Path, run_dir: Path,
-                         tasks: list):
+                         tasks: list, images: list[str] | None = None):
     """串行运行多个任务
 
     Args:
@@ -275,25 +258,28 @@ def run_tasks_sequential(agent_name: str, config_path: Path, run_dir: Path,
         config_path: 配置文件路径
         run_dir: 运行目录
         tasks: 任务列表
+        images: 图片文件路径列表（可选，所有任务共享）
 
     Returns:
         所有任务的结果列表
     """
     results = []
     for task in tasks:
+        task_images = task.get("images", images)
         result = run_single_task(
             agent_name,
             config_path,
             run_dir,
             task["id"],
-            task["description"]
+            task["description"],
+            images=task_images
         )
         results.append(result)
     return results
 
 
 def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
-                       tasks: list, max_workers: int = 4):
+                       tasks: list, max_workers: int = 4, images: list[str] | None = None):
     """并行运行多个任务
 
     使用 ProcessPoolExecutor 并行执行任务。
@@ -304,6 +290,7 @@ def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
         run_dir: 运行目录
         tasks: 任务列表
         max_workers: 最大并行进程数
+        images: 图片文件路径列表（可选，所有任务共享）
 
     Returns:
         所有任务的结果列表
@@ -322,7 +309,8 @@ def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
                 config_path,
                 run_dir,
                 task["id"],
-                task["description"]
+                task["description"],
+                task.get("images", images)
             ): task
             for task in tasks
         }
@@ -401,20 +389,6 @@ def main():
 
     args = parse_args()
 
-    # 规范化 agent 名称，避免用户传入类似 "playground/phy_master"
-    # 导致无法命中 @register_playground("phy_master")。
-    agent_name = str(args.agent).strip().replace("\\", "/")
-    if "/" in agent_name:
-        parts = [p for p in agent_name.split("/") if p]
-        normalized = parts[-1] if parts else agent_name
-        logger.warning(
-            "Normalized agent name from '%s' to '%s'. Use '--agent %s' next time.",
-            args.agent,
-            normalized,
-            normalized,
-        )
-        args.agent = normalized
-
     # 1. 确定配置文件路径
     if args.config:
         config_path = Path(args.config)
@@ -432,7 +406,22 @@ def main():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = project_root / "runs" / f"{args.agent}_{timestamp}"
 
-    # 3. 解析任务
+    # 3. 验证图片文件（如果提供）
+    images = None
+    if args.images:
+        images = []
+        for img_path_str in args.images:
+            img_path = Path(img_path_str)
+            if not img_path.exists():
+                logger.error(f"图片文件不存在: {img_path}")
+                sys.exit(1)
+            if img_path.suffix.lower() not in ['.png', '.jpg', '.jpeg']:
+                logger.error(f"不支持的图片格式: {img_path.suffix}（仅支持 PNG/JPG）")
+                sys.exit(1)
+            images.append(str(img_path.absolute()))
+        logger.info(f"加载了 {len(images)} 张图片")
+
+    # 4. 解析任务
     if args.task_file:
         # 批量任务模式
         task_file = Path(args.task_file)
@@ -454,7 +443,7 @@ def main():
             "description": task_description
         }]
 
-    # 4. 打印运行信息
+    # 5. 打印运行信息
     logger.info("=" * 60)
     logger.info("🚀 EvoMaster 启动")
     logger.info("=" * 60)
@@ -462,24 +451,26 @@ def main():
     logger.info(f"Config: {config_path}")
     logger.info(f"Run Directory: {run_dir}")
     logger.info(f"Tasks: {len(tasks)}")
+    if images:
+        logger.info(f"Images: {len(images)} files")
     if len(tasks) > 1:
         mode = "并行" if args.parallel else "串行"
         logger.info(f"执行模式: {mode}")
     logger.info("=" * 60)
 
-    # 5. 运行任务
+    # 6. 运行任务
     try:
         if len(tasks) > 1 and args.parallel:
             # 并行模式
             logger.info("🔄 并行执行任务...")
-            results = run_tasks_parallel(args.agent, config_path, run_dir, tasks)
+            results = run_tasks_parallel(args.agent, config_path, run_dir, tasks, images=images)
         else:
             # 串行模式（包括单任务）
             if len(tasks) > 1:
                 logger.info("🔄 串行执行任务...")
-            results = run_tasks_sequential(args.agent, config_path, run_dir, tasks)
+            results = run_tasks_sequential(args.agent, config_path, run_dir, tasks, images=images)
 
-        # 6. 输出结果
+        # 7. 输出结果
         logger.info("=" * 60)
         logger.info("✅ 所有任务完成")
         logger.info("=" * 60)
