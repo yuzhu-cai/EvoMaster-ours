@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -141,7 +142,9 @@ class FeishuStepReporter:
             f"**步数:** {self._step_count}"
         )
         if final_answer:
-            content += f"\n\n**最终回答:**\n{final_answer[:3000]}"
+            # 清理 Markdown 格式避免与卡片结构冲突
+            display_answer = self._sanitize_for_card(final_answer[:3000])
+            content += f"\n\n**最终回答:**\n{display_answer}"
 
         if status == "completed":
             template, title = "green", "✅ 任务完成"
@@ -156,11 +159,35 @@ class FeishuStepReporter:
             self._patch(title=title, content=content, template=template)
 
         # 文档：追加总结
-        self._finalize_document(status, elapsed, final_answer)
+        self._finalize_document(status, elapsed)
 
     # ------------------------------------------------------------------
     # Internal — Card
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sanitize_for_card(text: str) -> str:
+        """清理 Markdown 格式，避免与飞书卡片结构冲突。
+
+        - 移除 Markdown 标题标记（## → 纯文本）
+        - 移除水平线（---）
+        - 移除表格（| col | col |）
+        """
+        lines = text.splitlines()
+        cleaned: list[str] = []
+        for line in lines:
+            stripped = line.strip()
+            # 移除水平线
+            if re.fullmatch(r'-{3,}|_{3,}|\*{3,}', stripped):
+                continue
+            # 移除标题标记，保留文本
+            if stripped.startswith('#'):
+                line = re.sub(r'^#+\s*', '', stripped)
+            # 移除表格分隔行 (|---|---|)
+            if re.fullmatch(r'\|[\s\-:|]+\|', stripped):
+                continue
+            cleaned.append(line)
+        return '\n'.join(cleaned)
 
     def _build_progress_content(
         self, current_step: int, max_steps: int, running: bool
@@ -339,14 +366,18 @@ class FeishuStepReporter:
             self._doc_writer.append_blocks(self._document_id, blocks)
             return
 
-        # Thinking content (full)
+        # Thinking / text content (full)
         content = getattr(assistant_msg, "content", "") or ""
+        tool_calls = getattr(assistant_msg, "tool_calls", None) or []
         if content.strip():
-            blocks.append(_build_text_block("Thinking:", bold=True))
+            # 有 tool_calls 时，content 是 thinking；否则是最终文本回答
+            if tool_calls:
+                blocks.append(_build_text_block("Thinking:", bold=True))
+            else:
+                blocks.append(_build_text_block("Response:", bold=True))
             blocks.append(_build_text_block(content))
 
         # Tool calls (full arguments)
-        tool_calls = getattr(assistant_msg, "tool_calls", None) or []
         for tc in tool_calls:
             func = getattr(tc, "function", None)
             if func is None:
@@ -374,9 +405,7 @@ class FeishuStepReporter:
         # 批量追加（单次 API 调用）
         self._doc_writer.append_blocks(self._document_id, blocks)
 
-    def _finalize_document(
-        self, status: str, elapsed: float, final_answer: str
-    ) -> None:
+    def _finalize_document(self, status: str, elapsed: float) -> None:
         """向文档追加总结。"""
         if not self._doc_writer or not self._document_id:
             return
@@ -390,11 +419,5 @@ class FeishuStepReporter:
                 f"Steps: {self._step_count}"
             )
             self._doc_writer.append_text(self._document_id, summary)
-
-            if final_answer:
-                self._doc_writer.append_heading(
-                    self._document_id, "Final Answer", level=3
-                )
-                self._doc_writer.append_text(self._document_id, final_answer)
         except Exception:
             logger.exception("Failed to finalize trajectory document")

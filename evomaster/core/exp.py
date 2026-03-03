@@ -53,7 +53,6 @@ def extract_agent_response(trajectory: Any) -> str:
         return ""
 
     # 反向遍历，找最后一条 assistant 消息
-    last_content = ""
     for message in reversed(messages):
         if isinstance(message, dict):
             role = message.get("role", "")
@@ -88,12 +87,11 @@ def extract_agent_response(trajectory: Any) -> str:
                 except (json.JSONDecodeError, AttributeError):
                     pass
 
-        # 回退到 content
-        if content and content.strip():
-            if not last_content:
-                last_content = content
+        # 回退到 content（跳过有 tool_calls 的消息，其 content 可能是泄漏的格式化 token）
+        if content and content.strip() and not tool_calls:
+            return content
 
-    return last_content
+    return ""
 
 
 class BaseExp:
