@@ -161,6 +161,32 @@ class FeishuStepReporter:
         # 文档：追加总结
         self._finalize_document(status, elapsed)
 
+    def finalize_as_question(
+        self, question_text: str, actions: list[dict] | None = None
+    ) -> None:
+        """更新卡片为"等待用户回答"状态。"""
+        if self._card_message_id is None:
+            return
+
+        content = f"**任务:** {self._task_text}\n\n"
+        if self._document_url:
+            content += f"[📄 查看完整轨迹]({self._document_url})\n\n"
+        content += f"---\n\n{question_text}"
+
+        if actions:
+            self._patch_with_actions(
+                title="🤔 需要补充信息",
+                content=content,
+                template="orange",
+                actions=actions,
+            )
+        else:
+            self._patch(
+                title="🤔 需要补充信息",
+                content=content,
+                template="orange",
+            )
+
     # ------------------------------------------------------------------
     # Internal — Card
     # ------------------------------------------------------------------

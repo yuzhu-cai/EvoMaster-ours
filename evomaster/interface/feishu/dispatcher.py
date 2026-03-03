@@ -339,11 +339,27 @@ class TaskDispatcher:
                 if agent_name != self._default_agent:
                     # 会话级子任务：支持多轮对话（如 agent_builder）
                     if agent_name in _SESSION_SUBTASK_AGENTS:
-                        answer = self._run_session_subtask(
+                        answer, sub_trajectory = self._run_session_subtask(
                             chat_id, agent_name, task_text, on_step, sender_open_id
                         )
                     else:
                         answer = self._run_subtask(agent_name, task_text, on_step)
+                        sub_trajectory = None
+
+                    # 检查 waiting_for_input（agent 在向用户提问）
+                    if sub_trajectory and sub_trajectory.status == "waiting_for_input":
+                        if reporter:
+                            try:
+                                sub_session_key = f"{chat_id}:{agent_name}"
+                                sub_session = self._session_manager.get(sub_session_key)
+                                self._finalize_subtask_with_question(
+                                    reporter, sub_trajectory, sub_session_key,
+                                    agent_name, sub_session,
+                                )
+                                return None
+                            except Exception:
+                                logger.exception("Failed to finalize question card")
+                        return answer
 
                     # 将结果注入 chat_agent 的 dialog 作为上下文
                     if session.initialized and session.agent:
@@ -409,9 +425,23 @@ class TaskDispatcher:
                         )
                         sub_session.last_card_message_id = None
 
-                    answer = self._run_session_subtask(
+                    answer, sub_trajectory = self._run_session_subtask(
                         chat_id, active_subtask, task_text, on_step, sender_open_id
                     )
+
+                    # 检查 waiting_for_input（agent 在向用户提问）
+                    if sub_trajectory and sub_trajectory.status == "waiting_for_input":
+                        if reporter:
+                            try:
+                                self._finalize_subtask_with_question(
+                                    reporter, sub_trajectory, sub_session_key,
+                                    active_subtask, sub_session,
+                                )
+                                return None
+                            except Exception:
+                                logger.exception("Failed to finalize question card")
+                        return answer
+
                     if session.initialized and session.agent:
                         summary = (
                             f"[子任务结果 - {active_subtask}]\n"
@@ -470,6 +500,7 @@ class TaskDispatcher:
 
                     # 注入飞书特有工具
                     self._inject_feishu_tools(session.playground)
+                    self._inject_ask_user_tool(session.agent)
 
                     task = TaskInstance(
                         task_id=f"feishu_{message_id}",
@@ -487,6 +518,26 @@ class TaskDispatcher:
                     )
                     trajectory = session.agent.continue_run(
                         task_text, on_step=on_step
+                    )
+
+                # === ask_user 检测 ===
+                # chat_agent 调用了 ask_user，显示问题卡片
+                if trajectory and trajectory.status == "waiting_for_input":
+                    if reporter:
+                        try:
+                            questions = (trajectory.result or {}).get("questions", [])
+                            question_text = self._format_questions_for_card(questions)
+                            # chat_agent 的 ask_user 按钮也走 answer_question，
+                            # 但 session_key 用 chat_id 本身（后续消息自然路由回 chat_agent）
+                            option_actions = self._build_question_actions(
+                                questions, chat_id, "chat_agent"
+                            )
+                            reporter.finalize_as_question(question_text, actions=option_actions)
+                            return None
+                        except Exception:
+                            logger.exception("Failed to finalize chat_agent question card")
+                    return _extract_final_answer(
+                        {"trajectory": trajectory, "status": trajectory.status}
                     )
 
                 # === 委派检测 ===
@@ -525,10 +576,26 @@ class TaskDispatcher:
                         except Exception:
                             logger.exception("Failed to create subtask reporter")
 
-                    answer = self._run_session_subtask(
+                    answer, sub_trajectory = self._run_session_subtask(
                         chat_id, delegated_agent, delegated_task,
                         subtask_on_step, sender_open_id,
                     )
+
+                    # 检查 waiting_for_input（agent 在向用户提问）
+                    if sub_trajectory and sub_trajectory.status == "waiting_for_input":
+                        if subtask_reporter:
+                            try:
+                                sub_session_key = f"{chat_id}:{delegated_agent}"
+                                sub_session = self._session_manager.get(sub_session_key)
+                                self._finalize_subtask_with_question(
+                                    subtask_reporter, sub_trajectory, sub_session_key,
+                                    delegated_agent, sub_session,
+                                )
+                                return None
+                            except Exception:
+                                logger.exception("Failed to finalize question card")
+                        return None
+
                     if session.initialized and session.agent:
                         summary = (
                             f"[子任务结果 - {delegated_agent}]\n"
@@ -653,10 +720,13 @@ class TaskDispatcher:
         task_text: str,
         on_step: Optional[Callable] = None,
         sender_open_id: Optional[str] = None,
-    ) -> str:
+    ) -> tuple[str, Any]:
         """运行会话级子任务：支持多轮对话的独立 agent 会话。
 
         使用 {chat_id}:{agent_name} 作为会话 key，支持 continue_run()。
+
+        Returns:
+            (answer_text, trajectory) 元组。trajectory 可能为 None（异常时）。
         """
         from evomaster.utils.types import TaskInstance
 
@@ -683,6 +753,7 @@ class TaskDispatcher:
 
                     self._inject_feishu_tools(session.playground)
                     self._inject_doc_write_tool(session.playground, sender_open_id)
+                    self._inject_ask_user_tool(session.agent)
 
                     task = TaskInstance(
                         task_id=f"session_subtask_{agent_name}",
@@ -700,15 +771,16 @@ class TaskDispatcher:
                         task_text, on_step=on_step
                     )
 
-                return _extract_final_answer(
+                answer = _extract_final_answer(
                     {"trajectory": trajectory, "status": trajectory.status}
                 )
+                return answer, trajectory
 
             except Exception as e:
                 logger.exception(
                     "Session subtask failed: key=%s, agent=%s", session_key, agent_name
                 )
-                return f"会话子任务执行出错: {e}"
+                return f"会话子任务执行出错: {e}", None
 
     def _inject_doc_write_tool(self, playground, sender_open_id: str | None) -> None:
         """将飞书文档写入工具注入 playground 的所有 agent。"""
@@ -737,6 +809,58 @@ class TaskDispatcher:
         for agent in playground.agents.values():
             agent.tools.register(tool)
 
+    @staticmethod
+    def _inject_ask_user_tool(agent) -> None:
+        """注入 ask_user 工具（仅在交互式上下文中使用）。"""
+        from .ask_user_tool import AskUserTool
+        agent.tools.register(AskUserTool())
+
+    @staticmethod
+    def _format_questions_for_card(questions: list[dict]) -> str:
+        """格式化问题为卡片 markdown。"""
+        parts = []
+        for q in questions:
+            parts.append(f"**{q.get('question', '')}**")
+            for opt in q.get("options", []):
+                desc = f" — {opt['description']}" if opt.get("description") else ""
+                parts.append(f"  - {opt['label']}{desc}")
+        parts.append("\n> 也可以直接回复文字补充更多细节")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _build_question_actions(
+        questions: list[dict], session_key: str, agent_name: str
+    ) -> list[dict]:
+        """为第一个问题的选项构建按钮。"""
+        if not questions or not questions[0].get("options"):
+            return []
+        actions = []
+        for opt in questions[0]["options"][:4]:
+            actions.append({
+                "text": opt.get("label", ""),
+                "type": "default",
+                "value": {
+                    "action": "answer_question",
+                    "session_key": session_key,
+                    "agent_name": agent_name,
+                    "answer_text": opt.get("label", ""),
+                },
+            })
+        return actions
+
+    def _finalize_subtask_with_question(
+        self, reporter, trajectory, sub_session_key: str, agent_name: str, sub_session
+    ) -> None:
+        """当子任务返回 waiting_for_input 时，显示问题卡片。"""
+        questions = (getattr(trajectory, "result", None) or {}).get("questions", [])
+        question_text = self._format_questions_for_card(questions)
+        option_actions = self._build_question_actions(
+            questions, sub_session_key, agent_name
+        )
+        reporter.finalize_as_question(question_text, actions=option_actions)
+        if sub_session:
+            sub_session.last_card_message_id = reporter.card_message_id
+
     def dispatch_card_action(
         self,
         chat_id: str,
@@ -746,6 +870,7 @@ class TaskDispatcher:
         sender_open_id: str | None = None,
         card_message_id: str | None = None,
         original_answer: str = "",
+        action_type: str = "confirm",
     ) -> None:
         """处理卡片按钮回调，触发会话级子任务的 continue_run。
 
@@ -757,6 +882,7 @@ class TaskDispatcher:
             sender_open_id: 操作者 open_id
             card_message_id: 触发按钮的卡片消息 ID
             original_answer: Phase 1 的原始回答内容（用于更新卡片时保留）
+            action_type: 按钮类型 ("confirm" = Phase 2 生成, "answer_question" = 回答提问继续 Phase 1)
         """
         message_id = card_message_id or f"card_action_{session_key}"
         future = self._executor.submit(
@@ -768,6 +894,7 @@ class TaskDispatcher:
             sender_open_id,
             card_message_id,
             original_answer,
+            action_type,
         )
         self._active_tasks[message_id] = future
         future.add_done_callback(
@@ -783,8 +910,13 @@ class TaskDispatcher:
         sender_open_id: str | None = None,
         card_message_id: str | None = None,
         original_answer: str = "",
+        action_type: str = "confirm",
     ) -> str | None:
-        """继续已有的会话级子任务（由卡片按钮触发）。"""
+        """继续已有的会话级子任务（由卡片按钮触发）。
+
+        Args:
+            action_type: "confirm" = Phase 2 builder run, "answer_question" = continue planner
+        """
         session = self._session_manager.get(session_key)
         if session is None or not session.initialized:
             logger.warning(
@@ -818,8 +950,10 @@ class TaskDispatcher:
                 )
 
                 # agent_builder 双 agent 模式：Phase 2 使用 builder_agent（全新 run）
+                # 仅在 confirm 时触发，answer_question 走 planner continue_run
                 if (
-                    agent_name == "agent_builder"
+                    action_type == "confirm"
+                    and agent_name == "agent_builder"
                     and hasattr(session.playground, "agents")
                     and hasattr(session.playground.agents, "builder_agent")
                 ):
@@ -859,6 +993,67 @@ class TaskDispatcher:
                     {"trajectory": trajectory, "status": trajectory.status}
                 )
 
+                # === answer_question 路径：planner continue_run 后的处理 ===
+                if action_type == "answer_question":
+                    # 检查 planner 是否又在提问
+                    if trajectory and trajectory.status == "waiting_for_input":
+                        if reporter:
+                            try:
+                                self._finalize_subtask_with_question(
+                                    reporter, trajectory, session_key,
+                                    agent_name, session,
+                                )
+                                return None
+                            except Exception:
+                                logger.exception("Failed to finalize question card (answer_question)")
+                        return None
+
+                    # planner 完成了：显示 confirm/cancel 按钮
+                    if reporter:
+                        try:
+                            if agent_name in _CONFIRM_SUBTASK_AGENTS:
+                                _answer_for_button = answer[:2000] if answer else ""
+                                actions = [
+                                    {
+                                        "text": "✅ 确认生成",
+                                        "type": "primary",
+                                        "value": {
+                                            "action": "confirm_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": agent_name,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                    {
+                                        "text": "❌ 取消",
+                                        "type": "danger",
+                                        "value": {
+                                            "action": "cancel_agent_build",
+                                            "session_key": session_key,
+                                            "agent_name": agent_name,
+                                            "original_answer": _answer_for_button,
+                                        },
+                                    },
+                                ]
+                                reporter.finalize("completed", answer, actions=actions)
+                                session.last_card_message_id = reporter.card_message_id
+                            else:
+                                reporter.finalize("completed", answer)
+                        except Exception:
+                            logger.exception("Failed to finalize step reporter (answer_question)")
+
+                    # 将结果注入 chat_agent 上下文
+                    chat_session = self._session_manager.get(chat_id)
+                    if chat_session and chat_session.initialized and chat_session.agent:
+                        summary = (
+                            f"[子任务结果 - {agent_name}]\n"
+                            f"结果: {answer}"
+                        )
+                        chat_session.agent.add_user_message(summary)
+
+                    return None
+
+                # === confirm 路径：Phase 2 builder 完成后的处理 ===
                 # 将结果注入 chat_agent 上下文
                 chat_session = self._session_manager.get(chat_id)
                 if chat_session and chat_session.initialized and chat_session.agent:
@@ -896,12 +1091,13 @@ class TaskDispatcher:
                     except Exception:
                         logger.exception("Failed to finalize reporter on error")
 
-                # 更新 Phase 1 卡片：显示失败状态，保留原始计划内容
-                phase1_content = original_answer + f"\n\n---\n> ❌ Agent 创建过程中出错：{str(e)[:500]}" if original_answer else f"Agent 创建过程中出错。\n\n{str(e)[:500]}"
-                self._patch_phase1_card(
-                    card_message_id, "❌ Agent 创建失败",
-                    phase1_content, "red",
-                )
+                if action_type == "confirm":
+                    # 更新 Phase 1 卡片：显示失败状态，保留原始计划内容
+                    phase1_content = original_answer + f"\n\n---\n> ❌ Agent 创建过程中出错：{str(e)[:500]}" if original_answer else f"Agent 创建过程中出错。\n\n{str(e)[:500]}"
+                    self._patch_phase1_card(
+                        card_message_id, "❌ Agent 创建失败",
+                        phase1_content, "red",
+                    )
 
                 return f"会话子任务执行出错: {e}"
 

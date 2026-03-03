@@ -344,6 +344,41 @@ class FeishuBot:
                 resp.toast = toast
                 return resp
 
+            elif action == "answer_question":
+                session_key = action_value.get("session_key", "")
+                agent_name = action_value.get("agent_name", "")
+                answer_text = action_value.get("answer_text", "")
+
+                if session_key and answer_text:
+                    self._dispatcher.dispatch_card_action(
+                        chat_id=chat_id,
+                        session_key=session_key,
+                        agent_name=agent_name,
+                        task_text=answer_text,
+                        sender_open_id=operator_id,
+                        card_message_id=card_message_id,
+                        action_type="answer_question",
+                    )
+
+                # 即时更新卡片：移除按钮，显示已选择的选项
+                import json
+                from .sender import _build_card_json
+                card_dict = json.loads(_build_card_json(
+                    title="💬 已回复",
+                    content=f"你选择了: **{answer_text}**\n\n> 正在继续处理...",
+                    header_template="wathet",
+                ))
+                card = CallBackCard()
+                card.type = "raw"
+                card.data = card_dict
+                resp.card = card
+
+                toast = CallBackToast()
+                toast.type = "info"
+                toast.content = f"已选择: {answer_text}"
+                resp.toast = toast
+                return resp
+
             else:
                 logger.warning("Unknown card action: %s", action)
                 toast = CallBackToast()

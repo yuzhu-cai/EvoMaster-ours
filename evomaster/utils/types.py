@@ -145,7 +145,7 @@ class Trajectory(BaseModel):
     steps: list[StepRecord] = Field(default_factory=list, description="步骤记录")
     start_time: datetime = Field(default_factory=datetime.now, description="开始时间")
     end_time: datetime | None = Field(default=None, description="结束时间")
-    status: Literal["running", "completed", "failed", "cancelled"] = Field(
+    status: Literal["running", "completed", "failed", "cancelled", "waiting_for_input"] = Field(
         default="running", description="执行状态"
     )
     result: dict[str, Any] = Field(default_factory=dict, description="执行结果")
@@ -155,7 +155,7 @@ class Trajectory(BaseModel):
         """添加执行步骤"""
         self.steps.append(step)
 
-    def finish(self, status: Literal["completed", "failed", "cancelled"], result: dict[str, Any] | None = None) -> None:
+    def finish(self, status: Literal["completed", "failed", "cancelled", "waiting_for_input"], result: dict[str, Any] | None = None) -> None:
         """完成轨迹记录"""
         self.end_time = datetime.now()
         self.status = status

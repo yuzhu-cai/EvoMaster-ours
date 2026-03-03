@@ -123,6 +123,9 @@ class BaseAgent(ABC):
         # 当前步骤计数
         self._step_count = 0
 
+        # ask_user 工具暂存（拦截后在 step loop 中处理）
+        self._pending_ask_user: dict[str, Any] | None = None
+
         # 存储初始系统提示词和用户提示词（用于重置）
         self._initial_system_prompt: str | None = None
         self._initial_user_prompt: str | None = None
@@ -169,9 +172,14 @@ class BaseAgent(ABC):
 
                 if should_finish:
                     self.logger.info("=" * 80)
-                    self.logger.info("✅ Agent finished task")
+                    if self._pending_ask_user:
+                        self.logger.info("⏸️  Agent paused — waiting for user input")
+                        self.trajectory.finish("waiting_for_input", self._pending_ask_user)
+                        self._pending_ask_user = None
+                    else:
+                        self.logger.info("✅ Agent finished task")
+                        self.trajectory.finish("completed")
                     self.logger.info("=" * 80)
-                    self.trajectory.finish("completed")
                     break
             else:
                 self.logger.warning("=" * 80)
@@ -245,9 +253,14 @@ class BaseAgent(ABC):
 
                 if should_finish:
                     self.logger.info("=" * 80)
-                    self.logger.info("✅ Agent finished task")
+                    if self._pending_ask_user:
+                        self.logger.info("⏸️  Agent paused — waiting for user input")
+                        self.trajectory.finish("waiting_for_input", self._pending_ask_user)
+                        self._pending_ask_user = None
+                    else:
+                        self.logger.info("✅ Agent finished task")
+                        self.trajectory.finish("completed")
                     self.logger.info("=" * 80)
-                    self.trajectory.finish("completed")
                     break
             else:
                 self.logger.warning("=" * 80)
@@ -383,6 +396,32 @@ class BaseAgent(ABC):
                 self.current_dialog.add_message(tool_message)
                 step_record.tool_responses.append(tool_message)
 
+                break
+
+            # 检查是否是 ask_user 工具（暂停执行，等待用户回答）
+            elif tool_call.function.name == "ask_user":
+                try:
+                    ask_args = json.loads(tool_call.function.arguments)
+                    self._pending_ask_user = {
+                        "ask_user": True,
+                        "questions": ask_args.get("questions", []),
+                    }
+                except (json.JSONDecodeError, KeyError):
+                    self._pending_ask_user = {"ask_user": True, "questions": []}
+
+                self.logger.info("=" * 80)
+                self.logger.info("❓ ask_user: Agent is asking user for clarification")
+                self.logger.info("=" * 80)
+
+                tool_message = ToolMessage(
+                    content="Questions sent to user. Waiting for response.",
+                    tool_call_id=tool_call.id,
+                    name="ask_user",
+                    meta={"info": self._pending_ask_user},
+                )
+                self.current_dialog.add_message(tool_message)
+                step_record.tool_responses.append(tool_message)
+                should_finish = True
                 break
 
             # 执行工具
