@@ -80,6 +80,11 @@ def _extract_final_answer(result: dict[str, Any]) -> str:
             return f"任务执行失败: {error}"
         return f"任务完成，状态: {result.get('status', 'unknown')}"
 
+    # 检查是否达到步数上限
+    traj_result = getattr(trajectory, "result", None)
+    if isinstance(traj_result, dict) and traj_result.get("reason") == "max_turns_exceeded":
+        return "超过步数限制"
+
     answer = extract_agent_response(trajectory)
     if answer:
         return answer
