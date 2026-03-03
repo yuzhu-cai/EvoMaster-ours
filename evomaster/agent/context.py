@@ -14,11 +14,48 @@ from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from evomaster.utils.llm import BaseLLM
-    from evomaster.utils.types import Dialog, Message
+    from evomaster.utils.types import AssistantMessage, Dialog, Message, ToolMessage
 else:
-    from evomaster.utils.types import Dialog, Message
+    from evomaster.utils.types import AssistantMessage, Dialog, Message, ToolMessage
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Compaction prompts
+# ---------------------------------------------------------------------------
+
+COMPACTION_SYSTEM_PROMPT = (
+    "You are a conversation summarizer. "
+    "Produce a detailed but concise summary of the conversation. "
+    "Focus on information that would be helpful for continuing the conversation, including: "
+    "what was done, what is currently being worked on, key user requests and constraints, "
+    "important decisions and their reasons, and key facts or data. "
+    "Do not respond to any questions in the conversation, only output the summary."
+)
+
+COMPACTION_USER_PROMPT = """\
+Summarize the conversation above for handoff to a continuing agent.
+
+Use this template:
+---
+## Goal
+[What the user is trying to accomplish]
+
+## Key Decisions & Discoveries
+[Important findings, user preferences, constraints]
+
+## Accomplished
+[What was completed, what is in progress, what remains]
+
+## Context
+[Key facts, data, or state needed to continue naturally]
+---"""
+
+# Prune 阈值
+_PRUNE_PROTECT_TOKENS = 40_000  # 保护最近的 tool 输出不被清除
+_PRUNE_MINIMUM_TOKENS = 10_000  # 至少清除这么多才值得 prune
+_RESERVED_OUTPUT_TOKENS = 20_000  # 预留给 LLM 回复的 token 空间
 
 
 class TruncationStrategy(str, Enum):
@@ -59,6 +96,7 @@ class ContextManager:
         self.config = config or ContextConfig()
         self._token_counter: TokenCounter | None = None
         self._summary_llm: BaseLLM | None = None
+        self._last_prompt_tokens: int = 0
 
     def set_token_counter(self, counter: TokenCounter) -> None:
         """设置 token 计数器"""
@@ -70,6 +108,15 @@ class ContextManager:
         当截断策略为 SUMMARY 时，使用此 LLM 对旧消息进行摘要压缩。
         """
         self._summary_llm = llm
+
+    def update_usage(self, usage: dict[str, int]) -> None:
+        """记录 LLM API 返回的真实 token 用量。
+
+        仅关心 prompt_tokens（即实际 dialog 占用的 input token 数）。
+        completion_tokens 包含 thinking tokens，但 thinking 不会存入 dialog，
+        因此不能用 total_tokens 判断 dialog 大小。
+        """
+        self._last_prompt_tokens = usage.get("prompt_tokens", 0)
 
     def estimate_tokens(self, dialog: Dialog) -> int:
         """估算对话的 token 数
@@ -92,6 +139,10 @@ class ContextManager:
                         total_chars += len(block.get("text", ""))
                     elif block.get("type") in ("image_url", "image"):
                         total_chars += 3000  # 图片约占 ~750 tokens，按 3000 字符估算
+            # tool_calls 的 arguments 也占 token
+            if isinstance(msg, AssistantMessage) and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    total_chars += len(tc.function.name) + len(tc.function.arguments or "")
         return total_chars // 4
 
     def should_truncate(self, dialog: Dialog) -> bool:
@@ -154,30 +205,39 @@ class ContextManager:
 
     def _truncate_sliding_window(self, dialog: Dialog) -> Dialog:
         """滑动窗口截断
-        
+
         保留系统消息和最近 N 轮对话。
+        一轮 = 一个 assistant 消息及其关联的 tool 消息。
         """
         messages = dialog.messages
         preserve_turns = self.config.preserve_recent_turns
-        
+
         # 分离系统消息和其他消息
         system_messages: list[Message] = []
         other_messages: list[Message] = []
-        
+
         for msg in messages:
             if msg.role.value == "system":
                 system_messages.append(msg)
             else:
                 other_messages.append(msg)
-        
-        # 计算需要保留的消息数（每轮约 2-3 条消息）
-        keep_count = preserve_turns * 3
-        if len(other_messages) <= keep_count:
+
+        # 从后往前数 preserve_turns 个 assistant 消息，确定保留起点
+        assistant_count = 0
+        keep_from = len(other_messages)
+        for i in range(len(other_messages) - 1, -1, -1):
+            if other_messages[i].role.value == "assistant":
+                assistant_count += 1
+                if assistant_count >= preserve_turns:
+                    keep_from = i
+                    break
+
+        if keep_from == 0:
             return dialog
-        
+
         # 保留最近的消息
-        new_messages = system_messages + other_messages[-keep_count:]
-        
+        new_messages = system_messages + other_messages[keep_from:]
+
         return Dialog(
             messages=new_messages,
             tools=dialog.tools,
@@ -192,14 +252,20 @@ class ContextManager:
         2. old_msgs: 需要被摘要的旧消息
         3. recent_msgs: 最近保留的消息（保持不动）
 
-        摘要后的 dialog = system_msgs + [UserMessage(摘要)] + recent_msgs
+        把 old_msgs 作为完整对话（含 tool_calls 结构）发给摘要 LLM，
+        摘要后的 dialog = system_msgs + [UserMessage(摘要)] + recent_msgs。
         如果 LLM 调用失败，回退到 latest_half 策略。
         """
         if self._summary_llm is None:
             logger.warning("Summary LLM not set, falling back to latest_half")
             return self._truncate_latest_half(dialog)
 
-        from evomaster.utils.types import Dialog as DialogCls, UserMessage, SystemMessage
+        from evomaster.utils.types import (
+            AssistantMessage as AMsg,
+            Dialog as DialogCls,
+            SystemMessage,
+            UserMessage,
+        )
 
         messages = dialog.messages
 
@@ -213,59 +279,36 @@ class ContextManager:
         if assistant_start == 0:
             return dialog
 
-        # 计算保留最近消息的数量
-        recent_count = self.config.preserve_recent_turns * 3
-        recent_count = min(recent_count, len(messages) - assistant_start)
-        recent_start = len(messages) - recent_count
-
-        # 对齐到 assistant 消息边界
-        while recent_start < len(messages) and messages[recent_start].role.value != "assistant":
-            recent_start += 1
+        # 从后往前数 preserve_recent_turns 个 assistant 消息，确定 recent_start
+        assistant_count = 0
+        recent_start = len(messages)
+        for i in range(len(messages) - 1, -1, -1):
+            if messages[i].role.value == "assistant":
+                assistant_count += 1
+                if assistant_count >= self.config.preserve_recent_turns:
+                    recent_start = i
+                    break
 
         if recent_start >= len(messages) or recent_start <= assistant_start:
-            # 无法分割出需要摘要的消息
             return self._truncate_latest_half(dialog)
 
-        system_msgs = messages[:assistant_start]
-        old_msgs = messages[assistant_start:recent_start]
+        # system_msgs 只保留 system role 的消息，initial user message 会被摘要覆盖
+        system_msgs = [m for m in messages[:assistant_start] if m.role.value == "system"]
+        # old_msgs 包含 initial user message 和之后到 recent_start 的所有消息
+        old_msgs = messages[len(system_msgs):recent_start]
         recent_msgs = messages[recent_start:]
 
         if not old_msgs:
             return dialog
 
-        # 格式化旧消息为文本
-        lines = []
-        for msg in old_msgs:
-            role = msg.role.value.upper()
-            content = msg.content or ""
-            if not content:
-                continue
-            # 截断超长的单条消息用于摘要
-            if len(content) > 2000:
-                content = content[:1000] + "\n...(truncated)...\n" + content[-500:]
-            lines.append(f"[{role}]: {content}")
-
-        if not lines:
-            return self._truncate_latest_half(dialog)
-
-        conversation_text = "\n\n".join(lines)
-
-        # 用 LLM 生成摘要
+        # 构造摘要对话：system prompt + old_msgs 完整结构 + 摘要指令
+        # old_msgs 保持原样不截断，让摘要 LLM 看到完整上下文
         try:
-            summary_prompt = (
-                "Please summarize the following conversation history concisely. "
-                "Preserve all key information: user requests, important decisions, results, "
-                "facts, and context needed to continue the conversation naturally. "
-                "Respond with ONLY the summary, no preamble.\n\n"
-                "---\n"
-                f"{conversation_text}"
-            )
-
             summary_dialog = DialogCls(
                 messages=[
-                    SystemMessage(content="You are a conversation summarizer. "
-                                  "Produce a concise but complete summary."),
-                    UserMessage(content=summary_prompt),
+                    SystemMessage(content=COMPACTION_SYSTEM_PROMPT),
+                    *old_msgs,
+                    UserMessage(content=COMPACTION_USER_PROMPT),
                 ],
                 tools=[],
             )
@@ -278,17 +321,24 @@ class ContextManager:
                 return self._truncate_latest_half(dialog)
 
             logger.info(
-                "Auto-compact: summarized %d messages (%d chars) -> %d chars",
+                "Auto-compact: summarized %d messages -> %d chars summary",
                 len(old_msgs),
-                sum(len(m.content or "") for m in old_msgs),
                 len(summary_text),
             )
 
-            # 构建新 dialog
-            summary_message = UserMessage(
-                content=f"[Previous conversation summary]\n{summary_text}"
+            # 用 user ask + assistant answer 一对消息表示摘要
+            compaction_request = UserMessage(
+                content="What did we do so far?",
             )
-            new_messages = list(system_msgs) + [summary_message] + list(recent_msgs)
+            compaction_response = AMsg(
+                content=summary_text,
+                meta={"summary": True, "strategy": "compaction"},
+            )
+            new_messages = (
+                list(system_msgs)
+                + [compaction_request, compaction_response]
+                + list(recent_msgs)
+            )
 
             return DialogCls(
                 messages=new_messages,
@@ -300,14 +350,110 @@ class ContextManager:
             logger.exception("Auto-compact failed, falling back to latest_half")
             return self._truncate_latest_half(dialog)
 
-    def prepare_for_query(self, dialog: Dialog) -> Dialog:
+    def reset_prompt_tokens(self) -> None:
+        """重置 prompt_tokens 记录，用于 compact 回写后强制重新估算。"""
+        self._last_prompt_tokens = 0
+
+    def prepare_for_query(self, dialog: Dialog) -> tuple[Dialog, bool]:
         """为 LLM 查询准备对话
-        
-        检查并在必要时截断对话。
+
+        参考 OpenCode 的 isOverflow 逻辑：
+        - 用真实 prompt_tokens（来自上次 LLM API 响应）判断是否溢出
+        - 首次调用无 usage 数据时回退到 estimate_tokens 估算
+        - usable = max_tokens - reserved_output_tokens
+
+        两层策略：
+        1. tokens >= usable → 完整摘要（truncate）— 永久压缩
+        2. tokens >= 80% usable → 轻量 prune（清除旧 tool 输出）— 临时视图
+
+        Returns:
+            (dialog_for_query, compacted):
+            - compacted=True: 执行了永久压缩（truncate/summary），调用者应回写到 current_dialog
+            - compacted=False: 无变更或仅临时 prune，不应回写（保留完整 tool 输出供未来 summary 使用）
         """
-        if self.should_truncate(dialog):
-            return self.truncate(dialog)
-        return dialog
+        usable = self.config.max_tokens - _RESERVED_OUTPUT_TOKENS
+        if usable <= 0:
+            # max_tokens 小于 reserved，无法计算有效阈值，跳过截断
+            logger.warning(
+                "max_tokens (%d) <= _RESERVED_OUTPUT_TOKENS (%d), skipping truncation",
+                self.config.max_tokens,
+                _RESERVED_OUTPUT_TOKENS,
+            )
+            return dialog, False
+
+        # 优先用真实 prompt_tokens，首次无数据时回退到估算
+        tokens = (
+            self._last_prompt_tokens
+            if self._last_prompt_tokens > 0
+            else self.estimate_tokens(dialog)
+        )
+
+        if tokens >= usable:
+            return self.truncate(dialog), True
+        if tokens >= int(usable * 0.8):
+            return self._prune_old_tool_outputs(dialog), False
+        return dialog, False
+
+    def _prune_old_tool_outputs(self, dialog: Dialog) -> Dialog:
+        """轻量 prune：清除旧的 tool 输出，保护最近的不动。
+
+        参考 OpenCode 的 prune 策略：
+        - 从最新消息往回扫描
+        - 保护最近 2 个 user turn 的 tool 输出
+        - 超出保护范围的 ToolMessage 内容替换为 "[Old tool output cleared]"
+        - 只在可清除量超过阈值时执行
+        """
+        from evomaster.utils.types import Dialog as DialogCls, ToolMessage as TMsg
+
+        messages = dialog.messages
+        tool_token_total = 0
+        prunable_indices: list[int] = []
+        prunable_tokens: list[int] = []
+        user_turns = 0
+
+        # 从后往前扫描
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.role.value == "user":
+                user_turns += 1
+            if user_turns < 2:
+                continue  # 保护最近 2 个 user turn
+
+            if isinstance(msg, TMsg):
+                content = msg.content or ""
+                if isinstance(content, str) and len(content) > 200:
+                    tokens = len(content) // 4
+                    tool_token_total += tokens
+                    if tool_token_total > _PRUNE_PROTECT_TOKENS:
+                        prunable_indices.append(i)
+                        prunable_tokens.append(tokens)
+
+        total_prunable = sum(prunable_tokens)
+        if total_prunable < _PRUNE_MINIMUM_TOKENS:
+            return dialog
+
+        logger.info(
+            "Prune: clearing %d old tool outputs (~%d tokens)",
+            len(prunable_indices),
+            total_prunable,
+        )
+
+        new_messages = list(messages)
+        for idx in prunable_indices:
+            old_msg = new_messages[idx]
+            assert isinstance(old_msg, TMsg)
+            new_messages[idx] = TMsg(
+                content="[Old tool output cleared]",
+                tool_call_id=old_msg.tool_call_id,
+                name=old_msg.name,
+                meta=old_msg.meta,
+            )
+
+        return DialogCls(
+            messages=new_messages,
+            tools=dialog.tools,
+            meta={**dialog.meta, "pruned": True},
+        )
 
 
 class TokenCounter(ABC):

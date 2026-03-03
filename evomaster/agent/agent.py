@@ -329,10 +329,24 @@ class BaseAgent(ABC):
         self._step_count += 1
 
         # 准备对话（可能需要截断）
-        dialog_for_query = self.context_manager.prepare_for_query(self.current_dialog)
+        dialog_for_query, compacted = self.context_manager.prepare_for_query(self.current_dialog)
+
+        # 如果执行了永久压缩（summary/truncate），回写到 current_dialog
+        # prune 仅为临时视图（compacted=False），不回写，保留完整 tool 输出供未来 summary 使用
+        if compacted:
+            self.current_dialog = dialog_for_query
+            self.context_manager.reset_prompt_tokens()
+            # 同步更新 trajectory 引用，避免 extract_agent_response 读到旧 dialog
+            if self.trajectory and self.trajectory.dialogs:
+                self.trajectory.dialogs[-1] = self.current_dialog
 
         # 查询模型（使用 LLM）
         assistant_message = self.llm.query(dialog_for_query)
+
+        # 记录真实 prompt_tokens，用于下次 prepare_for_query 判断是否需要 compact
+        usage = assistant_message.meta.get("usage")
+        if usage:
+            self.context_manager.update_usage(usage)
 
         self.current_dialog.add_message(assistant_message)
 
