@@ -7,4 +7,4 @@
 # nodes_data 路径（用于获取选定节点的 data_knowledge / model_knowledge）
 nodes_data: {nodes_data}
 
-你需要选择一个最符合 Instruction 全文的任务，将任务名称、 `data_knowledge` 与 `model_knowledge` 写入 PDF 文件
+你需要选择一个最符合 Instruction 全文的任务，将任务名称、 `data_knowledge` 与 `model_knowledge` 写入 PDF 文件。PDF 须保存在当前工作目录。

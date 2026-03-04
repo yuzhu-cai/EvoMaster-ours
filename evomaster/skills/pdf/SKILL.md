@@ -4,11 +4,69 @@ description: Comprehensive PDF manipulation toolkit for extracting text and tabl
 license: Proprietary. LICENSE.txt has complete terms
 ---
 
-# PDF Processing Guide
+# PDF Skill Overview
 
-## Overview
+This skill provides building blocks for **programmatic PDF processing at scale**, including:
 
-This guide covers essential PDF processing operations using Python libraries and command-line tools. For advanced features, JavaScript libraries, and detailed examples, see reference.md. If you need to fill out a PDF form, read forms.md and follow its instructions.
+- Creating new PDFs from text (via `reportlab`);
+- Filling existing PDF forms and annotations;
+- Extracting text, tables, images, and metadata from PDFs;
+- Merging/splitting/rotating PDFs using Python libraries and command-line tools.
+
+> Detailed, script-level explanations are split into standalone documents under the `reference/` directory (and a couple of legacy root-level docs). This file focuses on overall structure and navigation.
+
+## Directory Structure
+
+```text
+pdf/
+├── SKILL.md                      # This file: overview and navigation
+├── scripts/                      # Executable scripts (core logic)
+│   ├── create_pdf_from_text.py   # Write text to a PDF file
+│   ├── convert_pdf_to_images.py
+│   ├── create_validation_image.py
+│   ├── extract_form_field_info.py
+│   ├── fill_fillable_fields.py
+│   ├── fill_pdf_form_with_annotations.py
+│   ├── check_fillable_fields.py
+│   ├── check_bounding_boxes.py
+│   └── check_bounding_boxes_test.py
+├── reference/                    # Script-level docs for this skill
+│   └── create_pdf_from_text.md   # Usage and examples for create_pdf_from_text.py
+├── reference.md                  # Advanced PDF processing reference (legacy, kept for compatibility)
+├── forms.md                      # PDF form-filling guide (legacy, kept for compatibility)
+└── LICENSE.txt
+```
+
+## When to Use This Skill
+
+Use the `pdf` skill when you need any of the following:
+
+- **Generate PDF documents** from text (e.g., write a piece of text into a PDF file);
+- **Fill PDF forms** (either via fillable fields or annotations);
+- **Extract text, tables, or images** from existing PDFs with Python tools or command-line utilities;
+- **Manipulate PDFs structurally** (merge, split, rotate, crop, encrypt/decrypt).
+
+If your task only needs to read or write plain text/CSV without any PDF artifacts, you do not need this skill.
+
+## Reference Documentation Navigation (`reference/`)
+
+To keep `SKILL.md` concise, script-specific details live in separate reference documents. Load only what you need for the current task:
+
+- `reference/create_pdf_from_text.md`  
+  - **Scope**: Documentation for `scripts/create_pdf_from_text.py`.  
+  - **Content**: Write text to a PDF; parameters `--output_pdf`, `--text` / `--text_file` / `--text_b64`. Use `--text_b64` for long content to avoid shell errors.
+
+- `reference.md`  
+  - **Scope**: Advanced PDF processing reference.  
+  - **Content**: Deeper coverage of `pypdf`, `pdfplumber`, `pypdfium2`, JavaScript libraries (`pdf-lib`, `pdfjs-dist`), and advanced command-line tools (`pdftotext`, `qpdf`, `pdfimages`).
+
+- `forms.md`  
+  - **Scope**: PDF form-filling workflows.  
+  - **Content**: How to inspect form fields, validate bounding boxes, and fill forms using the scripts under `scripts/` (e.g., `fill_pdf_form_with_annotations.py`, `fill_fillable_fields.py`).
+
+When using this skill, **avoid pulling all of these documents at once**; select only the reference files that are directly relevant to the current operation (e.g. `reference/create_pdf_from_text.md` when you only need to write text to a PDF).
+
+---
 
 ## Quick Start
 
@@ -25,7 +83,11 @@ for page in reader.pages:
     text += page.extract_text()
 ```
 
-## Python Libraries
+---
+
+## Quick Library Guide (Python)
+
+The following sections provide a compact reminder of common PDF operations using Python libraries. For more advanced or specialized usage, see `reference.md`.
 
 ### pypdf - Basic Operations
 

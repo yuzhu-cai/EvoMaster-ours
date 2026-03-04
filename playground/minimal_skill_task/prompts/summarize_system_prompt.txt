@@ -6,3 +6,7 @@
 3. 从选中的条目中提取所需的 `data_knowledge` 与 `model_knowledge`
 4. 将任务名称、 `data_knowledge` 与 `model_knowledge` 写入 PDF 文件
 
+
+PDF 必须保存在当前工作目录下（不要改到其他路径）。
+
+
