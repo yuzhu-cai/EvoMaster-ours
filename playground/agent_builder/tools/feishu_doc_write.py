@@ -15,7 +15,7 @@ from evomaster.agent.tools.base import BaseTool, BaseToolParams
 
 if TYPE_CHECKING:
     from evomaster.agent.session import BaseSession
-    from evomaster.interface.feishu.document_writer import FeishuDocumentWriter
+    from evomaster.interface.feishu.messaging.document import FeishuDocumentWriter
 
 logger = logging.getLogger(__name__)
 

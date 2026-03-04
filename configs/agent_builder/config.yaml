@@ -47,8 +47,9 @@ agents:
   planner:
     llm: "local_sglang"
     max_turns: 100
-    enable_tools: true
     finish_on_text_response: false
+    tools:
+      builtin: ["*"]
 
     context:
       max_tokens: 128000
@@ -62,8 +63,9 @@ agents:
   builder:
     llm: "local_sglang"
     max_turns: 100
-    enable_tools: true
     finish_on_text_response: false
+    tools:
+      builtin: ["*"]
 
     context:
       max_tokens: 128000
