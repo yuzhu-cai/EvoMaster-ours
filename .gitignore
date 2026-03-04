@@ -194,3 +194,7 @@ playground/*/workspace
 showcase/
 test_tool.py
 playground/*/ppt
+
+playground/_generated/*
+configs/_generated/*
+playground/ml_master_2/wisdom/wisdom.json

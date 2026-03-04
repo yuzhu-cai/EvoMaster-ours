@@ -274,10 +274,7 @@ class BaseAgent(ABC):
                     self.logger.info("=" * 80)
                     self.logger.info("📝 Finish Tool Arguments:")
                     for key, value in finish_args.items():
-                        # 截断过长的值用于显示
                         value_str = str(value)
-                        if len(value_str) > 2000:
-                            value_str = value_str[:1000] + "\n... [truncated] ...\n" + value_str[-1000:]
                         self.logger.info(f"  {key}: {value_str}")
                     self.logger.info("=" * 80)
                 except Exception as e:
@@ -371,11 +368,7 @@ class BaseAgent(ABC):
 
     def _log_tool_end(self, tool_name: str, observation: str, info: dict[str, Any]) -> None:
         """记录工具调用结束"""
-        # 截断过长的输出：超过5000字符时，保留前2500和最后2500
         obs_display = observation
-        if len(obs_display) > 5000:
-            obs_display = obs_display[:2500] + "\n... [truncated] ...\n" + obs_display[-2500:]
-        
         if self.log_to_file:
             self.logger.info("=" * 80)
             self.logger.info(f"Tool Call End: {tool_name}")

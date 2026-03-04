@@ -234,6 +234,12 @@ pip install -r playground/minimal_kaggle/requirements.txt
 python run.py --agent minimal_kaggle --config configs/minimal_kaggle/deepseek-v3.2-example.yaml --task playground/minimal_kaggle/data/public/description.md
 ```
 
+### ML-Master 2
+```bash
+pip install -r playground/ml_master_2/requirements.txt
+python run.py --agent ml_master_2 --config configs/ml_master_2/deepseek-v3.2-example.yaml --task playground/ml_master_2/data/public/description.md
+```
+
 ## 📦 Installation
 
 ### With pip
