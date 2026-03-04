@@ -142,6 +142,7 @@ class TaskDispatcher:
         self._task_timeout = task_timeout
         self._on_result = on_result
         self._step_reporter_factory = step_reporter_factory
+        self._server_start_time = datetime.now().strftime("%Y%m%d_%H%M%S")
         self._executor = ThreadPoolExecutor(
             max_workers=max_workers,
             thread_name_prefix="feishu-task",
@@ -247,7 +248,7 @@ class TaskDispatcher:
             name=f"timeout-{message_id[:8]}",
         ).start()
 
-    def _create_playground(self, agent_name: str):
+    def _create_playground(self, agent_name: str, sender_open_id: str | None = None):
         """创建 playground 实例（不调用 setup）。"""
         from evomaster.core import get_playground_class
 
@@ -267,9 +268,11 @@ class TaskDispatcher:
 
         playground = get_playground_class(agent_name, config_path=config_path)
 
-        # 创建 run 目录
+        # 创建层级 run 目录: runs/feishu_{server_start}/{user_id}/{agent}_{timestamp}/
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        run_dir = self._project_root / "runs" / f"feishu_{agent_name}_{timestamp}"
+        feishu_base = self._project_root / "runs" / f"feishu_{self._server_start_time}"
+        user_dir = sender_open_id or "unknown"
+        run_dir = feishu_base / user_dir / f"{agent_name}_{timestamp}"
         task_id = f"feishu_{agent_name}"
         playground.set_run_dir(run_dir, task_id=task_id)
 
@@ -313,13 +316,15 @@ class TaskDispatcher:
         # 始终用默认 agent 创建/获取 session
         session = self._session_manager.get_or_create(
             chat_id,
-            playground_factory=lambda: self._create_playground(self._default_agent),
+            playground_factory=lambda: self._create_playground(self._default_agent, sender_open_id),
         )
 
         # 同一 chat 串行处理
         with session.lock:
             session.last_activity = time.monotonic()
             session.message_count += 1
+            # 注册当前线程到 playground（用于日志过滤）
+            session.playground.register_thread()
 
             # 创建实时进度报告器
             reporter = None
@@ -530,7 +535,8 @@ class TaskDispatcher:
                             # chat_agent 的 ask_user 按钮也走 answer_question，
                             # 但 session_key 用 chat_id 本身（后续消息自然路由回 chat_agent）
                             option_actions = self._build_question_actions(
-                                questions, chat_id, "chat_agent"
+                                questions, chat_id, "chat_agent",
+                                question_text=question_text,
                             )
                             reporter.finalize_as_question(question_text, actions=option_actions)
                             return None
@@ -682,6 +688,8 @@ class TaskDispatcher:
 
         logger.info("Running subtask with agent=%s", agent_name)
         playground = self._create_playground(agent_name)
+        # 注册当前线程到 playground（用于日志过滤）
+        playground.register_thread()
         try:
             playground.setup()
             playground._setup_trajectory_file()
@@ -733,13 +741,15 @@ class TaskDispatcher:
         session_key = f"{chat_id}:{agent_name}"
         session = self._session_manager.get_or_create(
             session_key,
-            playground_factory=lambda: self._create_playground(agent_name),
+            playground_factory=lambda: self._create_playground(agent_name, sender_open_id),
         )
 
         # 会话级子任务也串行处理
         with session.lock:
             session.last_activity = time.monotonic()
             session.message_count += 1
+            # 注册当前线程到 playground（用于日志过滤）
+            session.playground.register_thread()
 
             try:
                 if not session.initialized:
@@ -829,7 +839,8 @@ class TaskDispatcher:
 
     @staticmethod
     def _build_question_actions(
-        questions: list[dict], session_key: str, agent_name: str
+        questions: list[dict], session_key: str, agent_name: str,
+        question_text: str = "",
     ) -> list[dict]:
         """为第一个问题的选项构建按钮。"""
         if not questions or not questions[0].get("options"):
@@ -844,6 +855,7 @@ class TaskDispatcher:
                     "session_key": session_key,
                     "agent_name": agent_name,
                     "answer_text": opt.get("label", ""),
+                    "original_question": question_text[:1500],
                 },
             })
         return actions
@@ -855,7 +867,7 @@ class TaskDispatcher:
         questions = (getattr(trajectory, "result", None) or {}).get("questions", [])
         question_text = self._format_questions_for_card(questions)
         option_actions = self._build_question_actions(
-            questions, sub_session_key, agent_name
+            questions, sub_session_key, agent_name, question_text=question_text
         )
         reporter.finalize_as_question(question_text, actions=option_actions)
         if sub_session:
@@ -927,6 +939,8 @@ class TaskDispatcher:
         with session.lock:
             session.last_activity = time.monotonic()
             session.message_count += 1
+            # 注册当前线程到 playground（用于日志过滤）
+            session.playground.register_thread()
 
             # 创建进度报告器
             reporter = None
@@ -936,8 +950,9 @@ class TaskDispatcher:
                     reporter = self._step_reporter_factory(
                         chat_id, card_message_id, sender_open_id
                     )
-                    # agent_builder: 延迟发送卡片，等 TODO 解析后一次性发送
-                    if agent_name not in _CONFIRM_SUBTASK_AGENTS:
+                    # agent_builder confirm: 延迟发送卡片，等 TODO 解析后一次性发送
+                    # answer_question: 立即发送，让 on_step 可以实时更新
+                    if action_type == "answer_question" or agent_name not in _CONFIRM_SUBTASK_AGENTS:
                         reporter.send_initial_card(f"[{agent_name}] {task_text}")
                     on_step = reporter.on_step
                 except Exception:

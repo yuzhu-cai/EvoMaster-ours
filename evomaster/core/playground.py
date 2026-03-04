@@ -27,6 +27,29 @@ from typing import List, Any, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
+# 全局映射：thread_id -> playground 实例（线程池复用线程时自动覆盖）
+_thread_playground_map: dict[int, object] = {}
+
+
+class _SessionThreadFilter(logging.Filter):
+    """只放行当前正在为本 session 工作的线程的日志记录。
+
+    使用全局 _thread_playground_map 判断线程归属。线程池复用线程时，
+    新的 register_thread 调用会覆盖旧映射，确保日志只写入当前 session 的文件。
+    """
+
+    def __init__(self, playground):
+        super().__init__()
+        self._playground = playground
+
+    def filter(self, record):
+        owner = _thread_playground_map.get(record.thread)
+        # 没有映射（如 CLI 模式 setup 阶段、非工作线程）→ 放行
+        if owner is None:
+            return True
+        return owner is self._playground
+
+
 class AgentSlots(dict):
     """兼容 dict 与属性访问的 Agent 容器（self.agents.xxx）。"""
 
@@ -257,6 +280,7 @@ class BasePlayground:
             self.log_file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
             self.log_file_handler.setLevel(getattr(logging, self.config.logging.level))
             self.log_file_handler.setFormatter(logging.Formatter(self.config.logging.format))
+            self.log_file_handler.addFilter(_SessionThreadFilter(self))
 
             # 添加到根logger
             root_logger = logging.getLogger()
@@ -266,6 +290,10 @@ class BasePlayground:
             self.logger.info(f"Logging to file: {log_file}")
         else:
             self.log_path = None
+
+    def register_thread(self) -> None:
+        """将当前线程注册为本 playground 的工作线程（用于日志过滤）。"""
+        _thread_playground_map[threading.current_thread().ident] = self
 
     def _get_agents_config(self) -> dict:
         return self.config_manager.get_agents_config()
@@ -865,6 +893,9 @@ class BasePlayground:
             运行结果
         """
         try:
+            # 注册当前线程（用于日志过滤）
+            self.register_thread()
+
             self.setup()
 
             # 设置轨迹文件路径

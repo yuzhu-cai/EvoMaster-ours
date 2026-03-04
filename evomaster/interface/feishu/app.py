@@ -364,12 +364,22 @@ class FeishuBot:
                         action_type="answer_question",
                     )
 
-                # 即时更新卡片：移除按钮，显示已选择的选项
+                # 即时更新卡片：移除按钮，显示已选择的选项（保留原始问题）
                 import json
                 from .messaging.sender import _build_card_json
+
+                original_question = action_value.get("original_question", "")
+                parts = []
+                if original_question:
+                    parts.append(original_question)
+                    parts.append("---")
+                parts.append(f"你选择了: **{answer_text}**")
+                parts.append("\n> 正在继续处理...")
+                content = "\n\n".join(parts)
+
                 card_dict = json.loads(_build_card_json(
                     title="💬 已回复",
-                    content=f"你选择了: **{answer_text}**\n\n> 正在继续处理...",
+                    content=content,
                     header_template="wathet",
                 ))
                 card = CallBackCard()
