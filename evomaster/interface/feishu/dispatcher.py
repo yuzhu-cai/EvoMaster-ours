@@ -527,19 +527,23 @@ class TaskDispatcher:
                     )
 
                 # === ask_user 检测 ===
-                # chat_agent 调用了 ask_user，显示问题卡片
+                # chat_agent 调用了 ask_user，逐个展示问题卡片
                 if trajectory and trajectory.status == "waiting_for_input":
                     if reporter:
                         try:
                             questions = (trajectory.result or {}).get("questions", [])
-                            question_text = self._format_questions_for_card(questions)
-                            # chat_agent 的 ask_user 按钮也走 answer_question，
-                            # 但 session_key 用 chat_id 本身（后续消息自然路由回 chat_agent）
-                            option_actions = self._build_question_actions(
-                                questions, chat_id, "chat_agent",
-                                question_text=question_text,
-                            )
-                            reporter.finalize_as_question(question_text, actions=option_actions)
+                            if questions:
+                                # 只展示第一个问题
+                                first = [questions[0]]
+                                question_text = self._format_questions_for_card(first)
+                                option_actions = self._build_question_actions(
+                                    first, chat_id, "chat_agent",
+                                    question_text=question_text,
+                                )
+                                reporter.finalize_as_question(question_text, actions=option_actions)
+                                # 存储剩余问题到 session
+                                session.pending_questions = questions[1:]
+                                session.collected_answers = []
                             return None
                         except Exception:
                             logger.exception("Failed to finalize chat_agent question card")
@@ -842,14 +846,17 @@ class TaskDispatcher:
 
     @staticmethod
     def _format_questions_for_card(questions: list[dict]) -> str:
-        """格式化问题为卡片 markdown。"""
+        """格式化问题为卡片 markdown（支持 header 分组）。"""
         parts = []
         for q in questions:
-            parts.append(f"**{q.get('question', '')}**")
+            header = q.get("header", "")
+            title = f"**{header}: {q.get('question', '')}**" if header else f"**{q.get('question', '')}**"
+            parts.append(title)
             for opt in q.get("options", []):
                 desc = f" — {opt['description']}" if opt.get("description") else ""
                 parts.append(f"  - {opt['label']}{desc}")
-        parts.append("\n> 也可以直接回复文字补充更多细节")
+            parts.append("")  # 空行分隔问题
+        parts.append("> 也可以直接回复文字补充更多细节")
         return "\n".join(parts)
 
     @staticmethod
@@ -857,7 +864,7 @@ class TaskDispatcher:
         questions: list[dict], session_key: str, agent_name: str,
         question_text: str = "",
     ) -> list[dict]:
-        """为第一个问题的选项构建按钮。"""
+        """只为第一个问题的选项构建按钮（最多 4 个）。"""
         if not questions or not questions[0].get("options"):
             return []
         actions = []
@@ -878,15 +885,27 @@ class TaskDispatcher:
     def _finalize_subtask_with_question(
         self, reporter, trajectory, sub_session_key: str, agent_name: str, sub_session
     ) -> None:
-        """当子任务返回 waiting_for_input 时，显示问题卡片。"""
+        """当子任务返回 waiting_for_input 时，逐个展示问题卡片。
+
+        只渲染第一个问题（带完整按钮），剩余问题存入 session.pending_questions，
+        等用户回答后在 _continue_session_subtask 中逐个展示。
+        """
         questions = (getattr(trajectory, "result", None) or {}).get("questions", [])
-        question_text = self._format_questions_for_card(questions)
+        if not questions:
+            return
+
+        # 只展示第一个问题
+        first = [questions[0]]
+        question_text = self._format_questions_for_card(first)
         option_actions = self._build_question_actions(
-            questions, sub_session_key, agent_name, question_text=question_text
+            first, sub_session_key, agent_name, question_text=question_text
         )
         reporter.finalize_as_question(question_text, actions=option_actions)
         if sub_session:
             sub_session.last_card_message_id = reporter.card_message_id
+            # 存储剩余问题，清空已收集答案
+            sub_session.pending_questions = questions[1:]
+            sub_session.collected_answers = []
 
     def dispatch_card_action(
         self,
@@ -974,6 +993,29 @@ class TaskDispatcher:
                     logger.exception("Failed to create step reporter for card action")
 
             try:
+                # === 逐个提问：检查是否还有待展示的后续问题 ===
+                if action_type == "answer_question" and session.pending_questions:
+                    session.collected_answers.append(task_text)
+                    next_q = session.pending_questions.pop(0)
+                    first = [next_q]
+                    question_text = self._format_questions_for_card(first)
+                    option_actions = self._build_question_actions(
+                        first, session_key, agent_name,
+                        question_text=question_text,
+                    )
+                    if reporter:
+                        reporter.finalize_as_question(
+                            question_text, actions=option_actions
+                        )
+                        session.last_card_message_id = reporter.card_message_id
+                    return None  # 不 resume agent，等下一个回答
+
+                # === 逐个提问：所有问题已答完，合并答案 ===
+                if action_type == "answer_question" and session.collected_answers:
+                    session.collected_answers.append(task_text)
+                    task_text = "\n".join(session.collected_answers)
+                    session.collected_answers = []
+
                 logger.info(
                     "Continuing session subtask via card action: key=%s (message #%d)",
                     session_key, session.message_count,

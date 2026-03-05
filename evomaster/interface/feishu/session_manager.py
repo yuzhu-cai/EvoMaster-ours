@@ -28,6 +28,8 @@ class PlaygroundSession:
     lock: threading.Lock = field(default_factory=threading.Lock)
     initialized: bool = False
     last_card_message_id: str | None = None  # 最后一张带按钮的卡片 ID（多轮时移除旧按钮）
+    pending_questions: list[dict] = field(default_factory=list)   # 逐个提问：待展示的后续问题队列
+    collected_answers: list[str] = field(default_factory=list)    # 逐个提问：已收集的答案
 
 
 class ChatSessionManager:

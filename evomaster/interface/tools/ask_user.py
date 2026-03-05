@@ -40,6 +40,7 @@ class AskUserToolParams(BaseToolParams):
         description=(
             "List of questions to ask. Each question is an object with: "
             "'question' (the question text), "
+            "'header' (a short label displayed as group title, max 12 chars, e.g. 'Auth method'), "
             "'options' (list of objects with 'label' (1-5 words) and optional 'description')."
         ),
     )
