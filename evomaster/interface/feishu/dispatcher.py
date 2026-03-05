@@ -348,7 +348,7 @@ class TaskDispatcher:
                             chat_id, agent_name, task_text, on_step, sender_open_id
                         )
                     else:
-                        answer = self._run_subtask(agent_name, task_text, on_step, chat_id=chat_id)
+                        answer = self._run_subtask(agent_name, task_text, on_step, chat_id=chat_id, sender_open_id=sender_open_id)
                         sub_trajectory = None
 
                     # 检查 waiting_for_input（agent 在向用户提问）
@@ -687,13 +687,13 @@ class TaskDispatcher:
 
     def _run_subtask(
         self, agent_name: str, task_text: str, on_step: Optional[Callable] = None,
-        chat_id: Optional[str] = None,
+        chat_id: Optional[str] = None, sender_open_id: Optional[str] = None,
     ) -> str:
         """独立运行指定 agent 的子任务，不复用会话上下文。"""
         from evomaster.utils.types import TaskInstance
 
         logger.info("Running subtask with agent=%s", agent_name)
-        playground = self._create_playground(agent_name)
+        playground = self._create_playground(agent_name, sender_open_id)
         # 注册当前线程到 playground（用于日志过滤）
         playground.register_thread()
         try:
