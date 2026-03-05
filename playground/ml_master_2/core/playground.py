@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 import shutil
 import copy
+import ctypes
+import threading
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -32,6 +34,48 @@ from .utils.code import save_code_to_file
 from typing import List, Any, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
+
+RUN_TIMEOUT_SECONDS = 5*60
+# 必须继承自 BaseException，防止被底层的 except Exception: 吞噬
+class GlobalTimeoutInterrupt(BaseException):
+    """用于看门狗强制打断的全局超时异常"""
+    pass
+
+def _async_raise(target_tid, exception_type):
+    """通过 C-API 向指定线程强制抛出异常"""
+    ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+        ctypes.c_long(target_tid), 
+        ctypes.py_object(exception_type)
+    )
+    if ret == 0:
+        raise ValueError("无效的线程 ID")
+    elif ret > 1:
+        # 如果返回值大于 1，说明状态异常，需要撤销操作
+        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(target_tid), None)
+        raise SystemError("PyThreadState_SetAsyncExc 调用失败")
+
+class TimeoutWatchdog:
+    def __init__(self, timeout_seconds: int):
+        self.timeout_seconds = timeout_seconds
+        self.cancel_event = threading.Event()
+        self.main_thread_id = threading.get_ident() # 记录启动看门狗的主线程 ID
+        self._thread = None
+
+    def start(self):
+        """启动看门狗"""
+        self._thread = threading.Thread(target=self._watch, daemon=True, name="TimeoutWatchdog")
+        self._thread.start()
+
+    def _watch(self):
+        # 等待指定的超时时间，或者直到 stop() 被调用触发 event
+        is_cancelled = self.cancel_event.wait(self.timeout_seconds)
+        if not is_cancelled:
+            # 时间到了，且没有被正常取消 -> 触发主线程中断！
+            _async_raise(self.main_thread_id, GlobalTimeoutInterrupt)
+
+    def stop(self):
+        """主逻辑正常结束时，调用此方法取消看门狗"""
+        self.cancel_event.set()
 
 @register_playground("ml_master_2")
 class MLMaster2Playground(BasePlayground):
@@ -139,6 +183,10 @@ class MLMaster2Playground(BasePlayground):
         )
 
     def run(self, task_description: str, output_file: str | None = None) -> dict:
+        # 启动看门狗守护线程
+        watchdog = TimeoutWatchdog(RUN_TIMEOUT_SECONDS)
+        watchdog.start()
+        self.logger.info(f"已启动看门狗线程（{RUN_TIMEOUT_SECONDS} 秒）")
         try:
             self.setup()
 
@@ -170,8 +218,18 @@ class MLMaster2Playground(BasePlayground):
                 base_solution = self.best_solution  # 本轮开始时的最佳代码
 
                 research_exp = ResearchExp(self.agents.reseach_agent, self.config, self.initial_code, f"exp_{self.exp_index}_research")
+                research_workspace_name = f"exp_{self.exp_index}_research"
                 self.exp_index += 1
-                research_plan = research_exp.run(task_description, data_preview, self.best_solution, self.research_plan_and_result)
+                research_results = self.execute_parallel_tasks(
+                    [partial(research_exp.run, task_description=task_description, data_preview=data_preview, best_solution=self.best_solution, research_plan_and_result=self.research_plan_and_result)],
+                    max_workers=1,
+                    workspace_names=[research_workspace_name]
+                )
+                research_result = research_results[0]
+                if isinstance(research_result, Exception):
+                    self.logger.error(f"Research failed: {research_result}")
+                    raise research_result
+                research_plan = research_result
                 # 从配置读取 idea 并行数，默认最多 2 个
                 session_config = self.config.session.get("local", {})
                 parallel_config = session_config.get("parallel", {})
@@ -260,9 +318,27 @@ class MLMaster2Playground(BasePlayground):
 
                 self.logger.info(f"Round {reseach_round} results: {research_round_idea_results}")
                 knowledge_promotion_exp = KnowledgePromotionExp(self.agents.knowledge_promotion_agent, self.config, f"exp_{self.exp_index}_knowledge_promotion")
+                knowledge_promotion_workspace_name = f"exp_{self.exp_index}_knowledge_promotion"
                 self.exp_index += 1
-                knowledge_promotion_result = knowledge_promotion_exp.run(task_description, data_preview, base_solution, self.best_solution, research_plan, research_round_idea_results)
+                knowledge_promotion_results = self.execute_parallel_tasks(
+                    [partial(knowledge_promotion_exp.run, task_description=task_description, data_preview=data_preview, base_solution=base_solution, best_solution=self.best_solution, research_plan=research_plan, research_round_idea_results=research_round_idea_results)],
+                    max_workers=1,
+                    workspace_names=[knowledge_promotion_workspace_name]
+                )
+                knowledge_promotion_result = knowledge_promotion_results[0]
+                if isinstance(knowledge_promotion_result, Exception):
+                    self.logger.error(f"Knowledge promotion failed: {knowledge_promotion_result}")
+                    raise knowledge_promotion_result
                 self.research_plan_and_result.extend([knowledge_promotion_result])
+            result = {
+                "status": "completed",
+                "steps": 0,
+            }
+            return result
+        except GlobalTimeoutInterrupt:
+            # 精准捕获看门狗抛出的中断异常
+            self.logger.warning(f"看门狗触发：Run 已运行满 {RUN_TIMEOUT_SECONDS} 秒，强制打断当前迭代")
+            print("测试代码执行完毕（因超时）")
             result = {
                 "status": "completed",
                 "steps": 0,
@@ -346,22 +422,79 @@ class MLMaster2Playground(BasePlayground):
                                     self.session.set_workspace_path(None)
                 return wrapped
             
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # 提交所有任务，建立 future 到 index 的映射，以保证返回顺序
-                wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
-                future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
+            # with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            #     # 提交所有任务，建立 future 到 index 的映射，以保证返回顺序
+            #     wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
+            #     future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
 
-                # 处理完成的任务
-                for future in as_completed(future_to_index):
-                    index = future_to_index[future]
-                    try:
-                        # 获取返回值
-                        result = future.result()
-                        results[index] = result
-                    except Exception as exc:
-                        self.logger.error(f"Task {index} generated an exception: {exc}")
-                        # 将异常对象作为结果返回，避免打断其他任务
-                        results[index] = exc
+            #     # 处理完成的任务
+            #     for future in as_completed(future_to_index):
+            #         index = future_to_index[future]
+            #         try:
+            #             # 获取返回值
+            #             result = future.result()
+            #             results[index] = result
+            #         except Exception as exc:
+            #             self.logger.error(f"Task {index} generated an exception: {exc}")
+            #             # 将异常对象作为结果返回，避免打断其他任务
+            #             results[index] = exc
 
-            self.logger.info("Parallel execution completed.")
-            return results
+            # self.logger.info("Parallel execution completed.")
+            # return results
+
+            # 【关键修改】：不再使用 with ThreadPoolExecutor
+            executor = ThreadPoolExecutor(max_workers=max_workers)
+            wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
+            future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
+
+            try:
+                # 【修改这里】：使用带有短超时的 wait，让主线程定期执行字节码   
+                from concurrent.futures import wait, FIRST_COMPLETED
+                
+                not_done = set(future_to_index.keys())
+                
+                while not_done:
+                    # 每次最多阻塞 0.5 秒。如果没完成，会返回继续 while 循环
+                    # 这个瞬间主线程会执行 Python 字节码，从而立刻响应看门狗抛出的 GlobalTimeoutInterrupt
+                    done, not_done = wait(
+                        not_done, 
+                        timeout=0.5, 
+                        return_when=FIRST_COMPLETED
+                    )
+                    
+                    for future in done:
+                        index = future_to_index[future]
+                        try:
+                            result = future.result()
+                            results[index] = result
+                        except Exception as exc:
+                            self.logger.error(f"Task {index} generated an exception: {exc}")
+                            results[index] = exc
+
+                self.logger.info("Parallel execution completed.")
+                return results
+                # # 处理完成的任务
+                # for future in as_completed(future_to_index):
+                #     index = future_to_index[future]
+                #     try:
+                #         result = future.result()
+                #         results[index] = result
+                #     except Exception as exc:
+                #         self.logger.error(f"Task {index} generated an exception: {exc}")
+                #         results[index] = exc
+
+                # self.logger.info("Parallel execution completed.")
+                # return results
+
+            finally:
+                # 当 TimeoutError 打断 as_completed 时，会直接进入这里
+                # 1. 取消所有还在排队、未开始的 Future
+                for future in future_to_index:
+                    future.cancel()
+                
+                # 2. 强行关闭线程池，wait=False 表示不等待正在运行的子线程结束
+                # cancel_futures=True 是 Python 3.9+ 的特性，能更干净地清理排队任务
+                if sys.version_info >= (3, 9):
+                    executor.shutdown(wait=False, cancel_futures=True)
+                else:
+                    executor.shutdown(wait=False)
