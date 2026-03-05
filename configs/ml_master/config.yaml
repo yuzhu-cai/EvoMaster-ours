@@ -35,7 +35,7 @@ llm:
   # 本地 LLM 配置示例
   local_sglang:
     provider: "deepseek"
-    model: "DeepSeek/DeepSeek-V3-0324"
+    model: "DeepSeek/DeepSeek-R1-671B"
     api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
     base_url: "${DEEPSEEK_API_BASE}"
     temperature: 0.7
