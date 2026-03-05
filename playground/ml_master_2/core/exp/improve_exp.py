@@ -68,7 +68,7 @@ dst = "./submission/submission.csv"
 shutil.copy(src, dst)
 
 # 生成 0.8 到 1.0 之间的随机数
-score = random.uniform(0.8, 1.0)
+score = random.uniform(0.9, 1.0)
 print(f"validation score: {{score:.4f}}")
 ```                
 """

@@ -27,6 +27,8 @@ def generate_improvement_summary_text(
     """
     根据 research_plan 和 research_round_idea_results 自动生成改进过程的可读摘要文本。
     让读者一目了然地知道：在什么代码基础上、依次尝试了哪些改进、各自得分与是否带来提升、最终采纳了哪些修改。
+    "带来提升"指相对本方向基线（上一方向采纳后的代码）的改进；同一方向内多个 idea 可能都优于基线，
+    仅采纳得分最高者，次优者标记为"优于基线，未采纳"以体现其价值。
     """
     lines = []
     lines.append("## 改进过程摘要")
@@ -48,6 +50,8 @@ def generate_improvement_summary_text(
         lines.append("")
 
         # 各 idea 的结果
+        # improved: 相对本方向基线是否带来提升；is_best: 本方向中得分最高且已采纳
+        # 多个 idea 可能都优于基线，仅采纳最高分者，次优者仍标记为"带来提升"以体现其价值
         best_idea_in_direction = None
         for idea_idx, (idea_key, idea_desc) in enumerate(research_plan[direction].items(), start=1):
             idea_tuple = (idea_key, idea_desc)
@@ -57,19 +61,27 @@ def generate_improvement_summary_text(
             is_best = result.get("is_best_in_direction", False)
 
             score_str = _format_score(score)
-            improved_str = "✓ 带来提升" if improved else "✗ 未带来提升"
-            if is_best:
-                best_idea_in_direction = (idea_key, idea_desc)
-                improved_str += " 【本方向最佳，已采纳】"
+            if improved:
+                if is_best:
+                    improved_str = "✓ 带来提升 【本方向最佳，已采纳】"
+                    best_idea_in_direction = (idea_key, idea_desc)
+                else:
+                    improved_str = "✓ 带来提升 【优于基线，未采纳】"
+            else:
+                improved_str = "✗ 未带来提升"
 
             lines.append(f"- **Idea {idea_idx}**（{idea_key}）：{idea_desc}")
             lines.append(f"  - 得分：{score_str} | {improved_str}")
             lines.append("")
 
         # 本方向最终选择
+        num_improved = sum(1 for r in direction_results.values() if r.get("improved", False))
         if best_idea_in_direction:
             idea_key, idea_desc = best_idea_in_direction
-            lines.append(f"**本方向最终采纳**：Idea {idea_key} 的修改（{idea_desc}）")
+            if num_improved > 1:
+                lines.append(f"**本方向最终采纳**：Idea {idea_key} 的修改（{idea_desc}），另有 {num_improved - 1} 个 idea 亦优于基线")
+            else:
+                lines.append(f"**本方向最终采纳**：Idea {idea_key} 的修改（{idea_desc}）")
         else:
             lines.append("**本方向最终采纳**：无（所有 idea 均未带来提升，保持原代码）")
         lines.append("")

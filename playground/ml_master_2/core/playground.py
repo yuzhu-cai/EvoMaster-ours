@@ -111,6 +111,33 @@ class MLMaster2Playground(BasePlayground):
         else:
             return False
 
+    def _create_improve_exp(self, exp_index: int) -> ImproveExp:
+        """为并行任务创建独立的 ImproveExp 实例，使用 copy_agent 避免上下文冲突。
+
+        参考 minimal_multi_agent_parallel 的并行设计，每个并行任务拥有独立的 Agent 副本，
+        确保 LLM 调用和上下文不冲突。
+
+        Args:
+            exp_index: 实验索引，用于生成唯一的 exp_name 和 agent 名称
+
+        Returns:
+            ImproveExp 实例
+        """
+        improve_agent_copy = self.copy_agent(
+            self.agents.improve_agent, new_agent_name=f"improve_exp_{exp_index}"
+        ) if self.agents.improve_agent else None
+        debug_agent_copy = self.copy_agent(
+            self.agents.debug_agent, new_agent_name=f"debug_exp_{exp_index}"
+        ) if self.agents.debug_agent else None
+        metric_agent_copy = self.copy_agent(
+            self.agents.metric_agent, new_agent_name=f"metric_exp_{exp_index}"
+        ) if self.agents.metric_agent else None
+        exp_name = f"exp_{exp_index}_improve"
+        return ImproveExp(
+            improve_agent_copy, debug_agent_copy, metric_agent_copy,
+            self.config, exp_name
+        )
+
     def run(self, task_description: str, output_file: str | None = None) -> dict:
         try:
             self.setup()
@@ -145,27 +172,79 @@ class MLMaster2Playground(BasePlayground):
                 research_exp = ResearchExp(self.agents.reseach_agent, self.config, self.initial_code, f"exp_{self.exp_index}_research")
                 self.exp_index += 1
                 research_plan = research_exp.run(task_description, data_preview, self.best_solution, self.research_plan_and_result)
+                # 从配置读取 idea 并行数，默认最多 2 个
+                session_config = self.config.session.get("local", {})
+                parallel_config = session_config.get("parallel", {})
+                idea_max_workers = parallel_config.get("max_parallel", 2)
+
                 for direction in research_plan:
                     direction_best_solution = self.best_solution
                     direction_best_score = self.best_score
+                    direction_baseline_score = self.best_score  # 本方向基线分数，用于判断各 idea 是否带来提升（不随迭代更新）
                     direction_best_idea = None  # 记录该 direction 中带来最佳分数的 idea
                     research_round_idea_results[direction] = {}
 
                     ideas = list(research_plan[direction].items())
-                    for idea in ideas:
-                        improve_exp = ImproveExp(self.agents.improve_agent, self.agents.debug_agent, self.agents.metric_agent, self.config, f"exp_{self.exp_index}_improve")
-                        improve_workspace_name = f"exp_{self.exp_index}_improve"
-                        self.exp_index += 1
-                        improve_result = self.execute_parallel_tasks([partial(improve_exp.run, task_description=task_description, data_preview=data_preview, best_solution=direction_best_solution, idea=idea)], max_workers=1, workspace_names=[improve_workspace_name])
-                        is_sucess, validation_score, uid, self.best_solution = improve_result[0]
-                        improved = self.compare_score(direction_best_score, validation_score)
-                        research_round_idea_results[direction][idea] = {"improved": improved, "is_best_in_direction": False, "score": validation_score}
-                        if improved:
+                    if not ideas:
+                        continue
+
+                    # 构建并行任务：每个 idea 一个任务，均以 direction_best_solution 为 base
+                    tasks = []
+                    workspace_names = []
+                    improve_exp_list = []
+                    for i, idea in enumerate(ideas):
+                        exp_index = self.exp_index + i
+                        improve_exp = self._create_improve_exp(exp_index)
+                        improve_exp_list.append(improve_exp)
+                        task = partial(
+                            improve_exp.run,
+                            task_description=task_description,
+                            data_preview=data_preview,
+                            best_solution=direction_best_solution,
+                            idea=idea,
+                        )
+                        tasks.append(task)
+                        workspace_names.append(improve_exp.exp_name)
+                    self.exp_index += len(ideas)
+
+                    # 并行执行该 direction 下所有 idea，最多 idea_max_workers 个同时运行
+                    improve_results = self.execute_parallel_tasks(
+                        tasks, max_workers=idea_max_workers, workspace_names=workspace_names
+                    )
+
+                    # 处理结果：按顺序收集，找出最佳
+                    # improved 与 direction_baseline_score 比较，表示相对本方向开始时的基线是否带来提升
+                    # 这样同一 direction 内多个优于基线的 idea 都会被正确标记为"带来提升"
+                    for i, (idea, result) in enumerate(zip(ideas, improve_results)):
+                        improve_exp = improve_exp_list[i]
+                        if isinstance(result, Exception):
+                            self.logger.error(f"Idea {idea} failed: {result}")
+                            validation_score = None
+                            is_sucess = False
+                            uid = None
+                            solution = None
+                        else:
+                            is_sucess, validation_score, uid, solution = result
+
+                        improved = self.compare_score(direction_baseline_score, validation_score)
+                        research_round_idea_results[direction][idea] = {
+                            "improved": improved,
+                            "is_best_in_direction": False,
+                            "score": validation_score,
+                        }
+                        if improved and is_sucess and solution is not None:
                             direction_best_score = validation_score
-                            direction_best_solution = self.best_solution
+                            direction_best_solution = solution
                             direction_best_idea = idea
-                            shutil.copy(os.path.join(improve_exp.workspace_path, "submission", f"submission_{uid}.csv"), os.path.join(self.agents.improve_agent.session.config.workspace_path, "best_submission", f"submission.csv"))
-                            save_code_to_file(os.path.join(self.session.config.workspace_path, "best_solution"), "best_solution.py", self.best_solution)
+                            shutil.copy(
+                                os.path.join(improve_exp.workspace_path, "submission", f"submission_{uid}.csv"),
+                                os.path.join(self.agents.improve_agent.session.config.workspace_path, "best_submission", f"submission.csv"),
+                            )
+                            save_code_to_file(
+                                os.path.join(self.session.config.workspace_path, "best_solution"),
+                                "best_solution.py",
+                                direction_best_solution,
+                            )
 
                     # 标记该 direction 中最佳的 idea
                     if direction_best_idea is not None:
