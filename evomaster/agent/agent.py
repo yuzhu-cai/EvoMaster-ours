@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 from .context import ContextConfig, ContextManager
+from evomaster.utils.llm import ContextOverflowError
 from evomaster.utils.types import (
     AssistantMessage,
     Dialog,
@@ -344,13 +345,40 @@ class BaseAgent(ABC):
             if self.trajectory and self.trajectory.dialogs:
                 self.trajectory.dialogs[-1] = self.current_dialog
 
-        # 查询模型（使用 LLM）
-        assistant_message = self.llm.query(dialog_for_query)
+        # 查询模型（使用 LLM）— 被动恢复：捕获 ContextOverflowError，紧急 compact 后重试
+        try:
+            assistant_message = self.llm.query(dialog_for_query)
+        except ContextOverflowError:
+            self.logger.warning(
+                "Context overflow detected, performing emergency compaction and retrying"
+            )
+            self.current_dialog = self.context_manager.truncate(self.current_dialog)
+            self.context_manager.reset_prompt_tokens()
+            if self.trajectory and self.trajectory.dialogs:
+                self.trajectory.dialogs[-1] = self.current_dialog
+            dialog_for_query = self.current_dialog
+            assistant_message = self.llm.query(dialog_for_query)
 
         # 记录真实 prompt_tokens，用于下次 prepare_for_query 判断是否需要 compact
         usage = assistant_message.meta.get("usage")
         if usage:
-            self.context_manager.update_usage(usage)
+            self.context_manager.update_usage(
+                usage, msg_count=len(dialog_for_query.messages)
+            )
+
+            # 主动检查：参考 OpenCode isOverflow，用真实 usage 判断是否需要 compact
+            # 即使本次调用成功，如果 token 用量已接近极限，提前 compact 避免下次溢出
+            if self.context_manager.is_overflow(usage):
+                self.logger.info(
+                    "Token usage near limit (total=%s), proactive compaction",
+                    usage.get("total_tokens") or (
+                        usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+                    ),
+                )
+                self.current_dialog = self.context_manager.truncate(self.current_dialog)
+                self.context_manager.reset_prompt_tokens()
+                if self.trajectory and self.trajectory.dialogs:
+                    self.trajectory.dialogs[-1] = self.current_dialog
 
         self.current_dialog.add_message(assistant_message)
 

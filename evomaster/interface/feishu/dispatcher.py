@@ -348,7 +348,7 @@ class TaskDispatcher:
                             chat_id, agent_name, task_text, on_step, sender_open_id
                         )
                     else:
-                        answer = self._run_subtask(agent_name, task_text, on_step)
+                        answer = self._run_subtask(agent_name, task_text, on_step, chat_id=chat_id)
                         sub_trajectory = None
 
                     # 检查 waiting_for_input（agent 在向用户提问）
@@ -505,6 +505,7 @@ class TaskDispatcher:
 
                     # 注入飞书特有工具
                     self._inject_feishu_tools(session.playground)
+                    self._inject_send_file_tool(session.playground, chat_id)
                     self._inject_ask_user_tool(session.agent)
 
                     task = TaskInstance(
@@ -681,7 +682,8 @@ class TaskDispatcher:
                 return f"任务执行出错: {e}"
 
     def _run_subtask(
-        self, agent_name: str, task_text: str, on_step: Optional[Callable] = None
+        self, agent_name: str, task_text: str, on_step: Optional[Callable] = None,
+        chat_id: Optional[str] = None,
     ) -> str:
         """独立运行指定 agent 的子任务，不复用会话上下文。"""
         from evomaster.utils.types import TaskInstance
@@ -694,6 +696,8 @@ class TaskDispatcher:
             playground.setup()
             playground._setup_trajectory_file()
             self._inject_feishu_tools(playground)
+            if chat_id:
+                self._inject_send_file_tool(playground, chat_id)
             agent = playground.agent
             task = TaskInstance(
                 task_id=f"subtask_{agent_name}",
@@ -720,6 +724,16 @@ class TaskDispatcher:
         for agent in playground.agents.values():
             for tool in self._feishu_tools:
                 agent.tools.register(tool)
+
+    def _inject_send_file_tool(self, playground, chat_id: str) -> None:
+        """将文件/图片发送工具注入 playground 的所有 agent。"""
+        if not self._feishu_client:
+            return
+        from .tools.send_file import SendFileTool
+
+        tool = SendFileTool(client=self._feishu_client, chat_id=chat_id)
+        for agent in playground.agents.values():
+            agent.tools.register(tool)
 
     def _run_session_subtask(
         self,
@@ -762,6 +776,7 @@ class TaskDispatcher:
                     session.agent = session.playground.agent
 
                     self._inject_feishu_tools(session.playground)
+                    self._inject_send_file_tool(session.playground, chat_id)
                     self._inject_doc_write_tool(session.playground, sender_open_id)
                     self._inject_ask_user_tool(session.agent)
 

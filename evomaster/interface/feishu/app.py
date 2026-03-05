@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import lark_oapi as lark
-from lark_oapi.api.im.v1 import P2ImMessageReceiveV1, P2ImMessageMessageReadV1
+from lark_oapi.api.im.v1 import P2ImMessageReceiveV1, P2ImMessageMessageReadV1, P2ImMessageRecalledV1
 from lark_oapi.event.callback.model.p2_card_action_trigger import (
     P2CardActionTrigger,
     P2CardActionTriggerResponse,
@@ -244,6 +244,10 @@ class FeishuBot:
 
     def _handle_message_read_event(self, data: P2ImMessageMessageReadV1) -> None:
         """处理消息已读事件（忽略，仅注册以避免 SDK 报错）"""
+        pass
+
+    def _handle_message_recalled_event(self, data: P2ImMessageRecalledV1) -> None:
+        """处理消息撤回事件（忽略，仅注册以避免 SDK 报错）"""
         pass
 
     def _handle_card_action(self, data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
@@ -487,6 +491,7 @@ class FeishuBot:
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(self._handle_message_event)
             .register_p2_im_message_message_read_v1(self._handle_message_read_event)
+            .register_p2_im_message_recalled_v1(self._handle_message_recalled_event)
             .register_p2_card_action_trigger(self._handle_card_action)
             .build()
         )

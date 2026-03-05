@@ -97,6 +97,7 @@ class ContextManager:
         self._token_counter: TokenCounter | None = None
         self._summary_llm: BaseLLM | None = None
         self._last_prompt_tokens: int = 0
+        self._last_prompt_msg_count: int = 0
 
     def set_token_counter(self, counter: TokenCounter) -> None:
         """设置 token 计数器"""
@@ -109,14 +110,20 @@ class ContextManager:
         """
         self._summary_llm = llm
 
-    def update_usage(self, usage: dict[str, int]) -> None:
+    def update_usage(self, usage: dict[str, int], msg_count: int = 0) -> None:
         """记录 LLM API 返回的真实 token 用量。
 
         仅关心 prompt_tokens（即实际 dialog 占用的 input token 数）。
         completion_tokens 包含 thinking tokens，但 thinking 不会存入 dialog，
         因此不能用 total_tokens 判断 dialog 大小。
+
+        Args:
+            usage: API 返回的 usage 字典
+            msg_count: 发送给 API 的消息数量（用于增量估算）
         """
         self._last_prompt_tokens = usage.get("prompt_tokens", 0)
+        if msg_count > 0:
+            self._last_prompt_msg_count = msg_count
 
     def estimate_tokens(self, dialog: Dialog) -> int:
         """估算对话的 token 数
@@ -126,9 +133,23 @@ class ContextManager:
         if self._token_counter:
             return self._token_counter.count_dialog(dialog)
 
-        # 简单估算：每 4 个字符约 1 个 token
+        total_chars = self._count_messages_chars(dialog.messages)
+
+        # Tool specs 随每次 API 请求发送，也占 context
+        if dialog.tools:
+            import json as _json
+            for spec in dialog.tools:
+                try:
+                    total_chars += len(_json.dumps(spec.model_dump()))
+                except Exception:
+                    total_chars += 500  # fallback per tool
+
+        return total_chars // 4
+
+    def _count_messages_chars(self, messages: list[Message]) -> int:
+        """统计一组消息的字符数（用于 token 估算）"""
         total_chars = 0
-        for msg in dialog.messages:
+        for msg in messages:
             content = msg.content
             if isinstance(content, str):
                 total_chars += len(content)
@@ -143,7 +164,11 @@ class ContextManager:
             if isinstance(msg, AssistantMessage) and msg.tool_calls:
                 for tc in msg.tool_calls:
                     total_chars += len(tc.function.name) + len(tc.function.arguments or "")
-        return total_chars // 4
+        return total_chars
+
+    def _estimate_messages_tokens(self, messages: list[Message]) -> int:
+        """估算一组消息的 token 数（不含 tool specs），用于增量计算。"""
+        return self._count_messages_chars(messages) // 4
 
     def should_truncate(self, dialog: Dialog) -> bool:
         """判断是否需要截断"""
@@ -353,12 +378,13 @@ class ContextManager:
     def reset_prompt_tokens(self) -> None:
         """重置 prompt_tokens 记录，用于 compact 回写后强制重新估算。"""
         self._last_prompt_tokens = 0
+        self._last_prompt_msg_count = 0
 
     def prepare_for_query(self, dialog: Dialog) -> tuple[Dialog, bool]:
         """为 LLM 查询准备对话
 
         参考 OpenCode 的 isOverflow 逻辑：
-        - 用真实 prompt_tokens（来自上次 LLM API 响应）判断是否溢出
+        - 用真实 prompt_tokens（来自上次 LLM API 响应）+ 增量估算判断是否溢出
         - 首次调用无 usage 数据时回退到 estimate_tokens 估算
         - usable = max_tokens - reserved_output_tokens
 
@@ -381,18 +407,40 @@ class ContextManager:
             )
             return dialog, False
 
-        # 优先用真实 prompt_tokens，首次无数据时回退到估算
-        tokens = (
-            self._last_prompt_tokens
-            if self._last_prompt_tokens > 0
-            else self.estimate_tokens(dialog)
-        )
+        if self._last_prompt_tokens > 0 and self._last_prompt_msg_count > 0:
+            # 增量估算：上次真实 tokens + 新增消息估算
+            current_msg_count = len(dialog.messages)
+            if current_msg_count > self._last_prompt_msg_count:
+                new_msgs = dialog.messages[self._last_prompt_msg_count:]
+                delta = self._estimate_messages_tokens(new_msgs)
+                tokens = self._last_prompt_tokens + delta
+            else:
+                tokens = self._last_prompt_tokens
+        else:
+            # 首次调用无 usage 数据，用全量估算
+            tokens = self.estimate_tokens(dialog)
+
+        # 5% 安全余量
+        tokens = int(tokens * 1.05)
 
         if tokens >= usable:
             return self.truncate(dialog), True
         if tokens >= int(usable * 0.8):
             return self._prune_old_tool_outputs(dialog), False
         return dialog, False
+
+    def is_overflow(self, usage: dict[str, int]) -> bool:
+        """用 API 返回的真实 token 数判断是否需要 compact。
+
+        参考 OpenCode isOverflow: 每次 LLM 成功返回后调用，
+        用真实 total_tokens 判断是否已接近上下文极限。
+        如果是，调用者应立即执行 compact 以避免下次调用溢出。
+        """
+        total = usage.get("total_tokens") or (
+            usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+        )
+        usable = self.config.max_tokens - _RESERVED_OUTPUT_TOKENS
+        return total >= usable
 
     def _prune_old_tool_outputs(self, dialog: Dialog) -> Dialog:
         """轻量 prune：清除旧的 tool 输出，保护最近的不动。

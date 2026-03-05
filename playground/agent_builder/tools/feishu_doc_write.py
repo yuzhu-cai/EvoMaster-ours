@@ -29,12 +29,13 @@ class FeishuDocWriteToolParams(BaseToolParams):
     - "append_text": Append a text paragraph to the end of document.
     - "append_code": Append a code block to the end of document.
     - "append_divider": Append a divider line to the end of document.
+    - "append_image": Append an image to the end of document. Requires file_path to a local image file.
     - "list_blocks": List all blocks in the document with their index, type, and text preview.
                      Use this first to identify which blocks to modify.
     - "update_block": Update the text content of an existing block (by block_id from list_blocks).
                       Works for text, heading, and code blocks.
     - "delete_blocks": Delete a range of blocks by start_index and end_index (from list_blocks).
-    - "insert_blocks": Insert a heading/text/code/divider block at a specific position (by index).
+    - "insert_blocks": Insert a heading/text/code/divider/image block at a specific position (by index).
 
     Workflow for modifying existing content:
     1. Call "list_blocks" to see all blocks and their indices
@@ -48,6 +49,7 @@ class FeishuDocWriteToolParams(BaseToolParams):
 
     action: Literal[
         "create", "append_heading", "append_text", "append_code", "append_divider",
+        "append_image",
         "list_blocks", "update_block", "delete_blocks", "insert_blocks",
     ] = Field(
         description=(
@@ -55,7 +57,8 @@ class FeishuDocWriteToolParams(BaseToolParams):
             'Use "list_blocks" to see document structure, '
             '"update_block" to update a single block in-place, '
             '"delete_blocks" to remove a range, '
-            '"insert_blocks" to insert at a position.'
+            '"insert_blocks" to insert at a position, '
+            '"append_image" to add an image from a local file.'
         )
     )
     title: Optional[str] = Field(
@@ -64,7 +67,7 @@ class FeishuDocWriteToolParams(BaseToolParams):
     )
     content: Optional[str] = Field(
         default=None,
-        description='Text content (required for append_*, update_block, insert_blocks except divider)'
+        description='Text content (required for append_*, update_block, insert_blocks except divider/image)'
     )
     level: Optional[int] = Field(
         default=2,
@@ -73,6 +76,10 @@ class FeishuDocWriteToolParams(BaseToolParams):
     language: Optional[str] = Field(
         default="plaintext",
         description='Code language: "plaintext", "python", "json" (for append_code and insert_blocks with block_type="code")'
+    )
+    file_path: Optional[str] = Field(
+        default=None,
+        description='Local file path for image upload (required for "append_image" and "insert_blocks" with block_type="image")'
     )
     block_id: Optional[str] = Field(
         default=None,
@@ -92,7 +99,7 @@ class FeishuDocWriteToolParams(BaseToolParams):
     )
     block_type: Optional[str] = Field(
         default="text",
-        description='Block type for "insert_blocks": "heading", "text", "code", "divider"'
+        description='Block type for "insert_blocks": "heading", "text", "code", "divider", "image"'
     )
 
 
@@ -139,6 +146,8 @@ class FeishuDocWriteTool(BaseTool):
                 return self._do_append_code(params)
             elif action == "append_divider":
                 return self._do_append_divider()
+            elif action == "append_image":
+                return self._do_append_image(params)
             elif action == "list_blocks":
                 return self._do_list_blocks()
             elif action == "update_block":
@@ -249,6 +258,24 @@ class FeishuDocWriteTool(BaseTool):
             return "Failed to append divider.", {"error": "append_failed"}
         return "Divider appended.", {"action": "append_divider"}
 
+    def _do_append_image(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
+        """追加图片"""
+        err = self._require_doc()
+        if err:
+            return err
+
+        file_path = params.file_path
+        if not file_path:
+            return "file_path is required for 'append_image'.", {"error": "missing_file_path"}
+
+        file_token = self._writer.upload_and_append_image(self._current_doc_id, file_path)
+        if not file_token:
+            return f"Failed to upload or append image: {file_path}", {"error": "image_failed"}
+        return (
+            f"Image appended successfully (file_token={file_token}).",
+            {"action": "append_image", "file_token": file_token},
+        )
+
     # ---- Block editing handlers ----
 
     def _do_list_blocks(self) -> tuple[str, dict[str, Any]]:
@@ -356,6 +383,18 @@ class FeishuDocWriteTool(BaseTool):
         elif block_type == "divider":
             ok = self._writer.insert_divider(
                 self._current_doc_id, params.insert_index
+            )
+        elif block_type == "image":
+            if not params.file_path:
+                return "file_path is required for image.", {"error": "missing_file_path"}
+            from evomaster.interface.feishu.messaging.document import upload_media_for_doc
+            file_token = upload_media_for_doc(
+                self._writer._client, params.file_path, self._current_doc_id
+            )
+            if not file_token:
+                return f"Failed to upload image: {params.file_path}", {"error": "upload_failed"}
+            ok = self._writer.insert_image(
+                self._current_doc_id, file_token, params.insert_index
             )
         else:
             return f"Unknown block_type: {block_type}", {"error": "unknown_block_type"}

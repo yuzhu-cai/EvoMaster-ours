@@ -18,6 +18,32 @@ from pydantic import BaseModel, Field
 from evomaster.utils.types import AssistantMessage, Dialog, FunctionCall, ToolCall
 
 
+# ---------------------------------------------------------------------------
+# Context overflow detection (参考 OpenCode provider/error.ts)
+# ---------------------------------------------------------------------------
+
+class ContextOverflowError(Exception):
+    """LLM API 拒绝请求：上下文超长。不可重试，需要调用者做 compact。"""
+    pass
+
+
+# 覆盖主流 LLM provider 的 overflow 错误消息模式（小写匹配）
+_OVERFLOW_PATTERNS = [
+    "prompt is too long",                # Anthropic
+    "exceeds the context window",        # OpenAI
+    "maximum context length",            # OpenRouter / DeepSeek
+    "context_length_exceeded",           # Generic
+    "token count exceeds",               # DeepSeek
+    "too many tokens",                   # Generic
+    "reduce the length of the messages", # Groq
+    "request entity too large",          # HTTP 413
+    "input is too long",                 # Bedrock
+    "maximum prompt length",             # xAI (Grok)
+    "context window exceeds limit",      # MiniMax
+    "exceeded model token limit",        # Kimi / Moonshot
+]
+
+
 def encode_image_to_base64(image_path: str) -> str:
     """将图片文件编码为 base64 字符串
 
@@ -337,6 +363,9 @@ class BaseLLM(ABC):
     ) -> LLMResponse:
         """带重试的调用
 
+        参考 OpenCode: context overflow 和其他不可重试的 4xx 错误不会重试，
+        而是立即抛出以便上层做 compact 恢复。
+
         Args:
             messages: 消息列表
             tools: 工具列表
@@ -352,8 +381,22 @@ class BaseLLM(ABC):
                 return self._call(messages, tools, **kwargs)
             except Exception as e:
                 last_error = e
+
+                # Context overflow → 不重试，立即抛给上层做 compact
+                if self._is_context_overflow_error(e):
+                    self.logger.warning("Context overflow (non-retryable): %s", e)
+                    raise ContextOverflowError(str(e)) from e
+
+                # 其他 4xx（非 429 rate-limit）也不重试
+                status = getattr(e, "status_code", None)
+                if status and 400 <= status < 500 and status != 429:
+                    self.logger.warning("Non-retryable %d error: %s", status, e)
+                    raise
+
+                # 可重试错误：正常重试
                 self.logger.warning(
-                    f"LLM call failed (attempt {attempt + 1}/{self.config.max_retries}): {e}"
+                    "LLM call failed (attempt %d/%d): %s",
+                    attempt + 1, self.config.max_retries, e,
                 )
 
                 if attempt < self.config.max_retries - 1:
@@ -362,6 +405,22 @@ class BaseLLM(ABC):
 
         # 所有重试失败
         raise RuntimeError(f"LLM call failed after {self.config.max_retries} attempts") from last_error
+
+    @staticmethod
+    def _is_context_overflow_error(error: Exception) -> bool:
+        """检查是否为上下文溢出错误
+
+        参考 OpenCode OVERFLOW_PATTERNS，覆盖主流 provider 的错误消息。
+        """
+        error_msg = str(error).lower()
+        status = getattr(error, "status_code", None)
+        # HTTP 413 (Request Entity Too Large) 一定是溢出
+        if status == 413:
+            return True
+        # 400 BadRequest + 包含 overflow 关键词
+        if status == 400:
+            return any(p in error_msg for p in _OVERFLOW_PATTERNS)
+        return False
 
     def _convert_tools(self, tool_specs: list) -> list[dict[str, Any]]:
         """转换工具规格为 API 格式

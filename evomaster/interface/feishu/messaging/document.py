@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,6 +50,7 @@ _BT_HEADING3 = 5
 _BT_HEADING4 = 6
 _BT_CODE = 14
 _BT_DIVIDER = 22
+_BT_IMAGE = 27
 
 # Code language: 1 = PlainText, 49 = JSON, 15 = Python
 _LANG_PLAIN = 1
@@ -69,7 +71,7 @@ _BLOCK_TYPE_NAMES = {
     1: "page", 2: "text",
     3: "heading1", 4: "heading2", 5: "heading3", 6: "heading4",
     7: "heading5", 8: "heading6", 9: "heading7", 10: "heading8", 11: "heading9",
-    14: "code", 22: "divider",
+    14: "code", 22: "divider", 27: "image",
 }
 
 
@@ -252,6 +254,41 @@ class FeishuDocumentWriter:
         """追加分割线"""
         block = _build_divider_block()
         return self.append_blocks(document_id, [block])
+
+    def append_image(self, document_id: str, file_token: str) -> bool:
+        """追加图片块
+
+        Args:
+            document_id: 文档 ID
+            file_token: 已上传的图片 file_token（从 upload_media_for_doc 获取）
+        """
+        block = _build_image_block(file_token)
+        return self.append_blocks(document_id, [block])
+
+    def insert_image(
+        self, document_id: str, file_token: str, index: int
+    ) -> bool:
+        """在指定位置插入图片块"""
+        block = _build_image_block(file_token)
+        return self.insert_blocks(document_id, [block], index)
+
+    def upload_and_append_image(self, document_id: str, file_path: str) -> str | None:
+        """上传图片并追加到文档末尾
+
+        Args:
+            document_id: 文档 ID
+            file_path: 本地图片文件路径
+
+        Returns:
+            成功返回 file_token，失败返回 None
+        """
+        file_token = upload_media_for_doc(self._client, file_path, document_id)
+        if not file_token:
+            return None
+        ok = self.append_image(document_id, file_token)
+        if not ok:
+            logger.warning("Image uploaded (token=%s) but failed to append to doc", file_token)
+        return file_token
 
     # ---- Block editing methods ----
 
@@ -522,6 +559,76 @@ def _build_code_block(code: str, language: str = "plaintext") -> Block:
 def _build_divider_block() -> Block:
     """构建分割线 Block"""
     return Block.builder().block_type(_BT_DIVIDER).divider(Divider.builder().build()).build()
+
+
+def _build_image_block(file_token: str) -> Block:
+    """构建图片 Block
+
+    Args:
+        file_token: 通过 upload_media_for_doc 上传后获取的 file_token
+    """
+    from lark_oapi.api.docx.v1 import Image as DocImage
+
+    return (
+        Block.builder()
+        .block_type(_BT_IMAGE)
+        .image(DocImage.builder().token(file_token).build())
+        .build()
+    )
+
+
+def upload_media_for_doc(client, file_path: str, doc_id: str) -> str | None:
+    """上传文件到飞书 Drive（用于文档图片），返回 file_token
+
+    Args:
+        client: 飞书 Client 实例
+        file_path: 本地文件路径
+        doc_id: 目标文档 ID
+
+    Returns:
+        成功返回 file_token，失败返回 None
+    """
+    from lark_oapi.api.drive.v1 import UploadAllMediaRequest, UploadAllMediaRequestBody
+
+    p = Path(file_path)
+    if not p.exists():
+        logger.error("File not found for doc upload: %s", file_path)
+        return None
+
+    file_size = p.stat().st_size
+    file_name = p.name
+
+    try:
+        with open(file_path, "rb") as f:
+            request = (
+                UploadAllMediaRequest.builder()
+                .request_body(
+                    UploadAllMediaRequestBody.builder()
+                    .file_name(file_name)
+                    .parent_type("docx_image")
+                    .parent_node(doc_id)
+                    .size(file_size)
+                    .file(f)
+                    .build()
+                )
+                .build()
+            )
+            response = client.drive.v1.media.upload_all(request)
+
+        if not response.success():
+            logger.error(
+                "Failed to upload media for doc: code=%s, msg=%s",
+                response.code, response.msg,
+            )
+            return None
+
+        file_token = response.data.file_token
+        logger.debug("Media uploaded for doc: %s -> %s", file_path, file_token)
+        return file_token
+
+    except Exception:
+        logger.exception("Error uploading media %s for document %s", file_path, doc_id)
+        return None
 
 
 def _extract_block_text(block) -> str:
