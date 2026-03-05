@@ -145,6 +145,22 @@ agents:
     system_prompt_file: "prompts/knowledge_promotion_system_prompt.txt"
     user_prompt_file: "prompts/knowledge_promotion_user_prompt.txt"
 
+  wisdom_promotion:
+    llm: "local_sglang"
+    max_turns: 10
+    tools:  
+      builtin: []
+    
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    
+    # 提示词配置
+    system_prompt_file: "prompts/wisdom_promotion_system_prompt.txt"
+    user_prompt_file: "prompts/wisdom_promotion_user_prompt.txt"
+
   # Metric Agent - 负责评估任务
   metric:
     llm: "local_sglang"

@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 import shutil
 import copy
-import ctypes
 import threading
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
@@ -29,53 +28,18 @@ from .exp.research_exp import ResearchExp
 from .exp.improve_exp import ImproveExp
 from .exp.prefetch_exp import PrefetchExp
 from .exp.knowledge_promotion_exp import KnowledgePromotionExp
+from .exp.wisdom_promotion_exp import WisdomPromotionExp
 from .utils.data_preview import generate
 from .utils.code import save_code_to_file
+from .utils.watch_dog import (
+    TimeoutWatchdog,
+    GlobalTimeoutInterrupt,
+    RUN_TIMEOUT_SECONDS,
+    _async_raise,
+)
 from typing import List, Any, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
-
-RUN_TIMEOUT_SECONDS = 5*60
-# 必须继承自 BaseException，防止被底层的 except Exception: 吞噬
-class GlobalTimeoutInterrupt(BaseException):
-    """用于看门狗强制打断的全局超时异常"""
-    pass
-
-def _async_raise(target_tid, exception_type):
-    """通过 C-API 向指定线程强制抛出异常"""
-    ret = ctypes.pythonapi.PyThreadState_SetAsyncExc(
-        ctypes.c_long(target_tid), 
-        ctypes.py_object(exception_type)
-    )
-    if ret == 0:
-        raise ValueError("无效的线程 ID")
-    elif ret > 1:
-        # 如果返回值大于 1，说明状态异常，需要撤销操作
-        ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(target_tid), None)
-        raise SystemError("PyThreadState_SetAsyncExc 调用失败")
-
-class TimeoutWatchdog:
-    def __init__(self, timeout_seconds: int):
-        self.timeout_seconds = timeout_seconds
-        self.cancel_event = threading.Event()
-        self.main_thread_id = threading.get_ident() # 记录启动看门狗的主线程 ID
-        self._thread = None
-
-    def start(self):
-        """启动看门狗"""
-        self._thread = threading.Thread(target=self._watch, daemon=True, name="TimeoutWatchdog")
-        self._thread.start()
-
-    def _watch(self):
-        # 等待指定的超时时间，或者直到 stop() 被调用触发 event
-        is_cancelled = self.cancel_event.wait(self.timeout_seconds)
-        if not is_cancelled:
-            # 时间到了，且没有被正常取消 -> 触发主线程中断！
-            _async_raise(self.main_thread_id, GlobalTimeoutInterrupt)
-
-    def stop(self):
-        """主逻辑正常结束时，调用此方法取消看门狗"""
-        self.cancel_event.set()
 
 @register_playground("ml_master_2")
 class MLMaster2Playground(BasePlayground):
@@ -84,11 +48,12 @@ class MLMaster2Playground(BasePlayground):
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "agent" / "ml_master_2"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.agents.declare("draft_agent", "debug_agent", "improve_agent", "reseach_agent", "knowledge_promotion_agent", "metric_agent", "prefetch_agent")
+        self.agents.declare("draft_agent", "debug_agent", "improve_agent", "reseach_agent", "knowledge_promotion_agent", "metric_agent", "prefetch_agent","wisdom_promotion_agent")
 
         self.initial_code = None
         self.best_score = None
         self.best_solution = None
+        self.real_time_best_solution = None
         self.research_plan_and_result = []
         
         self.is_lower_better = False
@@ -210,7 +175,7 @@ class MLMaster2Playground(BasePlayground):
                 self.best_score = validation_score
                 shutil.copy(os.path.join(draft_exp.workspace_path, "submission", f"submission_{uid}.csv"), os.path.join(self.agents.draft_agent.session.config.workspace_path, "best_submission", f"submission.csv"))
                 save_code_to_file(os.path.join(self.session.config.workspace_path, "best_solution"), "best_solution.py", self.best_solution)
-
+                self.real_time_best_solution = self.best_solution
             for reseach_round in range(10):
                 # 记录当前 research_round 中每个 direction 的每个 idea 的结果
                 # 结构: {direction: {idea: {"improved": bool, "is_best_in_direction": bool, "score": float|None}}}
@@ -303,7 +268,7 @@ class MLMaster2Playground(BasePlayground):
                                 "best_solution.py",
                                 direction_best_solution,
                             )
-
+                            self.real_time_best_solution = direction_best_solution
                     # 标记该 direction 中最佳的 idea
                     if direction_best_idea is not None:
                         research_round_idea_results[direction][direction_best_idea]["is_best_in_direction"] = True
@@ -337,8 +302,15 @@ class MLMaster2Playground(BasePlayground):
             return result
         except GlobalTimeoutInterrupt:
             # 精准捕获看门狗抛出的中断异常
-            self.logger.warning(f"看门狗触发：Run 已运行满 {RUN_TIMEOUT_SECONDS} 秒，强制打断当前迭代")
-            print("测试代码执行完毕（因超时）")
+            self.logger.warning(f"看门狗触发：实验已运行满 {RUN_TIMEOUT_SECONDS} 秒，强制打断，开始进行wisdom promotion")
+            wisdom_promotion_exp = WisdomPromotionExp(self.agents.wisdom_promotion_agent, self.config, f"exp_{self.exp_index}_wisdom_promotion")
+            wisdom_promotion_workspace_name = f"exp_{self.exp_index}_wisdom_promotion"
+            self.exp_index += 1
+            wisdom_promotion_results = self.execute_parallel_tasks(
+                [partial(wisdom_promotion_exp.run, task_description=task_description, best_solution=self.real_time_best_solution)],
+                max_workers=1,
+                workspace_names=[wisdom_promotion_workspace_name]
+            )
             result = {
                 "status": "completed",
                 "steps": 0,
@@ -354,147 +326,117 @@ class MLMaster2Playground(BasePlayground):
             return result
 
         finally:
+            if 'watchdog' in locals():
+                watchdog.stop()
             self.cleanup()
 
-
     def execute_parallel_tasks(self, tasks: List[Callable], max_workers: int = 3, workspace_names: List[str] | None = None) -> List[Any]:
-            """通用并行任务执行器
+        """通用并行任务执行器"""
+        self.logger.info(f"Starting parallel execution of {len(tasks)} tasks with {max_workers} workers.")
+        
+        results = [None] * len(tasks)
+        
+        # 检查是否启用了并行资源分配
+        session_config = self.config.session.get("local", {})
+        parallel_config = session_config.get("parallel", {})
+        parallel_enabled = parallel_config.get("enabled", False)
+        split_workspace = parallel_config.get("split_workspace_for_exp", False)
+        
+        # 【新增】用于记录当前正在运行的子线程 ID，以便在发生全局中断时一并强杀
+        active_worker_tids = set()
+        tids_lock = threading.Lock()
 
-            Args:
-                tasks: 这里的每个元素应该是一个可调用的对象。
-                    如果是带参数的函数，请使用 functools.partial 封装。
-                    例如: [partial(exp1.run, task="A"), partial(exp2.run, task="B")]
-                max_workers: 最大并行线程数
-                workspace_names: 可选。为每个任务指定独立工作空间的子目录名。
-                    若提供且 split_workspace_for_exp 启用，则使用此列表中的名称替代默认的 exp_{parallel_index}。
-                    长度应与 tasks 一致。
-
-            Returns:
-                List[Any]: 按照输入 tasks 的顺序返回结果列表。
-                        如果任务抛出异常，结果列表中对应位置将是该 Exception 对象。
-            """
-            self.logger.info(f"Starting parallel execution of {len(tasks)} tasks with {max_workers} workers.")
-            
-            results = [None] * len(tasks)
-            
-            # 检查是否启用了并行资源分配
-            session_config = self.config.session.get("local", {})
-            parallel_config = session_config.get("parallel", {})
-            parallel_enabled = parallel_config.get("enabled", False)
-            
-            # 检查是否启用了 split_workspace_for_exp
-            split_workspace = parallel_config.get("split_workspace_for_exp", False)
-            
-            # 包装任务函数，设置并行索引和独立工作空间
-            def wrap_task(task_func, parallel_index):
-                def wrapped():
-                    try:
-                        # 如果启用了并行资源分配，设置 session 的并行索引
-                        if parallel_enabled and self.session is not None:
-                            from evomaster.agent.session.local import LocalSession
-                            if isinstance(self.session, LocalSession):
-                                self.session.set_parallel_index(parallel_index)
-                                self.logger.debug(f"设置并行索引: {parallel_index}")
-                                
-                                # 如果启用了 split_workspace_for_exp，为当前 exp 创建独立工作空间
-                                if split_workspace:
-                                    import os
-                                    main_workspace = self.session.config.workspace_path
-                                    exp_name = workspace_names[parallel_index] if workspace_names and parallel_index < len(workspace_names) else f"exp_{parallel_index}"
-                                    exp_workspace = os.path.join(main_workspace, exp_name)
-                                    # 通过 env 创建 exp 工作空间（含软链接）
-                                    self.session._env.setup_exp_workspace(exp_workspace)
-                                    os.makedirs(os.path.join(exp_workspace, "submission"), exist_ok=True)
-                                    os.makedirs(os.path.join(exp_workspace, "working"), exist_ok=True)
-                                    # 设置线程本地的工作空间路径
-                                    self.session.set_workspace_path(exp_workspace)
-                                    self.logger.info(
-                                        f"Exp {parallel_index} 使用独立工作空间: {exp_workspace}"
-                                    )
-                        return task_func()
-                    finally:
-                        # 清理线程本地状态
-                        if parallel_enabled and self.session is not None:
-                            from evomaster.agent.session.local import LocalSession
-                            if isinstance(self.session, LocalSession):
-                                self.session.set_parallel_index(None)
-                                if split_workspace:
-                                    self.session.set_workspace_path(None)
-                return wrapped
-            
-            # with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            #     # 提交所有任务，建立 future 到 index 的映射，以保证返回顺序
-            #     wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
-            #     future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
-
-            #     # 处理完成的任务
-            #     for future in as_completed(future_to_index):
-            #         index = future_to_index[future]
-            #         try:
-            #             # 获取返回值
-            #             result = future.result()
-            #             results[index] = result
-            #         except Exception as exc:
-            #             self.logger.error(f"Task {index} generated an exception: {exc}")
-            #             # 将异常对象作为结果返回，避免打断其他任务
-            #             results[index] = exc
-
-            # self.logger.info("Parallel execution completed.")
-            # return results
-
-            # 【关键修改】：不再使用 with ThreadPoolExecutor
-            executor = ThreadPoolExecutor(max_workers=max_workers)
-            wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
-            future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
-
-            try:
-                # 【修改这里】：使用带有短超时的 wait，让主线程定期执行字节码   
-                from concurrent.futures import wait, FIRST_COMPLETED
-                
-                not_done = set(future_to_index.keys())
-                
-                while not_done:
-                    # 每次最多阻塞 0.5 秒。如果没完成，会返回继续 while 循环
-                    # 这个瞬间主线程会执行 Python 字节码，从而立刻响应看门狗抛出的 GlobalTimeoutInterrupt
-                    done, not_done = wait(
-                        not_done, 
-                        timeout=0.5, 
-                        return_when=FIRST_COMPLETED
-                    )
+        # 包装任务函数，设置并行索引和独立工作空间
+        def wrap_task(task_func, parallel_index):
+            def wrapped():
+                current_tid = threading.get_ident()
+                with tids_lock:
+                    active_worker_tids.add(current_tid)
                     
-                    for future in done:
-                        index = future_to_index[future]
-                        try:
-                            result = future.result()
-                            results[index] = result
-                        except Exception as exc:
-                            self.logger.error(f"Task {index} generated an exception: {exc}")
-                            results[index] = exc
+                try:
+                    # 如果启用了并行资源分配，设置 session 的并行索引
+                    if parallel_enabled and self.session is not None:
+                        from evomaster.agent.session.local import LocalSession
+                        if isinstance(self.session, LocalSession):
+                            self.session.set_parallel_index(parallel_index)
+                            self.logger.debug(f"设置并行索引: {parallel_index}")
+                            
+                            # 如果启用了 split_workspace_for_exp，为当前 exp 创建独立工作空间
+                            if split_workspace:
+                                import os
+                                main_workspace = self.session.config.workspace_path
+                                exp_name = workspace_names[parallel_index] if workspace_names and parallel_index < len(workspace_names) else f"exp_{parallel_index}"
+                                exp_workspace = os.path.join(main_workspace, exp_name)
+                                # 通过 env 创建 exp 工作空间（含软链接）
+                                self.session._env.setup_exp_workspace(exp_workspace)
+                                os.makedirs(os.path.join(exp_workspace, "submission"), exist_ok=True)
+                                os.makedirs(os.path.join(exp_workspace, "working"), exist_ok=True)
+                                # 设置线程本地的工作空间路径
+                                self.session.set_workspace_path(exp_workspace)
+                                self.logger.info(f"Exp {parallel_index} 使用独立工作空间: {exp_workspace}")
+                                
+                    return task_func()
+                    
+                except GlobalTimeoutInterrupt:
+                    self.logger.warning(f"并行任务 {parallel_index} (TID: {current_tid}) 收到中断信号，正在退出并释放资源...")
+                    raise  # 继续抛出以便 Executor 捕获并标记 Future 为失败
+                finally:
+                    # 清理线程本地状态
+                    if parallel_enabled and self.session is not None:
+                        from evomaster.agent.session.local import LocalSession
+                        if isinstance(self.session, LocalSession):
+                            self.session.set_parallel_index(None)
+                            if split_workspace:
+                                self.session.set_workspace_path(None)
+                                
+                    # 【新增】任务结束，移除线程 ID 记录
+                    with tids_lock:
+                        active_worker_tids.discard(current_tid)
+            return wrapped
+        
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
+        future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
 
-                self.logger.info("Parallel execution completed.")
-                return results
-                # # 处理完成的任务
-                # for future in as_completed(future_to_index):
-                #     index = future_to_index[future]
-                #     try:
-                #         result = future.result()
-                #         results[index] = result
-                #     except Exception as exc:
-                #         self.logger.error(f"Task {index} generated an exception: {exc}")
-                #         results[index] = exc
-
-                # self.logger.info("Parallel execution completed.")
-                # return results
-
-            finally:
-                # 当 TimeoutError 打断 as_completed 时，会直接进入这里
-                # 1. 取消所有还在排队、未开始的 Future
-                for future in future_to_index:
-                    future.cancel()
+        try:
+            from concurrent.futures import wait, FIRST_COMPLETED
+            not_done = set(future_to_index.keys())
+            
+            while not_done:
+                done, not_done = wait(
+                    not_done, 
+                    timeout=0.5, 
+                    return_when=FIRST_COMPLETED
+                )
                 
-                # 2. 强行关闭线程池，wait=False 表示不等待正在运行的子线程结束
-                # cancel_futures=True 是 Python 3.9+ 的特性，能更干净地清理排队任务
-                if sys.version_info >= (3, 9):
-                    executor.shutdown(wait=False, cancel_futures=True)
-                else:
-                    executor.shutdown(wait=False)
+                for future in done:
+                    index = future_to_index[future]
+                    try:
+                        result = future.result()
+                        results[index] = result
+                    except Exception as exc:
+                        self.logger.error(f"Task {index} generated an exception: {exc}")
+                        results[index] = exc
+
+            self.logger.info("Parallel execution completed.")
+            return results
+
+        finally:
+            # 1. 取消所有还在排队、未开始的 Future
+            for future in future_to_index:
+                future.cancel()
+            
+            # 【新增】2. 向所有仍在运行的子线程主动注入全局超时异常
+            # 这会强制正在执行 task_func 的子线程跳入 wrapped() 的 finally 块
+            with tids_lock:
+                for tid in active_worker_tids:
+                    try:
+                        _async_raise(tid, GlobalTimeoutInterrupt)
+                    except Exception as e:
+                        self.logger.error(f"无法向子线程 {tid} 发送中断信号: {e}")
+            
+            # 3. 强行关闭线程池
+            if sys.version_info >= (3, 9):
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=False)
