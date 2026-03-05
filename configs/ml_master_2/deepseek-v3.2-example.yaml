@@ -206,7 +206,10 @@ session:
     # symlinks:
     #   "/data/exp_data/demo1bench/aerial-cactus-identification/prepared/public/": "input"
     symlinks: {"./playground/minimal_kaggle/data/public": "input"}
-  
+    parallel:
+      enabled: true
+      max_parallel: 2
+      split_workspace_for_exp: true
   # Docker Session 配置
   docker:
     # Docker 镜像

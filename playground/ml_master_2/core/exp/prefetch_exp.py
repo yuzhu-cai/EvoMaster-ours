@@ -11,18 +11,19 @@ from evomaster.agent import BaseAgent
 import json
 
 class PrefetchExp(BaseExp):
-    def __init__(self, prefetch_agent, config,exp_index):
+    def __init__(self, prefetch_agent, config,exp_name):
         super().__init__(prefetch_agent, config)
         self.prefetch_agent = prefetch_agent
         self.uid = uuid.uuid4()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.workspace_path = self.prefetch_agent.session.config.workspace_path
-        self.exp_index = exp_index
+        self._exp_name = exp_name
         self.wisdom_file_path = os.path.join(os.getcwd(), self.config.agents.get("prefetch", {}).get("wisdom_file"))
+
     @property
     def exp_name(self) -> str:
         """返回实验阶段名称"""
-        return f"Prefetch_{self.exp_index}"
+        return self._exp_name
 
     def run(self,task_description: str, task_id: str = "aerial-cactus-identification") -> dict:
         self.logger.info("Starting prefetch task execution")

@@ -10,22 +10,23 @@ import os
 from evomaster.agent import BaseAgent
 
 class DraftExp(BaseExp):
-    def __init__(self, draft_agent, debug_agent, metric_agent, config,exp_index):
+    def __init__(self, draft_agent, debug_agent, metric_agent, config,exp_name):
         super().__init__(draft_agent, config)
         self.draft_agent = draft_agent
         self.debug_agent = debug_agent
         self.metric_agent = metric_agent
         self.uid = uuid.uuid4()
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.workspace_path = self.draft_agent.session.config.workspace_path
         self.terminal_output = ""
         self.code = ""
         self.debug_times = 0
-        self.exp_index = exp_index
+        self._exp_name = exp_name
+        self.workspace_path = os.path.join(self.draft_agent.session.config.workspace_path, exp_name)
+
     @property
     def exp_name(self) -> str:
         """返回实验阶段名称"""
-        return f"Draft_{self.exp_index}"
+        return self._exp_name
 
     def run(self, task_description: str, data_preview: str, data_knowledge: str, model_knowledge: str, task_id: str = "exp_001") -> dict:
 

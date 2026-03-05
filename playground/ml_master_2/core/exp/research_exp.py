@@ -19,18 +19,18 @@ def _parse_json_from_response(text: str) -> dict:
     return json.loads(text)
 
 class ResearchExp(BaseExp):
-    def __init__(self, research_agent, config, initial_code, exp_index):
+    def __init__(self, research_agent, config, initial_code, exp_name):
         super().__init__(research_agent, config)
         self.research_agent = research_agent
         self.uid = uuid.uuid4()
         self.logger = logging.getLogger(self.__class__.__name__)
         self.workspace_path = self.research_agent.session.config.workspace_path
         self.initial_code = initial_code
-        self.exp_index = exp_index
+        self._exp_name = exp_name
     @property
     def exp_name(self) -> str:
         """返回实验阶段名称"""
-        return f"Research_{self.exp_index}"
+        return self._exp_name
 
 
     def run(self, task_description: str, data_preview: str, best_solution: str, research_plan_and_result: list, task_id: str = "exp_001") -> dict:
