@@ -50,6 +50,7 @@ agents:
     finish_on_text_response: true
     tools:
       builtin: ["*"]
+      search: "google"   # "ai_search" 或 "google"(google_search + web_fetch)
 
     context:
       max_tokens: 128000
@@ -68,13 +69,25 @@ mcp:
   enabled: False
 
 # ============================================
-# Web Search 配置
+# AI Search 配置（Perplexity 风格综合搜索）
 # ============================================
-web_search:
+ai_search:
   provider: "perplexity"
   api_key: "${WEB_SEARCH_API_KEY}"
   base_url: "${WEB_SEARCH_BASE_URL}"
   model: "${WEB_SEARCH_MODEL}"
+
+# ============================================
+# Google Search 配置（Serper API）
+# ============================================
+google_search:
+  api_key: "${SERPER_KEY_ID}"
+
+# ============================================
+# Web Fetch 配置（Jina Reader API，LLM 摘要复用默认 LLM）
+# ============================================
+web_fetch:
+  api_key: "${JINA_API_KEY}"
 
 # ============================================
 # Session 配置

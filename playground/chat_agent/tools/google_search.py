@@ -1,0 +1,137 @@
+"""Chat Agent Google Search 工具
+
+通过 Serper API 进行 Google 搜索，返回原始搜索结果列表（标题、链接、摘要）。
+"""
+
+from __future__ import annotations
+
+import http.client
+import json
+import logging
+from typing import TYPE_CHECKING, Any, ClassVar
+
+from pydantic import Field
+
+from evomaster.agent.tools.base import BaseTool, BaseToolParams
+
+if TYPE_CHECKING:
+    from evomaster.agent.session import BaseSession
+
+logger = logging.getLogger(__name__)
+
+
+class GoogleSearchToolParams(BaseToolParams):
+    """Search Google for real-time web results.
+
+    Returns top 10 organic search results with titles, URLs, snippets and dates.
+    Use this when you need raw search result links to visit specific pages,
+    or when you want to see multiple sources before diving deeper.
+
+    For a synthesized AI-generated answer, use ai_search instead.
+    """
+
+    name: ClassVar[str] = "google_search"
+
+    query: list[str] = Field(
+        description="Array of search queries. Include multiple complementary queries for broader coverage."
+    )
+
+
+class GoogleSearchTool(BaseTool):
+    """Google 搜索工具（Serper API）"""
+
+    name: ClassVar[str] = "google_search"
+    params_class: ClassVar[type[BaseToolParams]] = GoogleSearchToolParams
+
+    def __init__(self, api_key: str):
+        super().__init__()
+        self.api_key = api_key
+
+    def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
+        """执行 Google 搜索"""
+        try:
+            params = self.parse_params(args_json)
+        except Exception as e:
+            return f"Parameter validation error: {e}", {"error": str(e)}
+
+        assert isinstance(params, GoogleSearchToolParams)
+        queries = params.query
+
+        self.logger.info("Google search queries: %s", queries)
+
+        results = []
+        for q in queries:
+            results.append(self._search_single(q))
+
+        response = "\n---\n".join(results)
+        return response, {"queries": queries}
+
+    def _search_single(self, query: str) -> str:
+        """执行单个查询的 Google 搜索"""
+        conn = http.client.HTTPSConnection("google.serper.dev")
+
+        if self._contains_chinese(query):
+            payload = json.dumps({
+                "q": query,
+                "location": "China",
+                "gl": "cn",
+                "hl": "zh-cn",
+            })
+        else:
+            payload = json.dumps({
+                "q": query,
+                "location": "United States",
+                "gl": "us",
+                "hl": "en",
+            })
+
+        headers = {
+            "X-API-KEY": self.api_key,
+            "Content-Type": "application/json",
+        }
+
+        for attempt in range(3):
+            try:
+                conn.request("POST", "/search", payload, headers)
+                res = conn.getresponse()
+                data = res.read()
+                results = json.loads(data.decode("utf-8"))
+                break
+            except Exception as e:
+                self.logger.warning("Google search attempt %d failed: %s", attempt + 1, e)
+                if attempt == 2:
+                    return f"Google search failed for '{query}'. Please try again later."
+                continue
+
+        if "organic" not in results:
+            return f"No results found for '{query}'. Try with a more general query."
+
+        web_snippets = []
+        for idx, page in enumerate(results["organic"], 1):
+            date_published = ""
+            if "date" in page:
+                date_published = f"\nDate published: {page['date']}"
+
+            source = ""
+            if "source" in page:
+                source = f"\nSource: {page['source']}"
+
+            snippet = ""
+            if "snippet" in page:
+                snippet = f"\n{page['snippet']}"
+
+            entry = (
+                f"{idx}. [{page.get('title', '')}]({page.get('link', '')})"
+                f"{date_published}{source}{snippet}"
+            )
+            web_snippets.append(entry)
+
+        return (
+            f"### A Google search for '{query}' found {len(web_snippets)} results:\n\n"
+            + "\n\n".join(web_snippets)
+        )
+
+    @staticmethod
+    def _contains_chinese(text: str) -> bool:
+        """检测文本是否包含中文字符"""
+        return any("\u4E00" <= char <= "\u9FFF" for char in text)

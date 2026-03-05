@@ -1,9 +1,13 @@
 """Chat Agent 专用工具"""
 
-from .web_search import WebSearchTool, WebSearchToolParams
+from .ai_search import AISearchTool, AISearchToolParams
+from .google_search import GoogleSearchTool, GoogleSearchToolParams
+from .web_fetch import WebFetchTool, WebFetchToolParams
 from .delegate import DelegateToAgentTool, DelegateToAgentParams
 
 __all__ = [
-    "WebSearchTool", "WebSearchToolParams",
+    "AISearchTool", "AISearchToolParams",
+    "GoogleSearchTool", "GoogleSearchToolParams",
+    "WebFetchTool", "WebFetchToolParams",
     "DelegateToAgentTool", "DelegateToAgentParams",
 ]

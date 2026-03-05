@@ -1,6 +1,7 @@
-"""Chat Agent Web Search 工具
+"""Chat Agent AI Search 工具
 
-通过 Perplexity (或其他 OpenAI 兼容搜索 API) 进行联网搜索。
+通过 Perplexity (或其他 OpenAI 兼容搜索 API) 进行 AI 综合搜索。
+返回基于多个网页内容合成的答案，而非原始搜索结果列表。
 """
 
 from __future__ import annotations
@@ -18,28 +19,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WebSearchToolParams(BaseToolParams):
-    """Search the web for real-time information using an online search engine.
+class AISearchToolParams(BaseToolParams):
+    """Search the web using AI-powered search engine (Perplexity-style).
 
-    Use this tool when you need up-to-date information that may not be in your training data, such as:
-    - Current events and news
-    - Latest documentation or API references
-    - Real-time data (weather, stock prices, etc.)
-    - Verifying facts or claims
+    Returns a synthesized answer based on multiple web sources, with citations.
+    Use this when you need a comprehensive, AI-generated answer combining information
+    from multiple web pages, rather than a list of raw search results.
 
-    The tool returns a synthesized answer based on web search results.
+    For raw search result links, use google_search instead.
     """
 
-    name: ClassVar[str] = "web_search"
+    name: ClassVar[str] = "ai_search"
 
     query: str = Field(description="The search query to look up on the web.")
 
 
-class WebSearchTool(BaseTool):
-    """联网搜索工具"""
+class AISearchTool(BaseTool):
+    """AI 综合搜索工具（Perplexity 风格）"""
 
-    name: ClassVar[str] = "web_search"
-    params_class: ClassVar[type[BaseToolParams]] = WebSearchToolParams
+    name: ClassVar[str] = "ai_search"
+    params_class: ClassVar[type[BaseToolParams]] = AISearchToolParams
 
     def __init__(self, api_key: str, base_url: str, model: str):
         super().__init__()
@@ -48,16 +47,16 @@ class WebSearchTool(BaseTool):
         self.model = model
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """执行联网搜索"""
+        """执行 AI 综合搜索"""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
             return f"Parameter validation error: {e}", {"error": str(e)}
 
-        assert isinstance(params, WebSearchToolParams)
+        assert isinstance(params, AISearchToolParams)
         query = params.query
 
-        self.logger.info("Web search query: %s", query)
+        self.logger.info("AI search query: %s", query)
 
         try:
             from openai import OpenAI
@@ -77,9 +76,9 @@ class WebSearchTool(BaseTool):
                 )
                 result = f"{result}\n\nSources:\n{refs}"
 
-            self.logger.info("Web search completed, result length: %d", len(result))
+            self.logger.info("AI search completed, result length: %d", len(result))
             return result, {"query": query, "model": self.model, "citations": citations}
 
         except Exception as e:
-            self.logger.error("Web search failed: %s", e)
-            return f"Web search failed: {e}", {"error": str(e), "query": query}
+            self.logger.error("AI search failed: %s", e)
+            return f"AI search failed: {e}", {"error": str(e), "query": query}
