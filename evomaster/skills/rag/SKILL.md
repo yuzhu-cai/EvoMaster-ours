@@ -56,7 +56,7 @@ Prerequisite: You already have a vector store directory `vec_dir` that contains 
 - `faiss.index`: the FAISS index;
 - `nodes.jsonl`: one JSON per line, each containing fields that identify a node (by default `node_id`).
 
-The minimal call pattern (only returning `node_id` and distance) is for the host system to run `search.py` with arguments, providing at least:
+The minimal call pattern (only returning `node_id` and cosine similarity) is for the host system to run `search.py` with arguments, providing at least:
 
 - `vec_dir`: path to the vector store directory;
 - `query`: the query text;
@@ -90,6 +90,7 @@ python evomaster/skills/rag/scripts/search.py \
 
 Notes:
 
+- `--threshold` is a **cosine similarity** threshold (range -1 to 1); results with similarity below this value are filtered out. Omit to return all top-k results.
 - When `embedding_type` is `"openai"`, `model` should typically be something like `text-embedding-3-large`, and you must ensure the embedding API key / base URL are provided via parameters or environment variables.
 - When `embedding_type` is `"local"`, `model` is usually a local HuggingFace model or directory (e.g. `evomaster/skills/rag/local_models/all-mpnet-base-v2` or a project-specific path).
 - If your configuration does not define `embedding_dimensions` (or uses an empty string), you can omit the `--embedding_dimensions` flag.

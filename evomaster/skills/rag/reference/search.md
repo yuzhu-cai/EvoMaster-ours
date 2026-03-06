@@ -28,7 +28,7 @@ The minimal requirement is a vector directory `vec_dir` containing at least:
 
 Optional:
 
-- `embeddings.npy`: Precomputed embedding matrix (mainly for debugging; not required).
+- `embeddings.npy`: Precomputed embedding matrix; **required for search** (used for cosine similarity over normalized vectors). If missing, similarity search will raise.
 - `nodes_data.json`: Node detail file; its structure is completely defined by your application.
 
 The script does not constrain the schema of `nodes_data` as long as it can be accessed via `node_id` or another agreed-upon ID key.
@@ -43,7 +43,7 @@ At minimum, calls should provide:
 
 - A vector-store directory `vec_dir`.
 - A query text `query`.
-- Optional `top_k` (number of returned results) and `threshold` (distance cutoff).
+- Optional `top_k` (number of returned results) and `threshold` (cosine similarity cutoff, range -1 to 1; results below this value are filtered out).
 
 When you **already have an external configuration that decides the embedding model**, you should forward that information explicitly via `--model`, `--embedding_type` and (optionally) `--embedding_dimensions`.
 
@@ -52,7 +52,7 @@ Common parameters:
 - `--vec_dir`: Vector-store directory (required).
 - `--query`: Query text (required).
 - `--top_k`: Number of results to return, default `5`.
-- `--threshold`: Optional distance threshold; results worse than this are filtered out.
+- `--threshold`: Optional cosine similarity threshold (range -1 to 1); results with similarity below this value are filtered out.
 - `--output`: `text` or `json`, default `text`.
 
 #### Search and Retrieve Original Content
@@ -118,7 +118,7 @@ This ensures that:
 - **Search-related**
   - `--query`: Query text.
   - `--top_k`: Number of top results to return.
-  - `--threshold`: Distance threshold; results beyond this value are filtered out.
+  - `--threshold`: Cosine similarity threshold (range -1 to 1); results below this value are filtered out.
 - **Content-retrieval related**
   - `--content_path`: Dot path for extracting content from `nodes_data`.
   - If `content_path` is omitted, the script automatically tries a set of common field names.
@@ -142,20 +142,12 @@ This ensures that:
   - A vector store only needs a FAISS index plus a corresponding list of node IDs.
   - Node-detail files can be any JSON structure.
 
-### FAISS Index Types and Distance Metrics (Optional Background)
+### Search Metric: Cosine Similarity
 
-`search.py` does not restrict which FAISS index type or distance metric you use, but understanding them helps tune `top_k` and `threshold`:
+`search.py` performs similarity search using **cosine similarity** over normalized embeddings (loaded from `embeddings.npy`). Results are returned as `(node_id, similarity)` with similarity in the range -1 to 1 (higher means more similar).
 
-- **Common index types**:
-  - `IndexFlatL2`: Exact L2 search, simple implementation, suitable for small to medium datasets.
-  - `IndexIVFFlat`: Inverted file + approximate search, requires index training, suitable for large-scale stores.
-  - `IndexHNSW`: Graph-based approximate search, fast queries, good for high-dimensional vectors.
-- **Common distance metrics**:
-  - L2 (Euclidean): Smaller values mean more similar.
-  - Inner Product: With normalized vectors, larger values mean more similar.
-  - Cosine distance/similarity: Equivalent to inner product after normalization.
-
-When using a distance threshold (`--threshold`), you need to tune it based on the distance type and your data distribution. A common approach is to inspect a sample of distances first and then select a reasonable cutoff.
+- **Threshold**: `--threshold` is a **similarity** threshold. Results with similarity **below** this value are filtered out. Typical values are between 0.5 and 0.9 depending on your data; inspect a sample of similarities to choose a reasonable cutoff.
+- The script still loads a FAISS index from `vec_dir` if present, but the current search path uses the precomputed normalized embedding matrix for cosine similarity.
 
 ### Performance Tuning and Troubleshooting
 
@@ -171,7 +163,7 @@ When using a distance threshold (`--threshold`), you need to tune it based on th
   - If retrieval quality is poor:
     - Check whether the raw data is clean and has enough context.
     - Check whether the chosen model (dimension, semantic capability) is appropriate.
-    - Adjust `top_k` and `threshold` and inspect the distance distribution.
+    - Adjust `top_k` and `threshold` and inspect the similarity distribution.
 - **Paths and files**:
   - Make sure `vec_dir` at minimum contains `faiss.index` and `nodes.jsonl`.
   - If you provide `nodes_data`, ensure its keys line up with the ID field in `nodes.jsonl` (or with the fallback strategy).

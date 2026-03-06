@@ -152,5 +152,5 @@ Each JSON entry corresponds to one request (the first and only request by the re
 --- 以上为 instruction ---
 
 相关信息：
-- vec_dir: playground/minimal_skill_task/MLE_DATABASE_bingyang/node_vectorstore_3072/draft
-- nodes_data: playground/minimal_skill_task/MLE_DATABASE_bingyang/node_vectorstore_3072/draft/draft_407_75_db.json
+- vec_dir: playground/minimal_skill_task/minimal_vectorestore
+- nodes_data: playground/minimal_skill_task/minimal_vectorestore/prepare_code.json

@@ -175,7 +175,6 @@ CLAUDE.md
 
 # RAG local artifacts / caches
 local_models
-MLE_DATABASE
 
 # Personal scratch outputs (avoid committing by accident)
 *zexi*

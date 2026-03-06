@@ -15,14 +15,17 @@ RELAXED_THRESHOLD = 2.0  # 多轮结果均为空时放宽 threshold 重试
 
 
 def _is_result_empty(text: str) -> bool:
-    """检索结果是否视为空（无有效 content）"""
+    """检索结果是否视为空（无有效内容）。以 node_id、similarity、prepare_code 为有效标记。"""
     if not text or not text.strip():
         return True
-    # 无 node_id / content 等有效信息视为空
     stripped = text.strip().lower()
     if len(stripped) < 30:
         return True
-    if "node_id" not in stripped and "content" not in stripped and "distance" not in stripped:
+    has_valid_marker = (
+        "node_id" in stripped
+        and ("similarity" in stripped or "prepare_code" in stripped)
+    )
+    if not has_valid_marker:
         return True
     return False
 
