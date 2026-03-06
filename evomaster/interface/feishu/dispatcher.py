@@ -493,6 +493,11 @@ class TaskDispatcher:
                     return answer
 
                 # 正常 chat_agent 流程
+                # 获取记忆系统（如果 playground 已初始化）
+                memory_manager = getattr(session.playground, "_memory_manager", None)
+                memory_config = getattr(session.playground, "_memory_config", {})
+                user_id = sender_open_id or "unknown"
+
                 if not session.initialized:
                     # 首次消息：完整 setup + agent.run()
                     logger.info(
@@ -503,18 +508,45 @@ class TaskDispatcher:
                     session.playground._setup_trajectory_file()
                     session.agent = session.playground.agent
 
+                    # 重新获取（setup 之后才有 _memory_manager）
+                    memory_manager = getattr(session.playground, "_memory_manager", None)
+                    memory_config = getattr(session.playground, "_memory_config", {})
+
                     # 注入飞书特有工具
                     self._inject_feishu_tools(session.playground)
                     self._inject_send_file_tool(session.playground, chat_id)
                     self._inject_ask_user_tool(session.agent)
+                    self._inject_memory_tools(session.agent, memory_manager, user_id)
+
+                    # 设置 compaction 前的记忆提取钩子
+                    if memory_manager and memory_config.get("auto_capture", True):
+                        _mm = memory_manager
+                        _uid = user_id
+                        def _on_compaction(old_messages, mm=_mm, uid=_uid):
+                            from evomaster.utils.types import UserMessage
+                            for msg in old_messages:
+                                if isinstance(msg, UserMessage):
+                                    text = msg.content if isinstance(msg.content, str) else ""
+                                    if text:
+                                        mm.extract_from_message(uid, text)
+                        session.agent.context_manager.on_before_compaction = _on_compaction
 
                     task = TaskInstance(
                         task_id=f"feishu_{message_id}",
                         task_type="chat",
                         description=task_text,
                     )
+
+                    # 自动召回相关记忆（注入 system prompt）
+                    self._memory_auto_recall(
+                        session.agent, memory_manager, memory_config, user_id, task_text,
+                    )
+
                     trajectory = session.agent.run(task, on_step=on_step)
                     session.initialized = True
+
+                    # 自动从用户消息中提取记忆
+                    self._memory_auto_capture(memory_manager, memory_config, user_id, task_text)
                 else:
                     # 后续消息：continue_run()
                     logger.info(
@@ -522,9 +554,18 @@ class TaskDispatcher:
                         chat_id,
                         session.message_count,
                     )
+
+                    # 自动召回相关记忆（注入 system prompt）
+                    self._memory_auto_recall(
+                        session.agent, memory_manager, memory_config, user_id, task_text,
+                    )
+
                     trajectory = session.agent.continue_run(
                         task_text, on_step=on_step
                     )
+
+                    # 自动从用户消息中提取记忆
+                    self._memory_auto_capture(memory_manager, memory_config, user_id, task_text)
 
                 # === ask_user 检测 ===
                 # chat_agent 调用了 ask_user，逐个展示问题卡片
@@ -843,6 +884,50 @@ class TaskDispatcher:
         """注入 ask_user 工具（仅在交互式上下文中使用）。"""
         from evomaster.interface.tools.ask_user import AskUserTool
         agent.tools.register(AskUserTool())
+
+    @staticmethod
+    def _inject_memory_tools(agent, memory_manager, user_id: str) -> None:
+        """注入记忆工具到 agent（memory_search / memory_save / memory_forget）。"""
+        if memory_manager is None:
+            return
+        from playground.chat_agent.tools.memory_tools import (
+            MemorySearchTool, MemorySaveTool, MemoryForgetTool,
+        )
+        for tool_cls in (MemorySearchTool, MemorySaveTool, MemoryForgetTool):
+            tool = tool_cls(memory_manager=memory_manager, user_id=user_id)
+            agent.tools.register(tool)
+
+    @staticmethod
+    def _memory_auto_recall(agent, memory_manager, memory_config, user_id: str, query: str) -> None:
+        """自动召回相关记忆并注入 system prompt 末尾。"""
+        if memory_manager is None:
+            return
+        if not memory_config.get("auto_recall", True):
+            return
+        limit = memory_config.get("recall_limit", 5)
+        memory_context = memory_manager.recall_for_context(
+            user_id=user_id, query=query, limit=limit,
+        )
+        if not memory_context:
+            return
+        # 将记忆追加到 system prompt 末尾
+        dialog = agent.current_dialog
+        if dialog and dialog.messages and dialog.messages[0].role.value == "system":
+            dialog.messages[0].content = (
+                dialog.messages[0].content + "\n\n" + memory_context
+            )
+
+    @staticmethod
+    def _memory_auto_capture(memory_manager, memory_config, user_id: str, message: str) -> None:
+        """自动从用户消息中提取记忆。"""
+        if memory_manager is None:
+            return
+        if not memory_config.get("auto_capture", True):
+            return
+        try:
+            memory_manager.extract_from_message(user_id, message)
+        except Exception:
+            logger.debug("Memory auto-capture failed", exc_info=True)
 
     @staticmethod
     def _format_questions_for_card(questions: list[dict]) -> str:

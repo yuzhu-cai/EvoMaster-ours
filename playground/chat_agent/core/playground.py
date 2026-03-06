@@ -25,8 +25,35 @@ class ChatAgentPlayground(BasePlayground):
 
     def setup(self):
         super().setup()
+        self._setup_memory()
         self._register_search_tools()
         self._register_delegate_tool()
+
+    def _setup_memory(self):
+        """初始化记忆系统（如果在 config 中启用）。"""
+        memory_cfg = self.config_manager.get("memory") or {}
+        if not memory_cfg.get("enabled", False):
+            self._memory_manager = None
+            self._memory_config = {}
+            return
+
+        from evomaster.memory.store import MemoryStore
+        from evomaster.memory.manager import MemoryManager
+
+        db_path = memory_cfg.get("db_path", "./data/memory/memories.db")
+        store = MemoryStore(db_path)
+
+        # 可选：用 LLM 做 compaction 时的记忆提取
+        llm = None
+        if memory_cfg.get("capture_with_llm", False):
+            from evomaster.utils.llm import LLMConfig, create_llm
+
+            llm_cfg = self.config_manager.get_llm_config()
+            llm = create_llm(LLMConfig(**llm_cfg))
+
+        self._memory_manager = MemoryManager(store, llm=llm, config=memory_cfg)
+        self._memory_config = memory_cfg
+        self.logger.info("Memory system initialized (db: %s)", db_path)
 
     def _register_search_tools(self):
         """根据 tools.search 配置决定注册哪套搜索工具。"""

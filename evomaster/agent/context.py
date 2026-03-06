@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from pydantic import BaseModel, Field
 
@@ -98,6 +98,7 @@ class ContextManager:
         self._summary_llm: BaseLLM | None = None
         self._last_prompt_tokens: int = 0
         self._last_prompt_msg_count: int = 0
+        self.on_before_compaction: Callable[[list[Message]], None] | None = None
 
     def set_token_counter(self, counter: TokenCounter) -> None:
         """设置 token 计数器"""
@@ -325,6 +326,13 @@ class ContextManager:
 
         if not old_msgs:
             return dialog
+
+        # 触发 compaction 前钩子（用于记忆提取等）
+        if self.on_before_compaction:
+            try:
+                self.on_before_compaction(list(old_msgs))
+            except Exception:
+                logger.exception("on_before_compaction hook failed")
 
         # 构造摘要对话：system prompt + old_msgs 完整结构 + 摘要指令
         # old_msgs 保持原样不截断，让摘要 LLM 看到完整上下文

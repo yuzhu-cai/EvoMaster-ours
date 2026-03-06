@@ -90,6 +90,18 @@ web_fetch:
   api_key: "${JINA_API_KEY}"
 
 # ============================================
+# Memory 配置（跨会话持久化记忆）
+# ============================================
+memory:
+  enabled: true
+  db_path: "./data/memory/memories.db"
+  auto_capture: true          # 自动从对话中提取记忆（规则匹配）
+  auto_recall: true           # 自动在对话开始时注入相关记忆
+  recall_limit: 5             # 自动召回的最大记忆数
+  max_memories_per_user: 500  # 每用户最大记忆数
+  capture_with_llm: false     # 是否用 LLM 做更精准的记忆提取
+
+# ============================================
 # Session 配置
 # ============================================
 session:
