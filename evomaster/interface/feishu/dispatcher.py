@@ -1057,6 +1057,19 @@ class TaskDispatcher:
                         ),
                     )
                     trajectory = builder_agent.run(plan_task, on_step=on_step)
+
+                    # builder 完成后检查 TODO 是否全部完成，未完成则追加一轮
+                    if reporter and reporter.has_incomplete_todos():
+                        incomplete = reporter.get_incomplete_todo_labels()
+                        reminder = (
+                            "你还有以下 TODO 项未完成，请逐一完成并上报 PROGRESS 后再调用 finish：\n"
+                            + "\n".join(f"- [ ] {label}" for label in incomplete)
+                        )
+                        logger.info(
+                            "Builder has %d incomplete TODOs, triggering continue_run",
+                            len(incomplete),
+                        )
+                        trajectory = builder_agent.continue_run(reminder, on_step=on_step)
                 else:
                     trajectory = session.agent.continue_run(
                         task_text, on_step=on_step

@@ -111,6 +111,10 @@ think("PROGRESS: [x] 创建 __init__.py 文件")
 - @register_playground 装饰器中的名称与 agent 名称一致
 - config_dir 路径指向 `configs/_generated/<name>`
 
+**关键：在调用 finish 之前，你必须回顾所有 TODO 项，确保每一项都已完成并上报了 PROGRESS 标记。**
+如果有任何 TODO 项尚未完成，先完成它并上报 PROGRESS，然后再调用 finish。
+绝对不要在有未完成的 TODO 项时调用 finish。
+
 完成后上报进度：
 ```
 think("PROGRESS: [x] 验证所有文件")
@@ -356,3 +360,4 @@ debug: false
 - 项目的 `playground/`、`configs/`、`evomaster/` 目录已 symlink 到你的工作目录。使用相对路径访问。
 - 任务必须以 `finish` 工具调用结束。
 - 每完成一个 TODO 项，使用 think 工具上报进度（PROGRESS 标记）。
+- **关键**：调用 finish 前，逐一检查所有 TODO 项是否已完成并上报 PROGRESS。如果有遗漏，先补完再 finish。绝不允许在 TODO 未全部完成时结束任务。

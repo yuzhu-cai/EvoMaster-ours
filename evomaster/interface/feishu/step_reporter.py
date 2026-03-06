@@ -67,6 +67,16 @@ class FeishuStepReporter:
         """设置 TODO 列表项目（用于 agent_builder 等支持进度追踪的场景）。"""
         self._todo_items = [{"label": item, "done": False} for item in items]
 
+    def has_incomplete_todos(self) -> bool:
+        """是否有未完成的 TODO 项。"""
+        if not self._todo_items:
+            return False
+        return any(not item["done"] for item in self._todo_items)
+
+    def get_incomplete_todo_labels(self) -> list[str]:
+        """获取未完成的 TODO 标签列表。"""
+        return [item["label"] for item in self._todo_items if not item["done"]]
+
     def send_initial_card(self, task_text: str) -> bool:
         """发送初始 "正在处理" 卡片，捕获 message_id 用于后续 PATCH。"""
         from .messaging.sender import send_card_message
