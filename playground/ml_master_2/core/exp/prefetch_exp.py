@@ -29,6 +29,29 @@ class PrefetchExp(BaseExp):
         self.logger.info("Starting prefetch task execution")
         self.logger.info(f"Task: {task_description}")
 
+        if self.prefetch_agent:
+            self.logger.info("=" * 60)
+            self.logger.info("Step 1: Prefetch Agent analyzing task...")
+            self.logger.info("=" * 60)
+            BaseAgent.set_exp_info(exp_name=self.exp_name, exp_index=1)
+            
+            prefetch_original_format_kwargs = self.prefetch_agent._prompt_format_kwargs.copy()
+            self.prefetch_agent._prompt_format_kwargs.update({
+                'task_description': task_description,
+            })
+            prefetch_task = TaskInstance(
+                task_id=f"{task_id}_prefetch",
+                task_type="prefetch",
+                task_description=task_description,
+                input_data={},
+            )
+            prefetch_trajectory = self.prefetch_agent.run(prefetch_task)
+            prefetch_result = self._extract_agent_response(prefetch_trajectory)
+            self.prefetch_agent._prompt_format_kwargs = prefetch_original_format_kwargs
+            self.logger.info(f"Prefetch result: {prefetch_result}")
+            exit()
+            
+        ## 测试代码
         with open(self.wisdom_file_path, "r") as f:
             wisdom = json.load(f)
         # data_knowledge = wisdom[task_id].get("data_knowledge", "NO DATA KNOWLEDGE this time")
