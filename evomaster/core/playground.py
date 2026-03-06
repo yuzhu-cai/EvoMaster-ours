@@ -305,8 +305,21 @@ class BasePlayground:
         return SkillRegistry(skills_root, skills=skills)
 
 
+    def _get_or_create_full_skill_registry(self) -> SkillRegistry:
+        """始终创建/获取全量 SkillRegistry（与 builtin 一致：始终注册，config 仅控制是否暴露给 LLM）。"""
+        skills_config = getattr(self.config, "skills", None)
+        if isinstance(skills_config, dict):
+            skills_root = Path(skills_config.get("skills_root", "evomaster/skills"))
+        else:
+            skills_root = Path("evomaster/skills")
+        if self._base_skill_registry is None:
+            self.logger.info(f"Loading full skill registry from: {skills_root}")
+            self._base_skill_registry = SkillRegistry(skills_root)
+            self.logger.info(f"Loaded {len(self._base_skill_registry.get_all_skills())} skills")
+        return self._base_skill_registry
+
     def _resolve_skill_registry(self, skill_config: dict | None) -> SkillRegistry | None:
-        """根据 skill_config 解析 SkillRegistry（可为子集）。"""
+        """根据 skill_config 解析 SkillRegistry（可为子集）。用于 Agent 的 skill_registry 参数。"""
         if not skill_config:
             return None
 
@@ -374,21 +387,21 @@ class BasePlayground:
     ):
         """创建工具注册表并按需初始化 MCP 工具。
 
-        无论 tool_config 中是否启用了某些工具，所有内置工具都会被注册到 registry 中，
-        以便代码中可以手动调用未启用的工具。工具的"启用/禁用"仅影响是否将工具信息
-        暴露给 LLM（通过 enable_tools 和 _get_tool_specs 控制）。
+        无论 tool_config 中是否启用了某些工具，所有内置工具都会被注册到 registry 中。
+        Skill 与 builtin 一致：始终注册 SkillTool，config 仅控制是否将 use_skill 暴露给 LLM。
+        工具的"启用/禁用"仅影响是否将工具信息暴露给 LLM（通过 enable_tools 和 _get_tool_specs 控制）。
 
         Args:
-            skill_config: Skill 配置，内部会按需解析 SkillRegistry
+            skill_config: 未使用（保留以兼容调用方），Skill 始终全量注册
             tool_config: per-agent 工具配置，形如 {"builtin": list[str], "mcp": str}
                          其中 mcp 为 MCP 配置文件路径，空字符串表示不启用
         """
-        skill_registry = self._resolve_skill_registry(skill_config)
         tool_config = tool_config or {"builtin": ["*"], "mcp": ""}
 
         mcp_config_file = tool_config.get("mcp", "")
 
-        # 始终注册所有内置工具，确保代码中可以手动调用任何工具
+        # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM
+        skill_registry = self._get_or_create_full_skill_registry()
         self.tools = create_registry(
             builtin_names=["*"],
             skill_registry=skill_registry,
@@ -500,7 +513,7 @@ class BasePlayground:
         if skills != []:
             enabled_tool_names.extend(["use_skill"])
 
-        
+        self.logger.info(f"Enabled tools: {enabled_tool_names}")
 
         max_turns = agent_config.get('max_turns', 20)
         context_config_dict = agent_config.get('context', {})

@@ -406,6 +406,8 @@ class BaseAgent(ABC):
             return []
         else:
             all_specs = self.tools.get_tool_specs()
+            self.logger.info("Enabled tool names:")
+            self.logger.info([spec.function.name for spec in all_specs if spec.function.name in self.enabled_tool_names])
             return [spec for spec in all_specs if spec.function.name in self.enabled_tool_names]
 
     def load_prompt_from_file(

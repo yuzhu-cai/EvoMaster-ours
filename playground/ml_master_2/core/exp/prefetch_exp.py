@@ -49,8 +49,30 @@ class PrefetchExp(BaseExp):
             prefetch_result = self._extract_agent_response(prefetch_trajectory)
             self.prefetch_agent._prompt_format_kwargs = prefetch_original_format_kwargs
             self.logger.info(f"Prefetch result: {prefetch_result}")
+            # 执行 RAG 检索：use_skill run_script 调用 search.py
+            vec_dir = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft"
+            nodes_data = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft/draft_407_75_db.json"
+            model = "evomaster/skills/rag/local_models/all-mpnet-base-v2"
+            query_escaped = json.dumps(prefetch_result)
+            script_args = (
+                f"--vec_dir {vec_dir} --query {query_escaped} --nodes_data {nodes_data} "
+                f"--top_k 1 --threshold 0.6 --output json --model {model}"
+            )
+            tool_call_obj = ChatCompletionMessageToolCall(
+                id="call_123",
+                type="function",
+                function=Function(
+                    name="use_skill",
+                    arguments=json.dumps({
+                        "skill_name": "rag",
+                        "action": "run_script",
+                        "script_name": "search.py",
+                        "script_args": script_args,
+                    }),
+                )
+            )
+            observation, info =self.prefetch_agent._execute_tool(tool_call_obj) 
             exit()
-            
         ## 测试代码
         with open(self.wisdom_file_path, "r") as f:
             wisdom = json.load(f)
