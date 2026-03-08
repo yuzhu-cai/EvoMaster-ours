@@ -6,6 +6,12 @@
 # ============================================
 competition_id: "detecting-insults-in-social-commentary"
 is_lower_better: false
+data_root: "./playground/ml_master_2/data"
+
+# Grading Server 配置（用于 submission 格式校验，需与 ml_master 的 grading_server 配合）
+# 配置后，draft/debug 阶段会调用 grading_server 校验 submission，通过才算无 bug
+grading_servers:
+  - "http://127.0.0.1:5003"
 
 # ============================================
 # LLM 配置
@@ -227,7 +233,7 @@ session:
     # 示例：
     # symlinks:
     #   "/data/exp_data/demo1bench/aerial-cactus-identification/prepared/public/": "input"
-    symlinks: {"./playground/minimal_kaggle/data/public": "input"}
+    symlinks: {"./playground/ml_master_2/data/detecting-insults-in-social-commentary/prepared/public": "input"}
     parallel:
       enabled: true
       max_parallel: 2

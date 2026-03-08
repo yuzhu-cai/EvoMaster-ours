@@ -1,5 +1,6 @@
 import logging
-from typing import Any
+from pathlib import Path
+from typing import Any, Tuple
 from evomaster.core.exp import BaseExp
 from evomaster.utils.types import TaskInstance
 from openai.types.chat import ChatCompletionMessageToolCall
@@ -8,6 +9,13 @@ from ..utils.code import read_code,save_code_to_file
 import uuid
 import os
 from evomaster.agent import BaseAgent
+
+try:
+    from ..utils.grading import validate_submission
+    _HAS_GRADING = True
+except ImportError as e:
+    _HAS_GRADING = False
+    _GRADING_IMPORT_ERROR = str(e)
 
 class DraftExp(BaseExp):
     def __init__(self, draft_agent, debug_agent, metric_agent, config,exp_name):
@@ -27,6 +35,36 @@ class DraftExp(BaseExp):
     def exp_name(self) -> str:
         """返回实验阶段名称"""
         return self._exp_name
+
+    def _check_grading_valid(self, submission_path: str) -> Tuple[bool, str]:
+        """使用 grading_server 校验 submission 格式。
+        返回 (是否通过, 不通过时的理由，通过时为空字符串)。
+        """
+        if not _HAS_GRADING:
+            return True, ""
+        servers = getattr(self.config, "grading_servers", []) or []
+        exp_id = getattr(self.config, "competition_id", None) or getattr(self.config, "exp_id", None)
+        data_root = os.path.join(os.getcwd(), getattr(self.config, "data_root", None))
+        if not servers or not exp_id:
+            return True, ""
+        ok, res = validate_submission(
+            exp_id,
+            Path(submission_path),
+            server_urls=servers,
+            dataset_root=data_root,
+        )
+        if not ok:
+            reason = str(res) if res else "grading_server 调用失败"
+            self.logger.warning(
+                "grading_server 调用失败，默认视为 submission 格式合法通过: %s", reason
+            )
+            return True, ""
+        if isinstance(res, dict) and not res.get("is_valid", True):
+            reason = res.get("result") or res.get("details") or str(res)
+            self.logger.warning("grading_server 格式校验未通过: %s", reason)
+            return False, reason
+        self.logger.info(f"grading_server 格式校验通过")
+        return True, ""
 
     def run(self, task_description: str, data_preview: str, data_knowledge: str, model_knowledge: str, task_id: str = "exp_001") -> dict:
 
@@ -58,7 +96,6 @@ class DraftExp(BaseExp):
 
                     draft_trajectory = self.draft_agent.run(draft_task)
                     draft_result = self._extract_agent_response(draft_trajectory)
-                    # for debugging
 #                     draft_result = f"""
 # ```python
 # import pandas as pd
@@ -180,8 +217,16 @@ class DraftExp(BaseExp):
                     )
                     observation, info =self.draft_agent._execute_tool(tool_call_obj)
                     self.terminal_output = observation
-                    if info.get("exit_code") == 0 and os.path.exists(os.path.join(self.workspace_path, "submission", f"submission_{self.uid}.csv")):
-                        is_success = True
+                    submission_path = os.path.join(self.workspace_path, "submission", f"submission_{self.uid}.csv")
+                    if info.get("exit_code") == 0 and os.path.exists(submission_path):
+                        grading_ok, grading_reason = self._check_grading_valid(submission_path)
+                        is_success = grading_ok
+                        if not grading_ok:
+                            self.terminal_output = (
+                                f"{self.terminal_output}\n\n"
+                                "[grading] 代码成功运行，但提交格式不合法。grading_server 校验结果: "
+                                f"{grading_reason}"
+                            )
                     else:
                         is_success = False
                     self.logger.info(f"Draft Agent execute_bash result: {observation}")
@@ -251,8 +296,16 @@ class DraftExp(BaseExp):
                     )
                     observation, info =self.debug_agent._execute_tool(tool_call_obj)
                     self.terminal_output = observation
-                    if info.get("exit_code") == 0 and os.path.exists(os.path.join(self.workspace_path, "submission", f"submission_{self.uid}.csv")):
-                        debug_success = True
+                    submission_path = os.path.join(self.workspace_path, "submission", f"submission_{self.uid}.csv")
+                    if info.get("exit_code") == 0 and os.path.exists(submission_path):
+                        grading_ok, grading_reason = self._check_grading_valid(submission_path)
+                        debug_success = grading_ok
+                        if not grading_ok:
+                            self.terminal_output = (
+                                f"{self.terminal_output}\n\n"
+                                "[grading] 代码成功运行，但提交格式不合法。grading_server 校验结果: "
+                                f"{grading_reason}"
+                            )
                     else:
                         debug_success = False
                     self.logger.info(f"Debug Agent execute_bash result: {observation}")

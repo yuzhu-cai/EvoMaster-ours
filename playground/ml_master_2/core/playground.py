@@ -57,6 +57,9 @@ class MLMaster2Playground(BasePlayground):
         self.research_plan_and_result = []
         self.prefetch_descriptor = None
         self.is_lower_better = self.config_manager.get("is_lower_better", False)
+        self.competition_id = self.config_manager.get("competition_id", "detecting-insults-in-social-commentary")
+        # for grading server
+        self.ground_truth_dir = os.path.join(os.getcwd(), self.config_manager.get("data_root", "playground/ml_master_2/data"))
         self.mcp_manager = None
 
         self.exp_index = 0

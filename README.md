@@ -239,7 +239,7 @@ python run.py --agent minimal_kaggle --config configs/minimal_kaggle/deepseek-v3
 pip install -r playground/ml_master_2/requirements.txt
 # optional
 # export HF_ENDPOINT=https://hf-mirror.com
-python run.py --agent ml_master_2 --config configs/ml_master_2/deepseek-v3.2-example.yaml --task playground/ml_master_2/data/public/description.md
+python run.py --agent ml_master_2 --config configs/ml_master_2/deepseek-v3.2-example.yaml --task playground/ml_master_2/data/detecting-insults-in-social-commentary/prepared/public/description.md
 ```
 
 ## 📦 Installation
