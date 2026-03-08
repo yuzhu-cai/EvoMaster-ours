@@ -1,10 +1,10 @@
 ## `scripts/search.py`: Vector Search and Content Retrieval
 
-`search.py` provides a general-purpose **vector search plus optional content retrieval** capability, suitable for any vector store that has a FAISS index built.
+`search.py` provides a general-purpose **vector search plus optional content retrieval** capability, suitable for any vector store that has embeddings and node IDs (FAISS index optional).
 
 ### Feature Overview
 
-- **Vector search**: Perform similarity search based on `faiss.index` and `nodes.jsonl` under `vec_dir`.
+- **Vector search**: Perform similarity search based on `embeddings.npy` and `nodes.jsonl` under `vec_dir`. Whether to load `faiss.index` is **explicitly controlled** by the caller via `use_faiss` (CLI: `--use_faiss`; API: `use_faiss=True`). Default is off; when on, the index is loaded only if the FAISS package is installed and the file exists (no error if missing).
 - **Optional content retrieval**: If you provide `nodes_data` (JSON/JSONL), the script can use retrieved `node_id`s to look up original content.
 - **Multiple embedding backends**:
   - Local Transformer models (HuggingFace or local paths).
@@ -14,7 +14,7 @@
 
 The core implementation lives in the `RAGSearcher` class, which handles:
 
-- Loading FAISS indexes.
+- Loading the vector store; a FAISS index is loaded only when `use_faiss=True` and the package is installed and `faiss.index` exists.
 - Text encoding (via the shared `create_embedder`).
 - Similarity search (`search_similar` / `search_by_text`).
 - Accessing content (`get_knowledge` / `get_knowledge_by_path` / `get_node_data`).
@@ -23,19 +23,19 @@ The core implementation lives in the `RAGSearcher` class, which handles:
 
 The minimal requirement is a vector directory `vec_dir` containing at least:
 
-- `faiss.index`: FAISS index file.
+- `embeddings.npy`: Precomputed embedding matrix; **required for search** (used for cosine similarity over normalized vectors). If missing, similarity search will raise.
 - `nodes.jsonl`: One JSON per line with fields that identify each node (by default `node_id`).
 
 Optional:
 
-- `embeddings.npy`: Precomputed embedding matrix; **required for search** (used for cosine similarity over normalized vectors). If missing, similarity search will raise.
+- `faiss.index`: FAISS index file. Loaded only when the caller sets `use_faiss=True` (or `--use_faiss`) and the `faiss` package is installed and this file exists; if absent or not requested, search uses `embeddings.npy` only.
 - `nodes_data.json`: Node detail file; its structure is completely defined by your application.
 
 The script does not constrain the schema of `nodes_data` as long as it can be accessed via `node_id` or another agreed-upon ID key.
 
 ### Usage Pattern (Conceptual)
 
-In real projects, `search.py` is typically invoked by the host system through a “skill script runner” rather than directly from the terminal. This section explains which parameters the script cares about when called, and provides **recommended CLI patterns** so that upstream embedding configuration (e.g. OpenAI vs. local models) is respected rather than silently falling back to defaults.
+In real projects, `search.py` is invoked via run_script (e.g. use_skill). This section lists the parameters the script accepts so that upstream embedding configuration (e.g. OpenAI vs. local models) can be passed through correctly.
 
 #### Basic Search (Vector Results Only)
 
@@ -78,33 +78,10 @@ If `--content_path` is not provided, the script tries a list of common candidate
 
 To use OpenAI embeddings (such as `text-embedding-3-large`), set `embedding_type` to `openai` and provide the model name, dimensions, and credentials via parameters or environment variables.
 
-You can provide the API key / base URL via:
+API key / base URL can be passed via parameters `--embedding_api_key`, `--embedding_base_url`, or environment variables `OPENAI_EMBEDDING_API_KEY` / `OPENAI_API_KEY` and `OPENAI_EMBEDDING_BASE_URL` / `OPENAI_BASE_URL`.
 
-- CLI parameters: `--embedding_api_key`, `--embedding_base_url`.
-- Environment variables: `OPENAI_EMBEDDING_API_KEY` or `OPENAI_API_KEY`, and `OPENAI_EMBEDDING_BASE_URL` or `OPENAI_BASE_URL`.
-
-**Recommended pattern (for agents / host systems)**  
-If your upstream config exposes:
-
-- `model` (e.g. `text-embedding-3-large`);
-- `embedding_type` (e.g. `openai`);
-- `embedding_dimensions` (e.g. `3072`);
-
-then a typical call looks like:
-
-```bash
-python evomaster/skills/rag/scripts/search.py \
-  --vec_dir "{vec_dir}" \
-  --nodes_data "{nodes_data}" \
-  --query "{query}" \
-  --top_k {top_k} \
-  --threshold {threshold} \
-  --model "{model}" \
-  --embedding_type "{embedding_type}" \
-  --embedding_dimensions {embedding_dimensions}
-```
-
-This ensures that:
+**Parameters to forward from upstream config**  
+When your upstream config (e.g. EvoMaster embedding block) exposes `model`, `embedding_type`, and `embedding_dimensions`, pass them through in `script_args` as `--model`, `--embedding_type`, and `--embedding_dimensions` so that:
 
 - When `embedding_type` is `"openai"`, the script uses the exact OpenAI embedding model selected by your higher-level config (and not its own local default such as `all-mpnet-base-v2`).
 - When `embedding_type` is `"local"`, the script uses the correct local Transformer model path or name.
@@ -113,6 +90,7 @@ This ensures that:
 
 - **Vector-store related**
   - `--vec_dir`: Directory of the vector store (required).
+  - `--use_faiss`: If set, load and use `faiss.index` from `vec_dir` when FAISS is installed and the file exists (default: off; use for large-scale search).
   - `--nodes_data`: Node-details JSON file (optional).
   - `--node_id_key`: Field name in `nodes.jsonl` used as the node ID, default `node_id`. If missing, the script tries `task_name` or falls back to the line index.
 - **Search-related**
@@ -139,7 +117,7 @@ This ensures that:
   - Supports arbitrary HuggingFace/local Transformer models.
   - Optionally integrates with the OpenAI Embedding API via parameters.
 - Easy to migrate across RAG projects:
-  - A vector store only needs a FAISS index plus a corresponding list of node IDs.
+  - A vector store needs `embeddings.npy` and `nodes.jsonl`; `faiss.index` is optional and loaded only when `use_faiss` is set by the caller.
   - Node-detail files can be any JSON structure.
 
 ### Search Metric: Cosine Similarity
@@ -147,7 +125,7 @@ This ensures that:
 `search.py` performs similarity search using **cosine similarity** over normalized embeddings (loaded from `embeddings.npy`). Results are returned as `(node_id, similarity)` with similarity in the range -1 to 1 (higher means more similar).
 
 - **Threshold**: `--threshold` is a **similarity** threshold. Results with similarity **below** this value are filtered out. Typical values are between 0.5 and 0.9 depending on your data; inspect a sample of similarities to choose a reasonable cutoff.
-- The script still loads a FAISS index from `vec_dir` if present, but the current search path uses the precomputed normalized embedding matrix for cosine similarity.
+- The script loads a FAISS index from `vec_dir` only when the caller passes `use_faiss=True` (or `--use_faiss`) and the package is installed and the file exists; the current search path uses the precomputed normalized embedding matrix (`embeddings.npy`) for cosine similarity.
 
 ### Performance Tuning and Troubleshooting
 
@@ -165,6 +143,6 @@ This ensures that:
     - Check whether the chosen model (dimension, semantic capability) is appropriate.
     - Adjust `top_k` and `threshold` and inspect the similarity distribution.
 - **Paths and files**:
-  - Make sure `vec_dir` at minimum contains `faiss.index` and `nodes.jsonl`.
+  - Make sure `vec_dir` at minimum contains `embeddings.npy` and `nodes.jsonl`. Add `faiss.index` and pass `--use_faiss` only when you want to use it (e.g. large-scale search).
   - If you provide `nodes_data`, ensure its keys line up with the ID field in `nodes.jsonl` (or with the fallback strategy).
 

@@ -5,7 +5,7 @@
 支持本地 transformer 模型和 OpenAI embedding API。
 
 设计目标：通用的"向量检索 +（可选）取回原始内容"组件。
-- 向量检索：依赖 vec_dir 下的 `faiss.index` 与 `nodes.jsonl`
+- 向量检索：依赖 vec_dir 下的 `embeddings.npy` 与 `nodes.jsonl`；是否加载 `faiss.index` 由外部通过 `use_faiss` 显式指定（默认不加载）
 - 内容取回：可选加载 `nodes_data.json`，并通过 `content_path`（点路径）提取字段
 """
 
@@ -18,7 +18,11 @@ from typing import Any
 from abc import ABC, abstractmethod
 
 import numpy as np
-import faiss
+
+try:
+    import faiss
+except ImportError:
+    faiss = None  # 可选：有则用 FAISS index，没有则仅用 embeddings.npy
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +243,7 @@ class RAGSearcher:
         nodes_data_json: str | None = None,
         device: str = "cpu",
         node_id_key: str = "node_id",
+        use_faiss: bool = False,
         # OpenAI embedding 参数
         embedding_type: str = "auto",
         embedding_api_key: str | None = None,
@@ -248,11 +253,12 @@ class RAGSearcher:
         """初始化 RAG Searcher
 
         Args:
-            vec_dir: 向量数据库目录路径（包含 faiss.index, embeddings.npy, nodes.jsonl）
+            vec_dir: 向量数据库目录路径（必须含 embeddings.npy 与 nodes.jsonl；faiss.index 由 use_faiss 控制）
             model_name: 用于编码的模型名称（本地路径或 OpenAI 模型名）
             nodes_data_json: 节点数据 JSON 文件路径（可选，用于获取知识内容）
             device: 计算设备 ('cpu' 或 'cuda')，仅本地模型使用
             node_id_key: nodes.jsonl 每行 JSON 中作为 ID 的字段名（默认 'node_id'）
+            use_faiss: 是否加载并使用 vec_dir 下的 faiss.index（默认 False；为 True 且已安装 faiss、文件存在时才加载）
             embedding_type: "local", "openai", 或 "auto"（自动检测）
             embedding_api_key: OpenAI API key（仅 openai 类型需要）
             embedding_base_url: OpenAI API base URL（仅 openai 类型需要）
@@ -263,12 +269,18 @@ class RAGSearcher:
         self.device = device
         self.node_id_key = node_id_key
 
-        # 加载 FAISS index
+        # 加载 FAISS index：仅当 use_faiss=True 且 faiss 可用且文件存在时加载
         index_path = self.vec_dir / "faiss.index"
-        if not index_path.exists():
-            raise FileNotFoundError(f"FAISS index not found: {index_path}")
-        self.index = faiss.read_index(str(index_path))
-        logger.info(f"Loaded FAISS index from {index_path}")
+        if use_faiss and faiss is not None and index_path.exists():
+            self.index = faiss.read_index(str(index_path))
+            logger.info(f"Loaded FAISS index from {index_path}")
+        else:
+            self.index = None
+            if use_faiss:
+                if faiss is None:
+                    logger.warning("use_faiss=True but FAISS not installed, using embeddings.npy only")
+                elif not index_path.exists():
+                    logger.warning(f"use_faiss=True but FAISS index not found at {index_path}, using embeddings.npy only")
 
         # 加载 embeddings 并预计算归一化向量（用于余弦相似度）
         emb_path = self.vec_dir / "embeddings.npy"
@@ -548,6 +560,11 @@ def main():
         type=int,
         help="Embedding dimensions for text-embedding-3-* models (default: 3072)",
     )
+    parser.add_argument(
+        "--use_faiss",
+        action="store_true",
+        help="Load and use faiss.index from vec_dir when available (default: off; use for large-scale search)",
+    )
 
     args = parser.parse_args()
 
@@ -567,6 +584,7 @@ def main():
         model_name=model_resolved,
         nodes_data_json=nodes_data_resolved,
         node_id_key=args.node_id_key,
+        use_faiss=args.use_faiss,
         embedding_type=args.embedding_type,
         embedding_api_key=args.embedding_api_key,
         embedding_base_url=args.embedding_base_url,

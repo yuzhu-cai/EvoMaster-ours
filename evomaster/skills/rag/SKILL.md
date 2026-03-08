@@ -1,6 +1,6 @@
 ---
 name: rag
-description: Retrieval-Augmented Generation (RAG) skill for generic semantic search and knowledge retrieval. Use when you need to build or call vector-based search over your own documents using FAISS and embedding models (local transformers or OpenAI embeddings), or when integrating LLMs with external knowledge bases in a project-agnostic way.
+description: Retrieval-Augmented Generation (RAG) skill for generic semantic search and knowledge retrieval. Use when you need to build or call vector-based search over your own documents using vector indexes (optional FAISS) and embedding models (local transformers or OpenAI embeddings), or when integrating LLMs with external knowledge bases in a project-agnostic way.
 license: Proprietary. LICENSE.txt has complete terms
 ---
 
@@ -26,10 +26,12 @@ rag/
 ├── scripts/                 # Executable scripts (core logic)
 │   ├── search.py            # Generic vector search + content retrieval
 │   ├── encode.py            # Text encoding utilities (embeddings)
+│   ├── build_faiss.py       # Build faiss.index from embeddings.npy (for --use_faiss)
 │   └── database.py          # Vector database builder interface (placeholder implementation)
 └── reference/               # Detailed docs for each script
     ├── search.md            # Parameters, I/O, and examples for search.py
     ├── encode.md            # Usage and scenarios for encode.py
+    ├── build_faiss.md       # Building faiss.index from existing embeddings
     └── database.md          # Interface design and extension notes for database.py
 ```
 
@@ -39,9 +41,9 @@ rag/
 Use the `rag` skill when you need any of the following:
 
 - **Semantic search over your own documents/data**, e.g. “find the most relevant snippets in these JSON/Markdown/code files for a given question”;
-- **Building or maintaining a vector database**, and querying it efficiently via FAISS or similar indexes;
+- **Building or maintaining a vector database**, and querying it efficiently via vector search (e.g. FAISS when available);
 - **Combining external knowledge with an LLM**, i.e. implementing a RAG (retrieval-augmented generation) workflow;
-- **Reusing an existing vector store** (with `faiss.index` and a list of node IDs) across different tasks or projects.
+- **Reusing an existing vector store** (with `embeddings.npy` and `nodes.jsonl`; `faiss.index` optional) across different tasks or projects.
 
 If you are only doing “single-turn reasoning without external knowledge” (plain Q&A), you do not need this skill.
 
@@ -53,8 +55,10 @@ The primary way to interact with this skill is via the Python scripts in the `sc
 
 Prerequisite: You already have a vector store directory `vec_dir` that contains at least:
 
-- `faiss.index`: the FAISS index;
+- `embeddings.npy`: precomputed embedding matrix (used for cosine similarity);
 - `nodes.jsonl`: one JSON per line, each containing fields that identify a node (by default `node_id`).
+
+Whether to load `faiss.index` is **explicitly controlled** by the caller: pass `--use_faiss` (CLI) or `use_faiss=True` (API) to load it when FAISS is installed and the file exists; default is off (search uses `embeddings.npy` only).
 
 The minimal call pattern (only returning `node_id` and cosine similarity) is for the host system to run `search.py` with arguments, providing at least:
 
@@ -64,45 +68,15 @@ The minimal call pattern (only returning `node_id` and cosine similarity) is for
 
 When you have an external configuration that already decides **which embedding backend/model to use** (for example, EvoMaster’s `embedding` block with `type`, `openai.model`, `dimensions`, etc.), you should **forward those values explicitly** to this script, instead of relying on its internal defaults.
 
-#### Recommended call pattern (host / agent side)
+#### How to invoke
 
-For agents that have access to a DB/config object with fields such as:
+Invoke via run_script (`script_name: search.py`). **For the full parameter list and semantics, load `reference/search.md` first** (use_skill with `action: get_reference`, `reference_name: search.md`); do not rely on this file alone to construct `script_args`. To retrieve original content per hit, you will need `nodes_data` and `content_path`; see `reference/search.md`.
 
-- `vec_dir`
-- `nodes_data`
-- `model` (either a local Transformer path or an OpenAI embedding model name such as `text-embedding-3-large`)
-- `embedding_type` (`local`, `openai`, or `auto`)
-- `embedding_dimensions` (optional, e.g. `3072` for `text-embedding-3-large`)
+### 2. Building faiss.index (`scripts/build_faiss.py`)
 
-we recommend constructing script calls like:
+If you already have a vector store with `embeddings.npy` and want to enable `--use_faiss` in search (e.g. for larger-scale retrieval), run `build_faiss.py` via run_script with `script_args: --vec_dir <path_to_vec_dir>`. This reads `vec_dir/embeddings.npy`, builds a normalized inner-product index (cosine similarity), and writes `vec_dir/faiss.index`. The `faiss` package must be installed (`pip install faiss-cpu`). See `reference/build_faiss.md` for details.
 
-```bash
-python evomaster/skills/rag/scripts/search.py \
-  --vec_dir "{vec_dir}" \
-  --nodes_data "{nodes_data}" \
-  --query "{query}" \
-  --top_k {top_k} \
-  --threshold {threshold} \
-  --model "{model}" \
-  --embedding_type "{embedding_type}" \
-  --embedding_dimensions {embedding_dimensions}
-```
-
-Notes:
-
-- `--threshold` is a **cosine similarity** threshold (range -1 to 1); results with similarity below this value are filtered out. Omit to return all top-k results.
-- When `embedding_type` is `"openai"`, `model` should typically be something like `text-embedding-3-large`, and you must ensure the embedding API key / base URL are provided via parameters or environment variables.
-- When `embedding_type` is `"local"`, `model` is usually a local HuggingFace model or directory (e.g. `evomaster/skills/rag/local_models/all-mpnet-base-v2` or a project-specific path).
-- If your configuration does not define `embedding_dimensions` (or uses an empty string), you can omit the `--embedding_dimensions` flag.
-
-If you also want to retrieve the original content (such as `content.text` or `data_knowledge`), you must additionally provide:
-
-- `nodes_data`: path to a JSON (or JSONL) file containing node details;
-- `content_path`: a dot-path to the field containing the text to return.
-
-See `reference/search.md` for the complete parameter specification and more OpenAI vs. local examples.
-
-### 2. Standalone Text Embedding Generation (`scripts/encode.py`)
+### 3. Standalone Text Embedding Generation (`scripts/encode.py`)
 
 When you need to manually build a vector store, inspect embeddings, or reuse the “text → vector” capability in other systems, the host can call `encode.py` and provide at least:
 
@@ -130,6 +104,10 @@ This skill follows the principle: **keep `SKILL.md` concise and push details int
   - **Scope**: Documentation for `scripts/encode.py`.  
   - **Content**: Single/batched encoding, output format (`.npy`), embedding normalization, and integration scenarios with other systems.
 
+- `reference/build_faiss.md`  
+  - **Scope**: Documentation for `scripts/build_faiss.py`.  
+  - **Content**: How to generate `faiss.index` from `embeddings.npy`, when to use it, and dependency (faiss package).
+
 - `reference/database.md`  
   - **Scope**: Interface design for `scripts/database.py`.  
   - **Content**: The responsibilities of `VectorDatabaseBuilder`, expected semantics of each method, current placeholder status, and how to gradually implement build/incremental-update/statistics logic in your own project.
@@ -147,7 +125,7 @@ When using this skill, **load only the reference docs that are directly relevant
   - A unified `create_embedder` abstraction wraps these backends so callers do not need to handle SDK-specific details.
 
 - **Extensible Vector Store Structure**
-  - Only requires a FAISS index and a list of node IDs; other files (like `embeddings.npy`, `nodes_data.json`) are optional enhancements.
+  - Search requires `embeddings.npy` and `nodes.jsonl`. Loading `faiss.index` is controlled by the caller via `use_faiss` (default off). Other files (e.g. `nodes_data.json`) are optional for content retrieval.
   - You are free to design the JSON structure of `nodes_data` according to your own project.
 
 - **Script-First, Minimal Documentation**

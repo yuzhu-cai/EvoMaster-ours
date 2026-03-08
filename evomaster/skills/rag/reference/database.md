@@ -51,17 +51,9 @@ Currently, each of these methods will:
 - Log a `logger.warning` indicating this is a placeholder API.
 - Raise `NotImplementedError`.
 
-### Command-Line Interface (Conceptual)
+### Parameters (for run_script / use_skill)
 
-`database.py` also exposes a lightweight CLI entry point that can be used to trigger build flows from the terminal when needed. Conceptually it:
-
-- Accepts an output directory (`--output_dir`).
-- Accepts a model name or path for encoding (`--model`).
-- Accepts an action parameter (`--action`) to distinguish between building, incremental adding, or viewing stats.
-
-How exactly this entry point is integrated and invoked in your project is up to the host system. This reference only documents parameter semantics and does not provide concrete CLI usage examples.
-
-Common parameters:
+When invoking `database.py` via run_script, use the following parameters:
 
 - `--output_dir` (required): Output directory for the vector store.
 - `--model`: Model name or path used for encoding (defaults to local `all-mpnet-base-v2`).
@@ -80,9 +72,9 @@ If you need to build a vector store programmatically in your own RAG project, yo
 2. **Reuse embedding logic**
    - Use `TextEncoder` from `encode.py` or `create_embedder` from `search.py` to generate embeddings.
 3. **Write a standard vector store layout**
-   - Write embeddings to `.npy` or another intermediate format.
-   - Use FAISS to create `faiss.index`.
+   - Write embeddings to `embeddings.npy` (e.g. via `encode.py` or your own encoding loop).
    - Generate `nodes.jsonl` to record node IDs and metadata.
+   - To enable search with `--use_faiss`, run `build_faiss.py` via run_script with `--vec_dir <output_dir>` (see `reference/build_faiss.md`). This reads `embeddings.npy` and writes `faiss.index`.
    - Optionally write `nodes_data` (JSON file) to be used by `search.py` for content retrieval.
 4. **Fill in actual logic inside `VectorDatabaseBuilder`**
    - Implement the full build flow in `build_from_documents`.
