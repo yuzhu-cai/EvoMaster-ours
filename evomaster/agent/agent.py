@@ -853,7 +853,7 @@ Always be careful with file operations and bash commands.
         if working_dir is None:
             working_dir = self.session.config.workspace_path
         working_dir_abs = str(Path(working_dir).absolute())
-        working_dir_info = f"\n\n重要提示：当前工作目录是 {working_dir_abs}。你必须在这个目录下进行所有操作，不能切换工作目录。所有文件操作、命令执行都必须在工作目录 {working_dir_abs} 下进行。"
+        working_dir_info = f"\n\nImportant: The current working directory is {working_dir_abs}. You must perform all operations in this directory and cannot change the working directory. All file operations and command executions must be performed within the working directory {working_dir_abs}."
         prompt = self._system_prompt + working_dir_info
         return prompt
 

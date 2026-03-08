@@ -18,16 +18,22 @@ class PrefetchExp(BaseExp):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.workspace_path = self.prefetch_agent.session.config.workspace_path
         self._exp_name = exp_name
-        self.wisdom_file_path = os.path.join(os.getcwd(), self.config.agents.get("prefetch", {}).get("wisdom_file"))
 
     @property
     def exp_name(self) -> str:
         """返回实验阶段名称"""
         return self._exp_name
 
-    def run(self,task_description: str, task_id: str = "aerial-cactus-identification") -> dict:
+    def run(self,task_description: str, vec_dir: str, nodes_data: str, model: str, task_id: str = "detect-insults-in-social-commentary") -> dict:
         self.logger.info("Starting prefetch task execution")
         self.logger.info(f"Task: {task_description}")
+
+        data_knowledge = "NO DATA KNOWLEDGE this time"
+        model_knowledge = "NO MODEL KNOWLEDGE this time"
+        prefetch_descriptor = task_description
+
+        ## for debug
+        return data_knowledge, model_knowledge, prefetch_descriptor
 
         if self.prefetch_agent:
             self.logger.info("=" * 60)
@@ -46,17 +52,16 @@ class PrefetchExp(BaseExp):
                 input_data={},
             )
             prefetch_trajectory = self.prefetch_agent.run(prefetch_task)
-            prefetch_result = self._extract_agent_response(prefetch_trajectory)
+            prefetch_descriptor = self._extract_agent_response(prefetch_trajectory)
             self.prefetch_agent._prompt_format_kwargs = prefetch_original_format_kwargs
-            self.logger.info(f"Prefetch result: {prefetch_result}")
-            # 执行 RAG 检索：use_skill run_script 调用 search.py
-            vec_dir = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft"
-            nodes_data = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft/draft_407_75_db.json"
-            model = "evomaster/skills/rag/local_models/all-mpnet-base-v2"
-            query_escaped = json.dumps(prefetch_result)
+            self.logger.info(f"Prefetch descriptor: {prefetch_descriptor}")
+            ### 执行 RAG 检索：use_skill run_script 调用 search.py
+            #### for debug
+            # prefetch_descriptor = """This competition involves single class classification to detect insulting comments in social commentary datasets with timestamps and unicode escaped text. The goal is creating a generalizable classifier for near real time identification of insults directed at conversation participants excluding non participants or standalone profanity. Input includes a label column denoting neutral or insulting status followed by time attributes formatted as YYYYMMDDhhmmssZ and text fields. Output requires probability scores from 0 to 1 indicating insult likelihood submitted in the first column of the submission file. Evaluation uses the Area under the Receiver Operating Curve metric penalizing high probability incorrect predictions. Final standings depend on performance against an unpublished verification set released late in the timeline. Competitors must lock self contained code for up to five final models prior to verification set release and generate solutions using that locked code. Dataset characteristics include less than one percent label noise with strong tendencies toward overfitting. Individual participation is mandatory for recruiting opportunities involving code review for top entries."""
+            query_escaped = json.dumps(prefetch_descriptor)
             script_args = (
-                f"--vec_dir {vec_dir} --query {query_escaped} --nodes_data {nodes_data} "
-                f"--top_k 1 --threshold 0.6 --output json --model {model}"
+                f"--vec_dir {vec_dir} --query {query_escaped} --nodes_data {nodes_data} --output json --embedding_type openai --embedding_dimensions 3072 "
+                f"--top_k 1 --threshold 0.7 --output json --model {model}"
             )
             tool_call_obj = ChatCompletionMessageToolCall(
                 id="call_123",
@@ -71,15 +76,27 @@ class PrefetchExp(BaseExp):
                     }),
                 )
             )
-            observation, info =self.prefetch_agent._execute_tool(tool_call_obj) 
-            exit()
-        ## 测试代码
-        with open(self.wisdom_file_path, "r") as f:
-            wisdom = json.load(f)
-        # data_knowledge = wisdom[task_id].get("data_knowledge", "NO DATA KNOWLEDGE this time")
-        # model_knowledge = wisdom[task_id].get("model_knowledge", "NO MODEL KNOWLEDGE this time")
+            observation, info = self.prefetch_agent._execute_tool(tool_call_obj)
 
-        data_knowledge = "NO DATA KNOWLEDGE this time"
-        model_knowledge = "NO MODEL KNOWLEDGE this time"
+            # 解析输出的 JSON
+            try:
+                output_str = observation
+                if "Script output:\n" in output_str:
+                    output_str = output_str.split("Script output:\n", 1)[1]
+                if "\n\nStderr:" in output_str:
+                    output_str = output_str.split("\n\nStderr:")[0]
+                rag_output = json.loads(output_str.strip())
+                results = rag_output.get("results", [])
+                if results:
+                    first_result = results[0]
+                    content = first_result.get("content", {})
+                    data_knowledge = content.get("data_knowledge", "NO DATA KNOWLEDGE this time")
+                    model_knowledge = content.get("model_knowledge", "NO MODEL KNOWLEDGE this time")
+            except (json.JSONDecodeError, KeyError) as e:
+                self.logger.warning(f"Failed to parse RAG output: {e}")
+                data_knowledge = "NO DATA KNOWLEDGE this time"
+                model_knowledge = "NO MODEL KNOWLEDGE this time"
+        self.logger.info(f"Data knowledge: {data_knowledge}")
+        self.logger.info(f"Model knowledge: {model_knowledge}")
 
-        return data_knowledge, model_knowledge
+        return data_knowledge, model_knowledge, prefetch_descriptor

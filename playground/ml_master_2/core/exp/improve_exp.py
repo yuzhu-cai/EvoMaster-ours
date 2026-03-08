@@ -57,21 +57,21 @@ class ImproveExp(BaseExp):
                 
                 improve_result = self._extract_agent_response(improve_trajectory)
                 # for debugging
-                improve_result = f"""
-```python
-import shutil
-import random
+#                 improve_result = f"""
+# ```python
+# import shutil
+# import random
 
-src = "/data/xinyu/EvoMaster-ours/playground/ml_master_2/data/private/gold_submission.csv"
-dst = "./submission/submission.csv"
+# src = "/data/xinyu/EvoMaster-ours/playground/ml_master_2/data/private/gold_submission.csv"
+# dst = "./submission/submission.csv"
 
-shutil.copy(src, dst)
+# shutil.copy(src, dst)
 
-# 生成 0.8 到 1.0 之间的随机数
-score = random.uniform(0.9, 1.0)
-print(f"validation score: {{score:.4f}}")
-```                
-"""
+# # 生成 0.8 到 1.0 之间的随机数
+# score = random.uniform(0.9, 1.0)
+# print(f"validation score: {{score:.4f}}")
+# ```                
+# """
                 improve_code,self.code = read_code(improve_result, self.uid)
                 save_code_to_file(self.workspace_path, "run.py", improve_code)
                 tool_call_obj = ChatCompletionMessageToolCall(
@@ -79,7 +79,7 @@ print(f"validation score: {{score:.4f}}")
                     type="function",
                     function=Function(
                         name="execute_bash",
-                        arguments='{"command": "python run.py","timeout": "3600"}'
+                        arguments='{"command": "python run.py","timeout": "86400"}'
                     )
                 )
                 observation, info =self.improve_agent._execute_tool(tool_call_obj)
@@ -152,7 +152,7 @@ print(f"validation score: {{score:.4f}}")
                     type="function",
                     function=Function(
                         name="execute_bash",
-                        arguments='{"command": "python run.py","timeout": "3600"}'
+                        arguments='{"command": "python run.py","timeout": "86400"}'
                     )
                 )
                 observation, info =self.debug_agent._execute_tool(tool_call_obj)

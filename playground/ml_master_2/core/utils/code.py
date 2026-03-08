@@ -9,7 +9,7 @@ def save_code_to_file(directory, filename, code_content):
 
     file_path.write_text(code_content, encoding='utf-8')
     
-    print(f"文件已成功保存至: {file_path}")
+    print(f"File successfully saved to: {file_path}")
 
 
 def replace_submission_name (code, _id):

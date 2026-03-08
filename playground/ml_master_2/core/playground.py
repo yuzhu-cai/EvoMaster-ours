@@ -55,11 +55,11 @@ class MLMaster2Playground(BasePlayground):
         self.best_solution = None
         self.real_time_best_solution = None
         self.research_plan_and_result = []
-        
-        self.is_lower_better = False
+        self.prefetch_descriptor = None
+        self.is_lower_better = self.config_manager.get("is_lower_better", False)
         self.mcp_manager = None
 
-        self.exp_index = 0 # for trajectory visualizing
+        self.exp_index = 0
 
     def setup(self) -> None:
         self.logger.info("Setting up ml master 2 playground...")
@@ -75,17 +75,7 @@ class MLMaster2Playground(BasePlayground):
         if self.session is None:
             session_type = self.config.session.get("type", "local")
             if session_type == "docker":
-                session_config_dict = self.config.session.get("docker", {}).copy()
-                if "working_dir" in session_config_dict and "workspace_path" not in session_config_dict:
-                    session_config_dict["workspace_path"] = session_config_dict["working_dir"]
-                elif "workspace_path" in session_config_dict and "working_dir" not in session_config_dict:
-                    session_config_dict["working_dir"] = session_config_dict["workspace_path"]
-                elif "workspace_path" not in session_config_dict and "working_dir" not in session_config_dict:
-                    session_config_dict["workspace_path"] = "/workspace"
-                    session_config_dict["working_dir"] = "/workspace"
-                session_config = DockerSessionConfig(**session_config_dict)
-                self.session = DockerSession(session_config)
-                self.logger.info(f"Using Docker session with image: {session_config.image}")
+                raise ValueError("Docker session is not supported for ML Master 2")
             else:
                 session_config_dict = self.config.session.get("local", {}).copy()
                 if "working_dir" in session_config_dict and "workspace_path" not in session_config_dict:
@@ -157,11 +147,11 @@ class MLMaster2Playground(BasePlayground):
 
             self._setup_trajectory_file(output_file)
             
-
             prefetch_exp = PrefetchExp(self.agents.prefetch_agent, self.config,f"exp_{self.exp_index}_prefetch")
             self.exp_index += 1
-            data_knowledge, model_knowledge = prefetch_exp.run(task_description)
-
+            embedding_config = getattr(self.config, "embedding", {})
+            embedding_model = embedding_config.get("openai", {}).get("model", "text-embedding-3-large")
+            data_knowledge, model_knowledge, self.prefetch_descriptor = prefetch_exp.run(task_description,vec_dir=os.path.join(os.getcwd(), "playground/ml_master_2/example_wisdom"),nodes_data=os.path.join(os.getcwd(), "playground/ml_master_2/example_wisdom/db.json"),model=embedding_model)
             data_preview = generate(self.session.config.workspace_path)
             self.logger.info(f"Data preview: {data_preview}")
             self.logger.info("Running experiment...")
@@ -176,7 +166,7 @@ class MLMaster2Playground(BasePlayground):
                 shutil.copy(os.path.join(draft_exp.workspace_path, "submission", f"submission_{uid}.csv"), os.path.join(self.agents.draft_agent.session.config.workspace_path, "best_submission", f"submission.csv"))
                 save_code_to_file(os.path.join(self.session.config.workspace_path, "best_solution"), "best_solution.py", self.best_solution)
                 self.real_time_best_solution = self.best_solution
-            for reseach_round in range(10):
+            for reseach_round in range(20):
                 # 记录当前 research_round 中每个 direction 的每个 idea 的结果
                 # 结构: {direction: {idea: {"improved": bool, "is_best_in_direction": bool, "score": float|None}}}
                 research_round_idea_results: dict[str, dict[tuple, dict]] = {}
@@ -311,6 +301,9 @@ class MLMaster2Playground(BasePlayground):
                 max_workers=1,
                 workspace_names=[wisdom_promotion_workspace_name]
             )
+            self.logger.info(f"Wisdom promotion finished")
+            self.logger.info(f"Task descriptor: {self.prefetch_descriptor}")
+            self.logger.info(f"Wisdom promotion result: {wisdom_promotion_results}")
             result = {
                 "status": "completed",
                 "steps": 0,

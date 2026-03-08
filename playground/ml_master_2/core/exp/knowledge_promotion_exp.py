@@ -14,7 +14,7 @@ import json
 def _format_score(score: float | None) -> str:
     """将分数格式化为可读字符串"""
     if score is None:
-        return "运行失败 / N/A"
+        return "Run failed / N/A"
     return f"{score:.6f}"
 
 
@@ -31,22 +31,22 @@ def generate_improvement_summary_text(
     仅采纳得分最高者，次优者标记为"优于基线，未采纳"以体现其价值。
     """
     lines = []
-    lines.append("## 改进过程摘要")
+    lines.append("## Improvement Process Summary")
     lines.append("")
-    lines.append("**基线代码**：以上述最佳代码为起点，依次按 research_plan 中的方向进行改进实验。")
+    lines.append("**Baseline Code**: Starting from the best code above, we conducted improvement experiments in order according to the directions in research_plan.")
     lines.append("")
 
-    current_base_note = "在上述最佳代码的基础上"
+    current_base_note = "Based on the above best code"
     for direction_idx, direction in enumerate(research_plan, start=1):
         direction_results = research_round_idea_results.get(direction, {})
         if not direction_results:
             continue
 
         # 方向标题
-        ordinal = "首先" if direction_idx == 1 else f"随后"
-        lines.append(f"### 方向 {direction_idx}：{direction}")
+        ordinal = "First" if direction_idx == 1 else "Subsequently"
+        lines.append(f"### Direction {direction_idx}: {direction}")
         lines.append("")
-        lines.append(f"{current_base_note}，{ordinal}尝试了该方向下的所有 idea，结果如下：")
+        lines.append(f"{current_base_note}, {ordinal} tried all ideas under this direction, results as follows:")
         lines.append("")
 
         # 各 idea 的结果
@@ -63,15 +63,15 @@ def generate_improvement_summary_text(
             score_str = _format_score(score)
             if improved:
                 if is_best:
-                    improved_str = "✓ 带来提升 【本方向最佳，已采纳】"
+                    improved_str = "✓ Improved [Best in this direction, adopted]"
                     best_idea_in_direction = (idea_key, idea_desc)
                 else:
-                    improved_str = "✓ 带来提升 【优于基线，未采纳】"
+                    improved_str = "✓ Improved [Better than baseline, not adopted]"
             else:
-                improved_str = "✗ 未带来提升"
+                improved_str = "✗ No improvement"
 
-            lines.append(f"- **Idea {idea_idx}**（{idea_key}）：{idea_desc}")
-            lines.append(f"  - 得分：{score_str} | {improved_str}")
+            lines.append(f"- **Idea {idea_idx}** ({idea_key}): {idea_desc}")
+            lines.append(f"  - Score: {score_str} | {improved_str}")
             lines.append("")
 
         # 本方向最终选择
@@ -79,19 +79,19 @@ def generate_improvement_summary_text(
         if best_idea_in_direction:
             idea_key, idea_desc = best_idea_in_direction
             if num_improved > 1:
-                lines.append(f"**本方向最终采纳**：Idea {idea_key} 的修改（{idea_desc}），另有 {num_improved - 1} 个 idea 亦优于基线")
+                lines.append(f"**Final adoption in this direction**: Modifications from Idea {idea_key} ({idea_desc}), {num_improved - 1} other ideas also better than baseline")
             else:
-                lines.append(f"**本方向最终采纳**：Idea {idea_key} 的修改（{idea_desc}）")
+                lines.append(f"**Final adoption in this direction**: Modifications from Idea {idea_key} ({idea_desc})")
         else:
-            lines.append("**本方向最终采纳**：无（所有 idea 均未带来提升，保持原代码）")
+            lines.append("**Final adoption in this direction**: None (all ideas failed to improve, keeping original code)")
         lines.append("")
 
         # 下一方向的基线说明
-        current_base_note = "在采纳上述修改后的代码基础上"
+        current_base_note = "Based on the code after adopting the above modifications"
 
     lines.append("---")
     lines.append("")
-    lines.append("**最终最佳代码**：经过上述各方向的依次改进后，得到当前最佳代码如下：")
+    lines.append("**Final Best Code**: After the sequential improvements in each direction above, the current best code is as follows:")
     lines.append("")
     lines.append("```python")
     lines.append(best_solution)

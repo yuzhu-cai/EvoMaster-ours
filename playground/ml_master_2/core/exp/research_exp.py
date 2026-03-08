@@ -39,16 +39,16 @@ class ResearchExp(BaseExp):
 
         # 将 research_plan_and_result 拼接为文本：list 中奇数位为 plan，偶数位为对应结果
         if not research_plan_and_result:
-            research_plan_and_result_text = "你现在还没有任何进行改进的尝试和结果。"
+            research_plan_and_result_text = "You have not made any improvement attempts and results yet."
         else:
             research_plan_and_result_text = ""
             for i in range(0, len(research_plan_and_result), 2):
                 plan = research_plan_and_result[i] if i < len(research_plan_and_result) else ""
                 result = research_plan_and_result[i + 1] if i + 1 < len(research_plan_and_result) else ""
                 block = (
-                    "在上述代码的基础上，你尝试了如下的研究计划：\n"
+                    "Based on the above code, you tried the following research plan:\n"
                     f"{plan}\n"
-                    "结论为：\n"
+                    "Conclusion:\n"
                     f"{result}"
                 )
                 research_plan_and_result_text += block
