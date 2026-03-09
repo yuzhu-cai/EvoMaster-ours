@@ -151,10 +151,26 @@ class FeishuStepReporter:
             f"**耗时:** {elapsed:.1f}s | "
             f"**步数:** {self._step_count}"
         )
+
+        _CARD_ANSWER_PREVIEW = 800
+        send_full_answer = False
+
         if final_answer:
-            # 清理 Markdown 格式避免与卡片结构冲突
-            display_answer = self._sanitize_for_card(final_answer[:3000])
-            content += f"\n\n**最终回答:**\n{display_answer}"
+            if len(final_answer) > _CARD_ANSWER_PREVIEW:
+                # 卡片内只放预览，完整内容另发
+                preview = self._sanitize_for_card(
+                    final_answer[:_CARD_ANSWER_PREVIEW]
+                )
+                content += f"\n\n**最终回答:**\n{preview}\n\n..."
+                if self._document_url:
+                    content += (
+                        f"\n> 回答较长，"
+                        f"[点击查看完整回答]({self._document_url})"
+                    )
+                send_full_answer = True
+            else:
+                display_answer = self._sanitize_for_card(final_answer)
+                content += f"\n\n**最终回答:**\n{display_answer}"
 
         if status == "completed":
             template, title = "green", "✅ 任务完成"
@@ -167,6 +183,10 @@ class FeishuStepReporter:
             )
         else:
             self._patch(title=title, content=content, template=template)
+
+        # 长回答：额外发一条独立的完整卡片消息
+        if send_full_answer and final_answer:
+            self._send_full_answer(final_answer, template)
 
         # 文档：追加总结
         self._finalize_document(status, elapsed)
@@ -200,6 +220,28 @@ class FeishuStepReporter:
     # ------------------------------------------------------------------
     # Internal — Card
     # ------------------------------------------------------------------
+
+    def _send_full_answer(self, answer: str, template: str) -> None:
+        """发送独立的完整回答卡片（当回答超过预览长度时）。"""
+        from .messaging.sender import send_card_message
+
+        full_content = self._sanitize_for_card(answer[:3000])
+        if len(answer) > 3000 and self._document_url:
+            full_content += (
+                f"\n\n...\n> 内容仍有省略，"
+                f"[点击查看完整回答]({self._document_url})"
+            )
+        try:
+            send_card_message(
+                self._client,
+                self._chat_id,
+                title="📝 完整回答",
+                content=full_content,
+                reply_to_message_id=self._reply_to,
+                header_template=template,
+            )
+        except Exception:
+            logger.exception("Failed to send full answer card")
 
     @staticmethod
     def _sanitize_for_card(text: str) -> str:
