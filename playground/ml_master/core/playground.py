@@ -9,6 +9,7 @@ from typing import Any
 from evomaster.core import BasePlayground, register_playground
 
 from .utils.data_preview import generate as generate_data_preview
+from .utils.mlebench_grade import grade_best_submission_and_save
 from .utils.orchestrator import (
     BestState,
     acquire_work_item,
@@ -80,7 +81,7 @@ class MLMasterPlayground(BasePlayground):
             best_state = BestState()
             state_lock = threading.Lock()
 
-            max_steps = int(getattr(self.config, "max_steps", 40))
+            max_steps = int(getattr(self.config, "max_steps", 400))
             worker_agents_map = {idx: create_worker_agents(self, idx) for idx in range(self.max_workers)}
 
             # Step 2: worker execution loop.
@@ -175,7 +176,28 @@ class MLMasterPlayground(BasePlayground):
                 else:
                     self.logger.info("Worker summary: %s", summary)
 
+            # Step 4: mlebench grade
+            competition_id = str(getattr(self.config, "exp_id", "")) or str(self.config.get("exp_id", ""))
+
+            auto_grade = bool(getattr(getattr(self.config, "mlebench", {}), "auto_grade", True)) \
+                if hasattr(self.config, "mlebench") else bool(self.config.get("mlebench", {}).get("auto_grade", True))
+
+            if auto_grade and competition_id:
+                try:
+                    grade_path = grade_best_submission_and_save(
+                        workspace_dir=self.run_dir / "workspaces" / "task_0",
+                        competition_id=competition_id,
+                        out_name="mlebench_grade.json",
+                        overwrite=False,
+                    )
+                    self.logger.info("Saved mlebench grade to: %s", grade_path)
+                except Exception as exc: 
+                    self.logger.warning("mlebench grading failed (ignored): %s", exc, exc_info=True)
+
             return {"status": "completed", **results}
+        
         finally:
             shutdown_grading_server(self.logger)
             self.cleanup()
+
+

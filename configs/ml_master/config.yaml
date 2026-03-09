@@ -3,7 +3,7 @@
 # ============================================
 # 实验特定配置
 # ============================================
-exp_id: "detecting-insults-in-social-commentary"
+exp_id: "X"
 data_root: "/data/exp_data"   # 本地数据根目录
 
 # ============================================
@@ -38,9 +38,9 @@ llm:
     model: "DeepSeek/DeepSeek-R1-671B"
     api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
     base_url: "${DEEPSEEK_API_BASE}"
-    temperature: 0.7
-    max_tokens: 16384
-    timeout: 300  
+    temperature: 0.5
+    max_tokens: 80000
+    timeout: 3600  
     max_retries: 3
     retry_delay: 1.0
 
@@ -140,7 +140,7 @@ session:
   local:
     working_dir: "./playground/ml_master/workspace"
     workspace_path: "./playground/workspace"
-    timeout: 600
+    timeout: 32400
     
     # GPU 设备配置（可选）
     # 可选值：
@@ -154,7 +154,7 @@ session:
     #   - null: 不使用 CPU 限制（使用所有可用 CPU）
     #   - "0-15": 使用 CPU 0 到 15
     #   - [0, 1, 2, 3]: 使用 CPU 0, 1, 2, 3
-    cpu_devices: null  # 示例：使用 CPU 0-15
+    cpu_devices: "0-127"  # 示例：使用 CPU 0-15
 
     parallel:
       enabled: true
@@ -163,7 +163,7 @@ session:
     
     # 软链接配置
     symlinks:
-      "/data/exp_data/detecting-insults-in-social-commentary/prepared/public": "input"
+      "/data/exp_data/X/prepared/public": "input"
   
   # Docker Session 配置
   docker:
@@ -262,9 +262,15 @@ logging:
 # ============================================
 # ml_master 特有配置
 # ============================================
-# Grading Servers 配置 (ml_master 特有)
+# Grading Servers 配置
 grading_servers:
-  - "http://127.0.0.1:5003"
+  - "http://127.0.0.1:5001"
+
+# mle-bench 提交配置
+mlebench:
+  auto_grade: true
+  grade_output: "mlebench_grade.json"
+  grade_overwrite: true
 
 # ============================================
 # 其他配置
