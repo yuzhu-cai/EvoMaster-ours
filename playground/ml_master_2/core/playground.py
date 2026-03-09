@@ -1,3 +1,4 @@
+import math
 import os
 import logging
 import sys
@@ -103,9 +104,22 @@ class MLMaster2Playground(BasePlayground):
         os.makedirs(os.path.join(self.session.config.workspace_path, "working"), exist_ok=True)
         self.logger.info(f"working_dir: {self.session.config.workspace_path}")
 
+    def _is_valid_score(self, score) -> bool:
+        """NaN 视为无效分数，优先级低于任何有效分数。"""
+        if score is None:
+            return False
+        if isinstance(score, float) and math.isnan(score):
+            return False
+        return True
+
     def compare_score(self, old_score, new_score):
-        if old_score is None or new_score is None:
-            return True if new_score is not None else False
+        # new_score 无效（None/NaN）→ 永远不算提升
+        if not self._is_valid_score(new_score):
+            return False
+        # old_score 无效（None/NaN）→ 任何有效 new_score 都算提升
+        if not self._is_valid_score(old_score):
+            return True
+        # 两者都有效，按原逻辑比较
         if old_score < new_score and self.is_lower_better == False:
             return True
         elif old_score > new_score and self.is_lower_better == True:

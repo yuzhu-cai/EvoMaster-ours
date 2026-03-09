@@ -336,7 +336,15 @@ class BaseAgent(ABC):
         try:
             # 执行工具
             observation, info = tool.execute(self.session, tool_args)
-            
+
+            # 截断过长的工具输出（超过 30000 字符时保留前 5000 + 后 5000）
+            if len(observation) > 30000:
+                observation = (
+                    observation[:15000]
+                    + "\n...[truncated]...\n"
+                    + observation[-15000:]
+                )
+
             # 记录工具调用结束
             self._log_tool_end(tool_name, observation, info)
             

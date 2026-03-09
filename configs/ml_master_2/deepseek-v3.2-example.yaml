@@ -11,7 +11,7 @@ data_root: "./playground/ml_master_2/data"
 # Grading Server 配置（用于 submission 格式校验，需与 ml_master 的 grading_server 配合）
 # 配置后，draft/debug 阶段会调用 grading_server 校验 submission，通过才算无 bug
 grading_servers:
-  - "http://127.0.0.1:5003"
+  - "http://127.0.0.1:6666"
 
 # ============================================
 # LLM 配置
@@ -46,7 +46,7 @@ llm:
     api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
     base_url: "${DEEPSEEK_API_BASE}"
     temperature: 1
-    max_tokens: 110000
+    max_tokens: 65536
     timeout: 3600 
     max_retries: 3
     retry_delay: 1.0
@@ -209,7 +209,7 @@ session:
   
   # 本地 Session 配置
   local:
-    working_dir: "./playground/minimal_kaggle/workspace"
+    working_dir: "./playground/ml_master_2/workspace"
     timeout: 86400
     
     # GPU 设备配置（可选）
@@ -269,7 +269,7 @@ session:
     # 示例：
     # volumes:
     #   "./workspace": "/workspace"
-    volumes: {"./playground/minimal_kaggle/workspace":"/workspace"}
+    volumes: {"./playground/ml_master_2/workspace":"/workspace"}
     
     # 环境变量
     # 示例：

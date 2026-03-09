@@ -2,7 +2,7 @@
 import ctypes
 import threading
 
-RUN_TIMEOUT_SECONDS = 86400
+RUN_TIMEOUT_SECONDS = 43200
 
 
 # 必须继承自 BaseException，防止被底层的 except Exception: 吞噬

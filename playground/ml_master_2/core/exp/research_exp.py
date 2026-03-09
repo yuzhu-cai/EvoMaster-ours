@@ -40,6 +40,7 @@ class ResearchExp(BaseExp):
         # 将 research_plan_and_result 拼接为文本：list 中奇数位为 plan，偶数位为对应结果
         if not research_plan_and_result:
             research_plan_and_result_text = "You have not made any improvement attempts and results yet."
+            best_solution = "Best solution is the same as the initial draft code."
         else:
             research_plan_and_result_text = ""
             for i in range(0, len(research_plan_and_result), 2):
@@ -80,6 +81,7 @@ class ResearchExp(BaseExp):
 
                 research_trajectory = self.research_agent.run(research_task)
                 research_result = self._extract_agent_response(research_trajectory)
+                self.logger.info(f"Research result: {research_result[:2000]}...")
                 # for debugging
 #                 research_plan = {"major area 1": {
 #         "1": "Replace the TinyCNN with a deeper convolutional network: use four convolutional blocks each consisting of a Conv2d layer with 3x3 kernel and padding 1, BatchNorm2d, ReLU activation, and MaxPool2d(2). Set output channels to 32, 64, 128, and 256 respectively. After the last block, apply AdaptiveAvgPool2d(1) to obtain a 256-dimensional feature vector, then pass through a Linear layer with 256 inputs and 1 output followed by sigmoid.",
@@ -97,7 +99,6 @@ class ResearchExp(BaseExp):
                 research_plan = _parse_json_from_response(research_result)
                 
                 self.logger.info("Research completed")
-                self.logger.info(f"Research result: {research_result[:2000]}...")
                 self.logger.info(f"Research plan: {research_plan}")
                 self.research_agent._prompt_format_kwargs = research_original_format_kwargs
 

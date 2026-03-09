@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 from typing import Any, Tuple
+from a import improve_result
 from evomaster.core.exp import BaseExp
 from evomaster.utils.types import TaskInstance
 from openai.types.chat import ChatCompletionMessageToolCall
@@ -92,7 +93,7 @@ class ImproveExp(BaseExp):
 
                 improve_trajectory = self.improve_agent.run(improve_task)
                 improve_result = self._extract_agent_response(improve_trajectory)
-                
+
                 ### for debugging
 #                 improve_result = f"""
 # ```python
