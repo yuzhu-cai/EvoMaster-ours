@@ -93,23 +93,6 @@ class ImproveExp(BaseExp):
 
                 improve_trajectory = self.improve_agent.run(improve_task)
                 improve_result = self._extract_agent_response(improve_trajectory)
-
-                ### for debugging
-#                 improve_result = f"""
-# ```python
-# import shutil
-# import random
-
-# src = "/data/xinyu/EvoMaster-ours/playground/ml_master_2/data/detecting-insults-in-social-commentary/prepared/private/test.csv"
-# dst = "./submission/submission.csv"
-
-# shutil.copy(src, dst)
-
-# # 生成 0.8 到 1.0 之间的随机数
-# score = random.uniform(0.9, 1.0)
-# print(f"validation score: {{score:.4f}}")
-# ```                
-# """
                 improve_code,self.code = read_code(improve_result, self.uid)
                 save_code_to_file(self.workspace_path, "run.py", improve_code)
                 tool_call_obj = ChatCompletionMessageToolCall(
