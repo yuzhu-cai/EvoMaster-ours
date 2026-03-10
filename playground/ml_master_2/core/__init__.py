@@ -1,1 +1,1 @@
-"""Minimal Multi-Agent Playground Core"""
+"""ML Master 2 Playground Core"""

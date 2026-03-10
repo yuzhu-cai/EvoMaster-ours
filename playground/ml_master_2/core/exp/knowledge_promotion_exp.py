@@ -12,7 +12,14 @@ import json
 
 
 def _format_score(score: float | None) -> str:
-    """将分数格式化为可读字符串"""
+    """Format a score as a readable string.
+
+    Args:
+        score: The score value (may be None).
+
+    Returns:
+        Formatted score string.
+    """
     if score is None:
         return "Run failed / N/A"
     return f"{score:.6f}"
@@ -24,11 +31,19 @@ def generate_improvement_summary_text(
     research_plan: dict,
     research_round_idea_results: dict,
 ) -> str:
-    """
-    根据 research_plan 和 research_round_idea_results 自动生成改进过程的可读摘要文本。
-    让读者一目了然地知道：在什么代码基础上、依次尝试了哪些改进、各自得分与是否带来提升、最终采纳了哪些修改。
-    "带来提升"指相对本方向基线（上一方向采纳后的代码）的改进；同一方向内多个 idea 可能都优于基线，
-    仅采纳得分最高者，次优者标记为"优于基线，未采纳"以体现其价值。
+    """Generate a human-readable summary of the improvement process.
+
+    Creates a structured text showing: baseline code, each direction's ideas and results,
+    which ideas improved performance, and which were adopted.
+
+    Args:
+        base_solution: The solution code at the start of this round.
+        best_solution: The best solution code after improvements.
+        research_plan: The research plan with directions and ideas.
+        research_round_idea_results: Results for each idea.
+
+    Returns:
+        A formatted markdown string summarizing the improvement process.
     """
     lines = []
     lines.append("## Improvement Process Summary")
@@ -42,16 +57,16 @@ def generate_improvement_summary_text(
         if not direction_results:
             continue
 
-        # 方向标题
+        # Direction title
         ordinal = "First" if direction_idx == 1 else "Subsequently"
         lines.append(f"### Direction {direction_idx}: {direction}")
         lines.append("")
         lines.append(f"{current_base_note}, {ordinal} tried all ideas under this direction, results as follows:")
         lines.append("")
 
-        # 各 idea 的结果
-        # improved: 相对本方向基线是否带来提升；is_best: 本方向中得分最高且已采纳
-        # 多个 idea 可能都优于基线，仅采纳最高分者，次优者仍标记为"带来提升"以体现其价值
+        # Results for each idea
+        # improved: whether it brought improvement relative to this direction's baseline; is_best: highest score in this direction and adopted
+        # Multiple ideas may be better than baseline, only the highest-scoring one is adopted, sub-optimal ones still marked as "brought improvement" to show their value
         best_idea_in_direction = None
         for idea_idx, (idea_key, idea_desc) in enumerate(research_plan[direction].items(), start=1):
             idea_tuple = (idea_key, idea_desc)
@@ -74,7 +89,7 @@ def generate_improvement_summary_text(
             lines.append(f"  - Score: {score_str} | {improved_str}")
             lines.append("")
 
-        # 本方向最终选择
+        # Final choice for this direction
         num_improved = sum(1 for r in direction_results.values() if r.get("improved", False))
         if best_idea_in_direction:
             idea_key, idea_desc = best_idea_in_direction
@@ -86,7 +101,7 @@ def generate_improvement_summary_text(
             lines.append("**Final adoption in this direction**: None (all ideas failed to improve, keeping original code)")
         lines.append("")
 
-        # 下一方向的基线说明
+        # Baseline description for next direction
         current_base_note = "Based on the code after adopting the above modifications"
 
     lines.append("---")
@@ -101,6 +116,12 @@ def generate_improvement_summary_text(
 
 
 class KnowledgePromotionExp(BaseExp):
+    """Experiment for summarizing improvement results into actionable knowledge.
+
+    Analyzes which improvement ideas worked or failed in a research round
+    and generates a structured summary for future reference.
+    """
+
     def __init__(self, knowledge_promotion_agent, config, exp_name):
         super().__init__(knowledge_promotion_agent, config)
         self.knowledge_promotion_agent = knowledge_promotion_agent
@@ -111,7 +132,7 @@ class KnowledgePromotionExp(BaseExp):
 
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the experiment stage name."""
         return self._exp_name
 
     def run(
@@ -124,6 +145,23 @@ class KnowledgePromotionExp(BaseExp):
         research_round_idea_results: dict,
         task_id: str = "exp_001",
     ) -> dict:
+        """Execute the knowledge promotion experiment.
+
+        Generates a human-readable summary of the improvement process and uses
+        the knowledge promotion agent to extract strategic insights.
+
+        Args:
+            task_description: Natural language description of the ML task.
+            data_preview: Textual preview of the dataset.
+            base_solution: The solution code at the start of this research round.
+            best_solution: The best solution code after improvements.
+            research_plan: The research plan with directions and ideas.
+            research_round_idea_results: Results for each idea in the research round.
+            task_id: Unique task identifier.
+
+        Returns:
+            A string containing the knowledge promotion result.
+        """
         self.logger.info("Starting knowledge promotion task execution")
 
         results_text = generate_improvement_summary_text(

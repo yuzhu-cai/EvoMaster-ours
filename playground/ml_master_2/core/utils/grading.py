@@ -1,4 +1,4 @@
-"""评测服务器辅助工具（用于提交格式校验）。"""
+"""Grading server utility tools for submission format validation."""
 
 from __future__ import annotations
 
@@ -35,7 +35,16 @@ logger = logging.getLogger(__name__)
 
 
 def is_server_online(server_urls: Iterable[str], timeout: int = 60, max_retries: int | None = None) -> Tuple[bool, str]:
-    """检查评测服务器的健康状况。"""
+    """Check the health status of grading servers.
+
+    Args:
+        server_urls: Iterable of server URLs to check.
+        timeout: Request timeout in seconds.
+        max_retries: Maximum number of retry attempts (defaults to number of URLs).
+
+    Returns:
+        A tuple of (is_online, server_url). server_url is empty string if all failed.
+    """
     if not _HAS_REQUESTS:
         logger.warning("requests not installed; skip grading health check. Missing module: %s", _REQ_ERR)
         return False, ""
@@ -69,7 +78,19 @@ def validate_submission(
     timeout: int = 60,
     max_retries: int = 3,
 ) -> Tuple[bool, dict | str]:
-    """向评测服务器提交 submission.csv 进行格式校验。"""
+    """Submit submission.csv to grading server for format validation.
+
+    Args:
+        exp_id: Experiment/competition ID.
+        submission_path: Path to the submission CSV file.
+        server_urls: Iterable of grading server URLs.
+        dataset_root: Root directory of the dataset (for auto-starting embedded server).
+        timeout: Request timeout in seconds.
+        max_retries: Maximum number of retry attempts.
+
+    Returns:
+        A tuple of (success, result). result is a dict on success or error message string on failure.
+    """
     if not _HAS_REQUESTS:
         msg = f"requests not installed; cannot call grading server ({_REQ_ERR})"
         logger.warning(msg)

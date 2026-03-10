@@ -44,6 +44,12 @@ from functools import partial
 
 @register_playground("ml_master_2")
 class MLMaster2Playground(BasePlayground):
+    """Main orchestrator for the ML Master 2 automated ML research system.
+
+    Implements an iterative improvement workflow: prefetch -> draft -> (research -> improve)* -> knowledge/wisdom promotion.
+    Supports parallel execution of improvement experiments with resource isolation.
+    """
+
     def __init__(self, config_dir: Path = None, config_path: Path = None):
         if config_path is None and config_dir is None:
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "agent" / "ml_master_2"
@@ -66,6 +72,7 @@ class MLMaster2Playground(BasePlayground):
         self.exp_index = 0
 
     def setup(self) -> None:
+        """Initialize the playground: session, agents, and workspace directories."""
         self.logger.info("Setting up ml master 2 playground...")
 
         self._setup_session()
@@ -75,7 +82,7 @@ class MLMaster2Playground(BasePlayground):
         self.logger.info("ML Master 2 playground setup complete")
 
     def _setup_session(self) -> None:
-        """创建并打开 Session，使用 MLMaster2LocalSession 替代默认 LocalSession"""
+        """Create and open a session using MLMaster2LocalSession instead of the default LocalSession."""
         if self.session is None:
             session_type = self.config.session.get("type", "local")
             if session_type == "docker":
@@ -97,7 +104,8 @@ class MLMaster2Playground(BasePlayground):
         else:
             self.logger.debug("Session already open, reusing existing session")
 
-    def _setup_workspace(self):
+    def _setup_workspace(self) -> None:
+        """Create required workspace subdirectories (best_submission, best_solution, submission, working)."""
         os.makedirs(os.path.join(self.session.config.workspace_path, "best_submission"), exist_ok=True)
         os.makedirs(os.path.join(self.session.config.workspace_path, "best_solution"), exist_ok=True)
         os.makedirs(os.path.join(self.session.config.workspace_path, "submission"), exist_ok=True)
@@ -105,21 +113,30 @@ class MLMaster2Playground(BasePlayground):
         self.logger.info(f"working_dir: {self.session.config.workspace_path}")
 
     def _is_valid_score(self, score) -> bool:
-        """NaN 视为无效分数，优先级低于任何有效分数。"""
+        """Check whether a score is valid. NaN and None are treated as invalid."""
         if score is None:
             return False
         if isinstance(score, float) and math.isnan(score):
             return False
         return True
 
-    def compare_score(self, old_score, new_score):
-        # new_score 无效（None/NaN）→ 永远不算提升
+    def compare_score(self, old_score, new_score) -> bool:
+        """Determine whether new_score is an improvement over old_score.
+
+        Args:
+            old_score: The previous best score (may be None or NaN).
+            new_score: The candidate score to compare (may be None or NaN).
+
+        Returns:
+            True if new_score is a valid improvement over old_score.
+        """
+        # Invalid new_score (None/NaN) is never an improvement
         if not self._is_valid_score(new_score):
             return False
-        # old_score 无效（None/NaN）→ 任何有效 new_score 都算提升
+        # Invalid old_score (None/NaN) means any valid new_score is an improvement
         if not self._is_valid_score(old_score):
             return True
-        # 两者都有效，按原逻辑比较
+        # Both valid: compare based on optimization direction
         if old_score < new_score and self.is_lower_better == False:
             return True
         elif old_score > new_score and self.is_lower_better == True:
@@ -128,16 +145,16 @@ class MLMaster2Playground(BasePlayground):
             return False
 
     def _create_improve_exp(self, exp_index: int) -> ImproveExp:
-        """为并行任务创建独立的 ImproveExp 实例，使用 copy_agent 避免上下文冲突。
+        """Create an independent ImproveExp instance for parallel execution.
 
-        参考 minimal_multi_agent_parallel 的并行设计，每个并行任务拥有独立的 Agent 副本，
-        确保 LLM 调用和上下文不冲突。
+        Each parallel task gets its own agent copies via copy_agent to avoid
+        context conflicts during concurrent LLM calls.
 
         Args:
-            exp_index: 实验索引，用于生成唯一的 exp_name 和 agent 名称
+            exp_index: Experiment index used to generate unique exp_name and agent names.
 
         Returns:
-            ImproveExp 实例
+            A new ImproveExp instance with independent agent copies.
         """
         improve_agent_copy = self.copy_agent(
             self.agents.improve_agent, new_agent_name=f"improve_exp_{exp_index}"
@@ -155,10 +172,22 @@ class MLMaster2Playground(BasePlayground):
         )
 
     def run(self, task_description: str, output_file: str | None = None) -> dict:
-        # 启动看门狗守护线程
+        """Execute the full ML Master 2 pipeline.
+
+        Runs prefetch -> draft -> iterative (research -> parallel improve) cycles
+        with a global timeout watchdog. On timeout, triggers wisdom promotion.
+
+        Args:
+            task_description: Natural language description of the ML task.
+            output_file: Optional path to save the trajectory output.
+
+        Returns:
+            A dict with 'status' ('completed' or 'failed') and optional 'error'.
+        """
+        # Start the watchdog daemon thread
         watchdog = TimeoutWatchdog(RUN_TIMEOUT_SECONDS)
         watchdog.start()
-        self.logger.info(f"已启动看门狗线程（{RUN_TIMEOUT_SECONDS} 秒）")
+        self.logger.info(f"Watchdog started ({RUN_TIMEOUT_SECONDS} seconds)")
         try:
             self.setup()
 
@@ -184,10 +213,10 @@ class MLMaster2Playground(BasePlayground):
                 save_code_to_file(os.path.join(self.session.config.workspace_path, "best_solution"), "best_solution.py", self.best_solution)
                 self.real_time_best_solution = self.best_solution
             for reseach_round in range(20):
-                # 记录当前 research_round 中每个 direction 的每个 idea 的结果
-                # 结构: {direction: {idea: {"improved": bool, "is_best_in_direction": bool, "score": float|None}}}
+                # Record results for each direction and idea in the current research_round
+                # Structure: {direction: {idea: {"improved": bool, "is_best_in_direction": bool, "score": float|None}}}
                 research_round_idea_results: dict[str, dict[tuple, dict]] = {}
-                base_solution = self.best_solution  # 本轮开始时的最佳代码
+                base_solution = self.best_solution  # Best code at the start of this round
 
                 research_exp = ResearchExp(self.agents.reseach_agent, self.config, self.initial_code, f"exp_{self.exp_index}_research")
                 research_workspace_name = f"exp_{self.exp_index}_research"
@@ -202,7 +231,7 @@ class MLMaster2Playground(BasePlayground):
                     self.logger.error(f"Research failed: {research_result}")
                     raise research_result
                 research_plan = research_result
-                # 从配置读取 idea 并行数，默认最多 2 个
+                # Read max parallel ideas from config, default to 2
                 session_config = self.config.session.get("local", {})
                 parallel_config = session_config.get("parallel", {})
                 idea_max_workers = parallel_config.get("max_parallel", 2)
@@ -210,15 +239,15 @@ class MLMaster2Playground(BasePlayground):
                 for direction in research_plan:
                     direction_best_solution = self.best_solution
                     direction_best_score = self.best_score
-                    direction_baseline_score = self.best_score  # 本方向基线分数，用于判断各 idea 是否带来提升（不随迭代更新）
-                    direction_best_idea = None  # 记录该 direction 中带来最佳分数的 idea
+                    direction_baseline_score = self.best_score  # Baseline score for this direction to judge improvements (not updated during iteration)
+                    direction_best_idea = None  # Track the idea that brought the best score in this direction
                     research_round_idea_results[direction] = {}
 
                     ideas = list(research_plan[direction].items())
                     if not ideas:
                         continue
 
-                    # 构建并行任务：每个 idea 一个任务，均以 direction_best_solution 为 base
+                    # Build parallel tasks: one task per idea, all based on direction_best_solution
                     tasks = []
                     workspace_names = []
                     improve_exp_list = []
@@ -237,14 +266,14 @@ class MLMaster2Playground(BasePlayground):
                         workspace_names.append(improve_exp.exp_name)
                     self.exp_index += len(ideas)
 
-                    # 并行执行该 direction 下所有 idea，最多 idea_max_workers 个同时运行
+                    # Execute all ideas in this direction in parallel, max idea_max_workers concurrent
                     improve_results = self.execute_parallel_tasks(
                         tasks, max_workers=idea_max_workers, workspace_names=workspace_names
                     )
 
-                    # 处理结果：按顺序收集，找出最佳
-                    # improved 与 direction_baseline_score 比较，表示相对本方向开始时的基线是否带来提升
-                    # 这样同一 direction 内多个优于基线的 idea 都会被正确标记为"带来提升"
+                    # Process results: collect in order, find the best
+                    # 'improved' is compared against direction_baseline_score, indicating improvement relative to the baseline at the start of this direction
+                    # This way, multiple ideas better than the baseline within the same direction are all correctly marked as "brought improvement"
                     for i, (idea, result) in enumerate(zip(ideas, improve_results)):
                         improve_exp = improve_exp_list[i]
                         if isinstance(result, Exception):
@@ -276,15 +305,15 @@ class MLMaster2Playground(BasePlayground):
                                 direction_best_solution,
                             )
                             self.real_time_best_solution = direction_best_solution
-                    # 标记该 direction 中最佳的 idea
+                    # Mark the best idea in this direction
                     if direction_best_idea is not None:
                         research_round_idea_results[direction][direction_best_idea]["is_best_in_direction"] = True
 
                     self.best_solution = direction_best_solution
                     self.best_score = direction_best_score
 
-                # research_round 结束时，research_round_idea_results 已完整记录
-                # 将 research_plan 和结果以文本形式存入 research_plan_and_result
+                # At the end of research_round, research_round_idea_results is complete
+                # Store research_plan and results as text in research_plan_and_result
                 plan_text = json.dumps(research_plan, ensure_ascii=False, indent=2)
                 self.research_plan_and_result.extend([plan_text])
 
@@ -308,8 +337,8 @@ class MLMaster2Playground(BasePlayground):
             }
             return result
         except GlobalTimeoutInterrupt:
-            # 精准捕获看门狗抛出的中断异常
-            self.logger.warning(f"看门狗触发：实验已运行满 {RUN_TIMEOUT_SECONDS} 秒，强制打断，开始进行wisdom promotion")
+            # Precisely catch the interrupt exception thrown by the watchdog
+            self.logger.warning(f"Watchdog triggered: experiment has run for {RUN_TIMEOUT_SECONDS} seconds, forced interruption, starting wisdom promotion")
             wisdom_promotion_exp = WisdomPromotionExp(self.agents.wisdom_promotion_agent, self.config, f"exp_{self.exp_index}_wisdom_promotion")
             wisdom_promotion_workspace_name = f"exp_{self.exp_index}_wisdom_promotion"
             self.exp_index += 1
@@ -341,65 +370,74 @@ class MLMaster2Playground(BasePlayground):
             self.cleanup()
 
     def execute_parallel_tasks(self, tasks: List[Callable], max_workers: int = 3, workspace_names: List[str] | None = None) -> List[Any]:
-        """通用并行任务执行器"""
+        """Generic parallel task executor with resource allocation and workspace isolation.
+
+        Args:
+            tasks: List of callable tasks to execute in parallel.
+            max_workers: Maximum number of concurrent workers.
+            workspace_names: Optional list of workspace names for each task (for split_workspace_for_exp).
+
+        Returns:
+            List of results in the same order as tasks (exceptions are returned as results for failed tasks).
+        """
         self.logger.info(f"Starting parallel execution of {len(tasks)} tasks with {max_workers} workers.")
-        
+
         results = [None] * len(tasks)
-        
-        # 检查是否启用了并行资源分配
+
+        # Check if parallel resource allocation is enabled
         session_config = self.config.session.get("local", {})
         parallel_config = session_config.get("parallel", {})
         parallel_enabled = parallel_config.get("enabled", False)
         split_workspace = parallel_config.get("split_workspace_for_exp", False)
-        
-        # 【新增】用于记录当前正在运行的子线程 ID，以便在发生全局中断时一并强杀
+
+        # Track currently running child thread IDs for forced interruption on global timeout
         active_worker_tids = set()
         tids_lock = threading.Lock()
 
-        # 包装任务函数，设置并行索引和独立工作空间
+        # Wrap task function to set parallel index and independent workspace
         def wrap_task(task_func, parallel_index):
             def wrapped():
                 current_tid = threading.get_ident()
                 with tids_lock:
                     active_worker_tids.add(current_tid)
-                    
+
                 try:
-                    # 如果启用了并行资源分配，设置 session 的并行索引
+                    # If parallel resource allocation is enabled, set session's parallel index
                     if parallel_enabled and self.session is not None:
                         from evomaster.agent.session.local import LocalSession
                         if isinstance(self.session, LocalSession):
                             self.session.set_parallel_index(parallel_index)
-                            self.logger.debug(f"设置并行索引: {parallel_index}")
-                            
-                            # 如果启用了 split_workspace_for_exp，为当前 exp 创建独立工作空间
+                            self.logger.debug(f"Set parallel index: {parallel_index}")
+
+                            # If split_workspace_for_exp is enabled, create independent workspace for current exp
                             if split_workspace:
                                 import os
                                 main_workspace = self.session.config.workspace_path
                                 exp_name = workspace_names[parallel_index] if workspace_names and parallel_index < len(workspace_names) else f"exp_{parallel_index}"
                                 exp_workspace = os.path.join(main_workspace, exp_name)
-                                # 通过 env 创建 exp 工作空间（含软链接）
+                                # Create exp workspace (with symlinks) via env
                                 self.session._env.setup_exp_workspace(exp_workspace)
                                 os.makedirs(os.path.join(exp_workspace, "submission"), exist_ok=True)
                                 os.makedirs(os.path.join(exp_workspace, "working"), exist_ok=True)
-                                # 设置线程本地的工作空间路径
+                                # Set thread-local workspace path
                                 self.session.set_workspace_path(exp_workspace)
-                                self.logger.info(f"Exp {parallel_index} 使用独立工作空间: {exp_workspace}")
+                                self.logger.info(f"Exp {parallel_index} using independent workspace: {exp_workspace}")
                                 
                     return task_func()
-                    
+
                 except GlobalTimeoutInterrupt:
-                    self.logger.warning(f"并行任务 {parallel_index} (TID: {current_tid}) 收到中断信号，正在退出并释放资源...")
-                    raise  # 继续抛出以便 Executor 捕获并标记 Future 为失败
+                    self.logger.warning(f"Parallel task {parallel_index} (TID: {current_tid}) received interrupt signal, exiting and releasing resources...")
+                    raise  # Continue raising so Executor catches it and marks Future as failed
                 finally:
-                    # 清理线程本地状态
+                    # Clean up thread-local state
                     if parallel_enabled and self.session is not None:
                         from evomaster.agent.session.local import LocalSession
                         if isinstance(self.session, LocalSession):
                             self.session.set_parallel_index(None)
                             if split_workspace:
                                 self.session.set_workspace_path(None)
-                                
-                    # 【新增】任务结束，移除线程 ID 记录
+
+                    # Task ended, remove thread ID record
                     with tids_lock:
                         active_worker_tids.discard(current_tid)
             return wrapped
@@ -432,20 +470,20 @@ class MLMaster2Playground(BasePlayground):
             return results
 
         finally:
-            # 1. 取消所有还在排队、未开始的 Future
+            # 1. Cancel all queued, not-yet-started Futures
             for future in future_to_index:
                 future.cancel()
-            
-            # 【新增】2. 向所有仍在运行的子线程主动注入全局超时异常
-            # 这会强制正在执行 task_func 的子线程跳入 wrapped() 的 finally 块
+
+            # 2. Actively inject global timeout exception into all still-running child threads
+            # This forces child threads executing task_func to jump into wrapped()'s finally block
             with tids_lock:
                 for tid in active_worker_tids:
                     try:
                         _async_raise(tid, GlobalTimeoutInterrupt)
                     except Exception as e:
-                        self.logger.error(f"无法向子线程 {tid} 发送中断信号: {e}")
-            
-            # 3. 强行关闭线程池
+                        self.logger.error(f"Unable to send interrupt signal to child thread {tid}: {e}")
+
+            # 3. Forcibly shut down thread pool
             if sys.version_info >= (3, 9):
                 executor.shutdown(wait=False, cancel_futures=True)
             else:

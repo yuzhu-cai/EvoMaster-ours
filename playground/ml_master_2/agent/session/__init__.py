@@ -1,4 +1,4 @@
-"""ML Master 2 Agent Session 模块"""
+"""ML Master 2 Agent Session Module"""
 
 from .local import MLMaster2LocalSession
 

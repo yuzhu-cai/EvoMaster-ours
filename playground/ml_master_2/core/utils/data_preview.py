@@ -17,9 +17,13 @@ plaintext_files = {".txt", ".csv", ".json", ".tsv"} | code_files
 
 
 def get_file_len_size(f: Path) -> tuple[int, str]:
-    """
-    Calculate the size of a file (#lines for plaintext files, otherwise #bytes)
-    Also returns a human-readable string representation of the size.
+    """Calculate the size of a file (number of lines for plaintext, bytes otherwise).
+
+    Args:
+        f: Path to the file.
+
+    Returns:
+        A tuple of (size_value, human_readable_string).
     """
     if f.suffix in plaintext_files:
         num_lines = sum(1 for _ in open(f))
@@ -29,8 +33,17 @@ def get_file_len_size(f: Path) -> tuple[int, str]:
         return s, humanize.naturalsize(s)
 
 
-def file_tree(path: Path, depth=0,max_dirs=20) -> str:
-    """Generate a tree structure of files in a directory"""
+def file_tree(path: Path, depth=0, max_dirs=20) -> str:
+    """Generate a tree structure of files in a directory.
+
+    Args:
+        path: Root directory path.
+        depth: Current depth level (for indentation).
+        max_dirs: Maximum number of subdirectories to show.
+
+    Returns:
+        A formatted string representing the directory tree.
+    """
     result = []
     files = [p for p in Path(path).iterdir() if not p.is_dir()]
     dirs = [p for p in Path(path).iterdir() if p.is_dir()]
@@ -51,7 +64,14 @@ def file_tree(path: Path, depth=0,max_dirs=20) -> str:
 
 
 def _walk(path: Path):
-    """Recursively walk a directory (analogous to os.walk but for pathlib.Path)"""
+    """Recursively walk a directory (analogous to os.walk but for pathlib.Path).
+
+    Args:
+        path: Directory path to walk.
+
+    Yields:
+        File paths in sorted order.
+    """
     for p in sorted(Path(path).iterdir()):
         if p.is_dir():
             yield from _walk(p)
@@ -112,7 +132,15 @@ def preview_csv(p: Path, file_name: str, simple=True) -> str:
 
 
 def preview_json(p: Path, file_name: str):
-    """Generate a textual preview of a json file using a generated json schema"""
+    """Generate a textual preview of a JSON file using auto-generated JSON schema.
+
+    Args:
+        p: Path to the JSON file.
+        file_name: File name to use in the preview.
+
+    Returns:
+        A formatted string with the JSON schema.
+    """
     builder = SchemaBuilder()
     with open(p) as f:
         first_line = f.readline().strip()
@@ -144,9 +172,17 @@ def preview_json(p: Path, file_name: str):
 
 
 def generate(base_path, include_file_details=True, simple=False):
-    """
-    Generate a textual preview of a directory, including an overview of the directory
-    structure and previews of individual files
+    """Generate a textual preview of a directory.
+
+    Includes an overview of the directory structure and previews of individual files.
+
+    Args:
+        base_path: Root directory path.
+        include_file_details: Whether to include detailed file previews.
+        simple: Whether to use simplified preview mode.
+
+    Returns:
+        A formatted string with the directory preview.
     """
     tree = f"```\n{file_tree(base_path)}```"
     out = [tree]
@@ -169,12 +205,12 @@ def generate(base_path, include_file_details=True, simple=False):
 
     result = "\n\n".join(out)
 
-    # if the result is very long we generate a simpler version
+    # If the result is very long, generate a simpler version
     if len(result) > 6_000 and not simple:
         return generate(
             base_path, include_file_details=include_file_details, simple=True
         )
-    # if still too long, we truncate
+    # If still too long, truncate
     if len(result) > 6_000 and simple:
         return result[:6_000] + "\n... (truncated)"
 

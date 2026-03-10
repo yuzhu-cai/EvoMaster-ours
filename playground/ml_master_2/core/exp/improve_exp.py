@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 from typing import Any, Tuple
-from a import improve_result
 from evomaster.core.exp import BaseExp
 from evomaster.utils.types import TaskInstance
 from openai.types.chat import ChatCompletionMessageToolCall
@@ -19,7 +18,13 @@ except ImportError as e:
     _GRADING_IMPORT_ERROR = str(e)
 
 class ImproveExp(BaseExp):
-    def __init__(self, improve_agent, debug_agent, metric_agent, config,exp_name):
+    """Experiment for applying a specific improvement idea to an existing ML solution.
+
+    Orchestrates the improve -> execute -> metric -> debug cycle to implement
+    and validate a single improvement idea.
+    """
+
+    def __init__(self, improve_agent, debug_agent, metric_agent, config, exp_name):
         super().__init__(improve_agent, config)
         self.improve_agent = improve_agent
         self.debug_agent = debug_agent
@@ -34,12 +39,17 @@ class ImproveExp(BaseExp):
 
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the experiment stage name."""
         return self._exp_name
 
     def _check_grading_valid(self, submission_path: str) -> Tuple[bool, str]:
-        """使用 grading_server 校验 submission 格式。
-        返回 (是否通过, 不通过时的理由，通过时为空字符串)。
+        """Validate submission format using the grading server.
+
+        Args:
+            submission_path: Path to the submission CSV file.
+
+        Returns:
+            A tuple of (passed, reason). reason is empty string if passed.
         """
         if not _HAS_GRADING:
             return True, ""
@@ -55,18 +65,33 @@ class ImproveExp(BaseExp):
             dataset_root=data_root,
         )
         if not ok:
-            reason = str(res) if res else "grading_server 调用失败"
+            reason = str(res) if res else "grading_server call failed"
             self.logger.warning(
-                "grading_server 调用失败，默认视为 submission 格式合法通过: %s", reason
+                "grading_server call failed, treating submission format as valid by default: %s", reason
             )
             return True, ""
         if isinstance(res, dict) and not res.get("is_valid", True):
             reason = res.get("result") or res.get("details") or str(res)
-            self.logger.warning("grading_server 格式校验未通过: %s", reason)
+            self.logger.warning("grading_server format validation failed: %s", reason)
             return False, reason
         return True, ""
 
     def run(self, task_description: str, data_preview: str, best_solution: str, idea: str, task_id: str = "exp_001") -> dict:
+        """Execute the improvement experiment pipeline.
+
+        Applies an improvement idea to the existing best solution, executes it,
+        validates the submission, extracts metrics, and retries with debug agent on failure (up to 3 times).
+
+        Args:
+            task_description: Natural language description of the ML task.
+            data_preview: Textual preview of the dataset.
+            best_solution: Current best solution code to improve upon.
+            idea: The specific improvement idea to implement.
+            task_id: Unique task identifier.
+
+        Returns:
+            Tuple of (is_success, validation_score, uid, code).
+        """
         self.logger.info("Starting draft task execution")
         self.logger.info(f"Task: {task_description}")
 
@@ -112,7 +137,7 @@ class ImproveExp(BaseExp):
                     if not grading_ok:
                         self.terminal_output = (
                             f"{self.terminal_output}\n\n"
-                            "[grading] 代码成功运行，但提交格式不合法。grading_server 校验结果: "
+                            "[grading] Code ran successfully, but submission format is invalid. grading_server validation result: "
                             f"{grading_reason}"
                         )
                 else:
@@ -142,7 +167,7 @@ class ImproveExp(BaseExp):
 
                 metric_trajectory = self.metric_agent.run(metric_task)
 
-                # 提取Metric Agent的回答
+                # Extract Metric Agent's response
                 metric_result = self._extract_agent_response(metric_trajectory)
                 try:
                     validation_score = float(metric_result.split("\\boxed{")[1].split("}")[0])
@@ -193,7 +218,7 @@ class ImproveExp(BaseExp):
                     if not grading_ok:
                         self.terminal_output = (
                             f"{self.terminal_output}\n\n"
-                            "[grading] 代码成功运行，但提交格式不合法。grading_server 校验结果: "
+                            "[grading] Code ran successfully, but submission format is invalid. grading_server validation result: "
                             f"{grading_reason}"
                         )
                 else:

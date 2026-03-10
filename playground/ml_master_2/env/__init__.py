@@ -1,4 +1,4 @@
-"""ML Master 2 环境模块"""
+"""ML Master 2 Environment Module"""
 
 from .local import MLMaster2LocalEnv
 

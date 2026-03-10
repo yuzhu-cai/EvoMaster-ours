@@ -11,7 +11,13 @@ from evomaster.agent import BaseAgent
 import json
 
 class PrefetchExp(BaseExp):
-    def __init__(self, prefetch_agent, config,exp_name):
+    """Experiment for retrieving relevant knowledge from the wisdom database via RAG.
+
+    Uses embedding-based retrieval to find data knowledge and model knowledge
+    from past experiments that are relevant to the current task.
+    """
+
+    def __init__(self, prefetch_agent, config, exp_name):
         super().__init__(prefetch_agent, config)
         self.prefetch_agent = prefetch_agent
         self.uid = uuid.uuid4()
@@ -21,10 +27,25 @@ class PrefetchExp(BaseExp):
 
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the experiment stage name."""
         return self._exp_name
 
-    def run(self,task_description: str, vec_dir: str, nodes_data: str, model: str, task_id: str = "detect-insults-in-social-commentary") -> dict:
+    def run(self, task_description: str, vec_dir: str, nodes_data: str, model: str, task_id: str = "detect-insults-in-social-commentary") -> dict:
+        """Execute the prefetch experiment to retrieve relevant knowledge via RAG.
+
+        Uses the prefetch agent to generate a task descriptor, then performs
+        embedding-based retrieval to find relevant data and model knowledge.
+
+        Args:
+            task_description: Natural language description of the ML task.
+            vec_dir: Directory containing embedding vectors for RAG.
+            nodes_data: Path to the nodes data file (JSON).
+            model: Embedding model name to use.
+            task_id: Unique task identifier.
+
+        Returns:
+            Tuple of (data_knowledge, model_knowledge, prefetch_descriptor).
+        """
         self.logger.info("Starting prefetch task execution")
         self.logger.info(f"Task: {task_description}")
 
@@ -32,8 +53,8 @@ class PrefetchExp(BaseExp):
         model_knowledge = "NO MODEL KNOWLEDGE this time"
         prefetch_descriptor = task_description
 
-        ## for debug
-        return data_knowledge, model_knowledge, prefetch_descriptor
+        # Early return for debugging
+        # return data_knowledge, model_knowledge, prefetch_descriptor
 
         if self.prefetch_agent:
             self.logger.info("=" * 60)
@@ -55,8 +76,8 @@ class PrefetchExp(BaseExp):
             prefetch_descriptor = self._extract_agent_response(prefetch_trajectory)
             self.prefetch_agent._prompt_format_kwargs = prefetch_original_format_kwargs
             self.logger.info(f"Prefetch descriptor: {prefetch_descriptor}")
-            ### 执行 RAG 检索：use_skill run_script 调用 search.py
-            #### for debug
+            ### Execute RAG retrieval: use_skill run_script to call search.py
+            #### For debugging, uncomment the hardcoded prefetch_descriptor below
             # prefetch_descriptor = """This competition involves single class classification to detect insulting comments in social commentary datasets with timestamps and unicode escaped text. The goal is creating a generalizable classifier for near real time identification of insults directed at conversation participants excluding non participants or standalone profanity. Input includes a label column denoting neutral or insulting status followed by time attributes formatted as YYYYMMDDhhmmssZ and text fields. Output requires probability scores from 0 to 1 indicating insult likelihood submitted in the first column of the submission file. Evaluation uses the Area under the Receiver Operating Curve metric penalizing high probability incorrect predictions. Final standings depend on performance against an unpublished verification set released late in the timeline. Competitors must lock self contained code for up to five final models prior to verification set release and generate solutions using that locked code. Dataset characteristics include less than one percent label noise with strong tendencies toward overfitting. Individual participation is mandatory for recruiting opportunities involving code review for top entries."""
             query_escaped = json.dumps(prefetch_descriptor)
             script_args = (
@@ -78,7 +99,7 @@ class PrefetchExp(BaseExp):
             )
             observation, info = self.prefetch_agent._execute_tool(tool_call_obj)
 
-            # 解析输出的 JSON
+            # Parse the output JSON
             try:
                 output_str = observation
                 if "Script output:\n" in output_str:

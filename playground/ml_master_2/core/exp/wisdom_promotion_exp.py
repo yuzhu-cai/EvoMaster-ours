@@ -12,15 +12,28 @@ import json
 import re
 
 def _parse_json_from_response(text: str) -> dict:
-    """解析模型返回的 JSON，兼容纯 JSON 和 ```json ... ``` 代码块格式"""
+    """Parse JSON from model response, compatible with pure JSON and ```json ... ``` code block format.
+
+    Args:
+        text: The raw text response from the model.
+
+    Returns:
+        Parsed JSON as a dictionary.
+    """
     text = text.strip()
-    # 尝试提取 ```json ... ``` 或 ``` ... ``` 代码块
+    # Try to extract ```json ... ``` or ``` ... ``` code block
     code_block_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
     if code_block_match:
         text = code_block_match.group(1).strip()
     return json.loads(text)
 
 class WisdomPromotionExp(BaseExp):
+    """Experiment for extracting reusable wisdom from the best solution.
+
+    Triggered on timeout, this experiment distills data knowledge and model knowledge
+    from the best solution achieved so far for use in future tasks.
+    """
+
     def __init__(self, wisdom_promotion_agent, config, exp_name):
         super().__init__(wisdom_promotion_agent, config)
         self.wisdom_promotion_agent = wisdom_promotion_agent
@@ -31,7 +44,7 @@ class WisdomPromotionExp(BaseExp):
 
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the experiment stage name."""
         return self._exp_name
 
     def run(
@@ -40,6 +53,19 @@ class WisdomPromotionExp(BaseExp):
         best_solution: str,
         task_id: str = "exp_001",
     ) -> dict:
+        """Execute the wisdom promotion experiment.
+
+        Extracts reusable data knowledge and model knowledge from the best solution
+        achieved so far, for storage in the wisdom database.
+
+        Args:
+            task_description: Natural language description of the ML task.
+            best_solution: The best solution code achieved.
+            task_id: Unique task identifier.
+
+        Returns:
+            A dictionary containing extracted wisdom (data_knowledge, model_knowledge).
+        """
         self.logger.info("Starting wisdom promotion task execution")
 
         wisdom_promotion_original_format_kwargs = self.wisdom_promotion_agent._prompt_format_kwargs.copy()

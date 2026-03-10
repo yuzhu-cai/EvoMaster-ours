@@ -1,7 +1,7 @@
-"""ML Master 2 本地 Session 实现
+"""ML Master 2 local Session implementation.
 
-使用 MLMaster2LocalEnv 替代默认的 LocalEnv，
-使主工作空间在 split_workspace_for_exp 启用时仍会创建软链接。
+Uses MLMaster2LocalEnv instead of the default LocalEnv to ensure
+symlinks are created in the main workspace even when split_workspace_for_exp is enabled.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from ...env.local import MLMaster2LocalEnv
 
 
 class MLMaster2LocalSession(LocalSession):
-    """ML Master 2 专用本地 Session
+    """ML Master 2 dedicated local Session.
 
-    使用 MLMaster2LocalEnv 替代默认的 LocalEnv，
-    使主工作空间在 split_workspace_for_exp 启用时仍会创建软链接。
+    Uses MLMaster2LocalEnv instead of the default LocalEnv to ensure
+    symlinks are created in the main workspace even when split_workspace_for_exp is enabled.
     """
 
     def __init__(self, config: LocalSessionConfig | None = None):

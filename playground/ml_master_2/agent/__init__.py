@@ -1,1 +1,1 @@
-"""ML Master 2 Agent 模块"""
+"""ML Master 2 Agent Module"""
