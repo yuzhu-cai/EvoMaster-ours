@@ -64,7 +64,7 @@ from evomaster.config import (
     # 配置基类
     BaseConfig,
     # Env 配置
-    EnvConfig,
+    # EnvConfig,
     ClusterConfig,
     ClusterPoolConfig,
     DockerEnvConfig,

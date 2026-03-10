@@ -260,16 +260,19 @@ class RAGSearcher:
         self.node_id_key = node_id_key
 
         # 加载 FAISS index
-        index_path = self.vec_dir / "faiss.index"
-        if not index_path.exists():
-            raise FileNotFoundError(f"FAISS index not found: {index_path}")
-        self.index = faiss.read_index(str(index_path))
-        logger.info(f"Loaded FAISS index from {index_path}")
+        # index_path = self.vec_dir / "faiss.index"
+        # if not index_path.exists():
+        #     raise FileNotFoundError(f"FAISS index not found: {index_path}")
+        # self.index = faiss.read_index(str(index_path))
+        # logger.info(f"Loaded FAISS index from {index_path}")
 
         # 加载 embeddings 并预计算归一化向量（用于余弦相似度）
         emb_path = self.vec_dir / "embeddings.npy"
         if emb_path.exists():
             self.emb = np.load(emb_path)
+            # 单条 embedding 时为 1D (dim,)，需 reshape 为 (1, dim) 以兼容后续计算
+            if self.emb.ndim == 1:
+                self.emb = self.emb.reshape(1, -1)
             norms = np.linalg.norm(self.emb, axis=1, keepdims=True)
             norms = np.where(norms == 0, 1, norms)
             self.emb_normalized = self.emb / norms

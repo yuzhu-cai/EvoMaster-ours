@@ -234,6 +234,15 @@ pip install -r playground/minimal_kaggle/requirements.txt
 python run.py --agent minimal_kaggle --config configs/minimal_kaggle/deepseek-v3.2-example.yaml --task playground/minimal_kaggle/data/public/description.md
 ```
 
+### ML-Master 2
+Please refer to [ML-Master 2.0 README](./playground/ml_master_2/README.md) for more details
+```bash
+pip install -r playground/ml_master_2/requirements.txt
+# optional
+# export HF_ENDPOINT=https://hf-mirror.com
+python run.py --agent ml_master_2 --config configs/ml_master_2/deepseek-v3.2-example.yaml --task playground/ml_master_2/data/detecting-insults-in-social-commentary/prepared/public/description.md
+```
+
 ## 📦 Installation
 
 ### With pip
