@@ -290,7 +290,7 @@ class RAGSearcher:
         emb_path = self.vec_dir / "embeddings.npy"
         if emb_path.exists():
             self.emb = np.load(emb_path)
-            # 单条 embedding 时为 1D (dim,)，需 reshape 为 (1, dim) 以兼容后续计算
+            # When there is a single embedding, it is 1D (dim,) and must be reshaped to (1, dim) for downstream computation.
             if self.emb.ndim == 1:
                 self.emb = self.emb.reshape(1, -1)
             norms = np.linalg.norm(self.emb, axis=1, keepdims=True)
