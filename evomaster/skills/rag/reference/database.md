@@ -51,9 +51,17 @@ Currently, each of these methods will:
 - Log a `logger.warning` indicating this is a placeholder API.
 - Raise `NotImplementedError`.
 
-### Parameters (for run_script / use_skill)
+### Command-Line Interface (Conceptual)
 
-When invoking `database.py` via run_script, use the following parameters:
+`database.py` also exposes a lightweight CLI entry point that can be used to trigger build flows from the terminal when needed. Conceptually it:
+
+- Accepts an output directory (`--output_dir`).
+- Accepts a model name or path for encoding (`--model`).
+- Accepts an action parameter (`--action`) to distinguish between building, incremental adding, or viewing stats.
+
+How exactly this entry point is integrated and invoked in your project is up to the host system. This reference only documents parameter semantics and does not provide concrete CLI usage examples.
+
+Common parameters:
 
 - `--output_dir` (required): Output directory for the vector store.
 - `--model`: Model name or path used for encoding (defaults to local `all-mpnet-base-v2`).

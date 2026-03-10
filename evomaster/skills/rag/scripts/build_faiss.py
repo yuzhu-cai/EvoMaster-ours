@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build FAISS index from embeddings.npy
+"""Build FAISS index from embeddings.npy.
 
-从 vec_dir 下的 embeddings.npy 生成 faiss.index，供 search.py 在 --use_faiss 时使用。
-向量会先做 L2 归一化，再写入 IndexFlatIP（内积即余弦相似度）。
+Generate ``faiss.index`` from ``embeddings.npy`` under ``vec_dir`` for ``search.py`` when ``--use_faiss`` is enabled.
+All vectors are L2-normalized first and then written into an ``IndexFlatIP`` index (inner product = cosine similarity).
 """
 
 import logging
@@ -11,26 +11,26 @@ from pathlib import Path
 
 import numpy as np
 
-# 与 search.py 一致的路径解析
+# Use the same path resolution helpers as in search.py.
 from search import _find_project_root, _resolve_path
 
 logger = logging.getLogger(__name__)
 
 
 def build_faiss_index(vec_dir: str | Path, project_root: Path | None = None) -> Path:
-    """从 vec_dir/embeddings.npy 生成 vec_dir/faiss.index。
+    """Build ``vec_dir/faiss.index`` from ``vec_dir/embeddings.npy``.
 
     Args:
-        vec_dir: 向量目录（含 embeddings.npy）
-        project_root: 项目根目录，用于解析 evomaster/ 相对路径；None 时自动查找。
+        vec_dir: Vector store directory containing ``embeddings.npy``.
+        project_root: Project root used to resolve ``evomaster/``-prefixed relative paths; auto-detected if None.
 
     Returns:
-        写入的 faiss.index 路径。
+        Path to the written ``faiss.index`` file.
 
     Raises:
-        FileNotFoundError: embeddings.npy 不存在
-        ImportError: 未安装 faiss
-        RuntimeError: 向量维度/格式异常
+        FileNotFoundError: ``embeddings.npy`` does not exist.
+        ImportError: ``faiss`` package is not installed.
+        RuntimeError: Vector dimension/shape is invalid.
     """
     try:
         import faiss
@@ -56,7 +56,7 @@ def build_faiss_index(vec_dir: str | Path, project_root: Path | None = None) -> 
     if emb.ndim != 2:
         raise RuntimeError(f"Expected 2D array (n_vectors, dim), got shape {emb.shape}")
 
-    # 归一化，便于用内积表示余弦相似度
+    # Normalize so that inner product corresponds to cosine similarity.
     norms = np.linalg.norm(emb, axis=1, keepdims=True)
     norms = np.where(norms == 0, 1.0, norms)
     emb = emb.astype(np.float32) / norms

@@ -1,7 +1,7 @@
-# Plan Agent 输出（包含本轮参数与多轮检索策略）
+# Plan Agent output (including parameters for this round and the multi-round retrieval strategy)
 {plan_output}
 
-# 当前轮的初始检索参数（可在多轮策略指导下进行后续调整）
+# Initial retrieval parameters for the current round (can be adjusted later under the multi-round strategy)
 
 query: {query}
 top_k: {top_k}

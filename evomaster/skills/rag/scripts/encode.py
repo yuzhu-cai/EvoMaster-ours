@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Text Encoder - 文本编码工具
+"""Text Encoder - standalone text-to-embedding utility.
 
-提供独立的文本编码功能，将文本转换为向量。
-支持本地 transformer 模型和 OpenAI embedding API。
+Provides independent text encoding functionality, converting text into vectors.
+Supports both local transformer models and the OpenAI embedding API.
 """
 
 import logging
@@ -15,12 +15,12 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-# 从 search.py 导入 Embedder 相关类
+# Import embedder-related classes from search.py.
 from search import create_embedder, BaseEmbedder
 
 
 class TextEncoder:
-    """文本编码器，支持本地模型和 OpenAI API"""
+    """Text encoder supporting both local models and the OpenAI API."""
 
     def __init__(
         self,
@@ -31,20 +31,20 @@ class TextEncoder:
         embedding_base_url: str | None = None,
         embedding_dimensions: int | None = None,
     ):
-        """初始化编码器
-
+        """Initialize the encoder.
+        
         Args:
-            model_name: 模型名称或路径
-            device: 计算设备 ('cpu' 或 'cuda')，仅本地模型使用
-            embedding_type: "local", "openai", 或 "auto"（自动检测）
-            embedding_api_key: OpenAI API key（仅 openai 类型需要）
-            embedding_base_url: OpenAI API base URL（仅 openai 类型需要）
-            embedding_dimensions: Embedding 维度（仅 openai 的 text-embedding-3-* 支持）
+            model_name: Model name or path.
+            device: Compute device (``'cpu'`` or ``'cuda'``), used only for local models.
+            embedding_type: One of ``"local"``, ``"openai"``, or ``"auto"`` (auto-detect).
+            embedding_api_key: OpenAI API key (required only for ``openai`` type).
+            embedding_base_url: OpenAI API base URL (required only for ``openai`` type).
+            embedding_dimensions: Embedding dimension (only supported by OpenAI text-embedding-3-* models).
         """
         self.model_name = model_name
         self.device = device
         
-        # 使用统一的 embedder 创建函数
+        # Use the shared embedder creation helper.
         self.embedder = create_embedder(
             model=model_name,
             embedding_type=embedding_type,
@@ -61,23 +61,23 @@ class TextEncoder:
         max_length: int = 512,
         normalize: bool = False
     ) -> np.ndarray:
-        """编码文本
-
+        """Encode a single piece of text.
+        
         Args:
-            text: 输入文本
-            max_length: 最大长度（仅本地模型使用）
-            normalize: 是否归一化向量
-
+            text: Input text.
+            max_length: Max length (only used by local models).
+            normalize: Whether to L2-normalize the vector.
+        
         Returns:
-            编码后的向量
+            Encoded vector.
         """
         emb = self.embedder.encode(text)
         
-        # 确保是 1D 向量
+        # Ensure a 1D vector.
         if emb.ndim > 1:
             emb = emb[0]
 
-        # 归一化（可选）
+        # Optional normalization.
         if normalize:
             norm = np.linalg.norm(emb)
             emb = emb / (norm + 1e-8)
@@ -91,16 +91,16 @@ class TextEncoder:
         normalize: bool = False,
         batch_size: int = 32
     ) -> np.ndarray:
-        """批量编码文本
-
+        """Encode a batch of texts.
+        
         Args:
-            texts: 文本列表
-            max_length: 最大长度（仅本地模型使用）
-            normalize: 是否归一化向量
-            batch_size: 批处理大小
-
+            texts: List of texts.
+            max_length: Max length (only used by local models).
+            normalize: Whether to L2-normalize vectors.
+            batch_size: Batch size.
+        
         Returns:
-            编码后的向量数组 (n_texts, embedding_dim)
+            Array of encoded vectors with shape ``(n_texts, embedding_dim)``.
         """
         all_embeddings = []
 
@@ -112,7 +112,7 @@ class TextEncoder:
 
 
 def main():
-    """命令行接口"""
+    """Command-line interface."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Text Encoder CLI")
@@ -128,7 +128,7 @@ def main():
     parser.add_argument("--max_length", type=int, default=512, help="Max length")
     parser.add_argument("--normalize", action="store_true", help="Normalize vectors")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
-    # OpenAI embedding 参数
+    # OpenAI embedding parameters.
     parser.add_argument(
         "--embedding_type",
         choices=["auto", "local", "openai"],
@@ -151,7 +151,7 @@ def main():
 
     args = parser.parse_args()
 
-    # 初始化编码器
+    # Initialize encoder.
     encoder = TextEncoder(
         model_name=args.model,
         embedding_type=args.embedding_type,
@@ -160,21 +160,21 @@ def main():
         embedding_dimensions=args.embedding_dimensions,
     )
 
-    # 读取文本
+    # Read input text.
     if args.text:
         texts = [args.text]
     elif args.file:
         with open(args.file, "r", encoding="utf-8") as f:
             texts = [line.strip() for line in f if line.strip()]
     else:
-        # 从 stdin 读取
+        # Read from stdin.
         texts = [line.strip() for line in sys.stdin if line.strip()]
 
     if not texts:
         print("Error: No text provided", file=sys.stderr)
         sys.exit(1)
 
-    # 编码
+    # Encode.
     if len(texts) == 1:
         embedding = encoder.encode(texts[0], max_length=args.max_length, normalize=args.normalize)
     else:
@@ -185,12 +185,12 @@ def main():
             batch_size=args.batch_size
         )
 
-    # 输出
+    # Output.
     if args.output:
         np.save(args.output, embedding)
         print(f"Saved embeddings to {args.output}")
     else:
-        # 输出到 stdout（以可读格式）
+        # Print to stdout (human-readable format).
         print(f"Embedding shape: {embedding.shape}")
         print(f"Embedding:\n{embedding}")
 

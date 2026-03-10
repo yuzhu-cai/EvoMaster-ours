@@ -1,4 +1,4 @@
-"""SearchExp：包含 plan agent 和 search agent，至少两轮 Plan → Search；两轮全空时放宽 threshold 再检索一轮"""
+"""SearchExp: includes the plan and search agents; runs at least two Plan → Search rounds; if both rounds are empty, relax the threshold and run one more search."""
 
 import logging
 from evomaster.core.exp import BaseExp
@@ -11,11 +11,11 @@ from ..utils.rag_utils import (
 )
 
 DEFAULT_QUERY = "Summarize the following machine learning task in one complete English sentence."
-RELAXED_THRESHOLD = 2.0  # 多轮结果均为空时放宽 threshold 重试
+RELAXED_THRESHOLD = 2.0  # When results from multiple rounds are all empty, retry with a relaxed threshold.
 
 
 def _is_result_empty(text: str) -> bool:
-    """检索结果是否视为空（无有效内容）。以 node_id、similarity、prepare_code 为有效标记。"""
+    """Determine whether a search result should be treated as empty (no valid content). Use node_id, similarity, and prepare_code as validity markers."""
     if not text or not text.strip():
         return True
     stripped = text.strip().lower()
@@ -44,12 +44,12 @@ class SearchExp(BaseExp):
         db: dict,
         task_id: str = "exp_001",
     ) -> tuple[str, list]:
-        """运行两轮 Plan → Search，返回 (combined_search_results, [trajectories])。"""
+        """Run two Plan → Search rounds and return (combined_search_results, [trajectories])."""
         self.logger.info("Starting SearchExp (plan + search, 2 rounds)")
         trajectories = []
 
         # ---------- Round 1: Plan (initial) ----------
-        stage_input = analyze_output or "(无 Analyze 输出)"
+        stage_input = analyze_output or "(no Analyze output)"
         update_agent_format_kwargs(
             self.plan_agent,
             task_description=task_description,
@@ -70,7 +70,7 @@ class SearchExp(BaseExp):
         params1 = parse_plan_output(plan_output_1)
         if not params1.get("query"):
             params1["query"] = DEFAULT_QUERY
-        # 将 Plan 的完整输出也传给 Search，用于执行多轮检索策略
+        # Also pass the full Plan output to Search so it can follow the multi-round retrieval strategy.
         update_agent_format_kwargs(self.search_agent, plan_output=plan_output_1, **params1, **db)
         search_task_1 = TaskInstance(
             task_id=f"{task_id}_search1",
@@ -84,8 +84,8 @@ class SearchExp(BaseExp):
 
         # ---------- Round 2: Plan (second params) ----------
         first_round_empty = _is_result_empty(search_results_1 or "")
-        # 第二轮计划仅提供「第一轮检索结果」作为 stage_input，具体多轮策略由 plan_system_prompt 约束
-        stage_input_2 = "第一轮检索结果：\n" + (search_results_1 or "(无)")
+        # For the second-round plan, provide only the "first-round search results" as stage_input; the detailed multi-round strategy is constrained by plan_system_prompt.
+        stage_input_2 = "First-round search results:\n" + (search_results_1 or "(none)")
         update_agent_format_kwargs(
             self.plan_agent,
             task_description=task_description,
@@ -106,7 +106,7 @@ class SearchExp(BaseExp):
         params2 = parse_plan_output(plan_output_2)
         if not params2.get("query"):
             params2 = params1
-        # 第二轮同样传入对应的 Plan 输出，供 Search 参考策略与上下文
+        # For the second round, also pass the corresponding Plan output so Search can use it as strategy and context.
         update_agent_format_kwargs(self.search_agent, plan_output=plan_output_2, **params2, **db)
         search_task_2 = TaskInstance(
             task_id=f"{task_id}_search2",
@@ -118,12 +118,12 @@ class SearchExp(BaseExp):
         trajectories.append(search_traj_2)
         search_results_2 = extract_agent_response(search_traj_2)
 
-        # 强制要求：多轮结果均为空时，放宽 threshold 后重试一轮
+        # Hard requirement: if results from multiple rounds are all empty, relax the threshold and retry one more round.
         search_results_3 = None
         if _is_result_empty(search_results_1 or "") and _is_result_empty(search_results_2 or ""):
             self.logger.info("Both rounds empty; retrying with relaxed threshold")
             params_retry = {**params2, "threshold": max(RELAXED_THRESHOLD, params2.get("threshold", 1.5) * 1.2)}
-            # 重试时沿用第二轮 Plan 输出作为策略参考
+            # During retry, keep using the second-round Plan output as the strategy reference.
             update_agent_format_kwargs(self.search_agent, plan_output=plan_output_2, **params_retry, **db)
             search_task_3 = TaskInstance(
                 task_id=f"{task_id}_search_retry",
@@ -135,8 +135,8 @@ class SearchExp(BaseExp):
             trajectories.append(search_traj_3)
             search_results_3 = extract_agent_response(search_traj_3)
 
-        combined = (search_results_1 or "") + "\n\n--- 第二轮 ---\n\n" + (search_results_2 or "")
+        combined = (search_results_1 or "") + "\n\n--- Second round ---\n\n" + (search_results_2 or "")
         if search_results_3:
-            combined += "\n\n--- 放宽 threshold 重试 ---\n\n" + (search_results_3 or "")
+            combined += "\n\n--- Retry with relaxed threshold ---\n\n" + (search_results_3 or "")
         self.logger.info("SearchExp completed")
         return combined, trajectories

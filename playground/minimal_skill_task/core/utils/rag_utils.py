@@ -1,4 +1,4 @@
-"""RAG 相关工具：解析 Plan 输出、提取 Agent 回答、数据库参数、更新 prompt 占位符"""
+"""RAG-related utilities: parse Plan output, extract agent responses, handle database parameters, and update prompt placeholders."""
 
 import json
 import os
@@ -9,28 +9,28 @@ from typing import Any
 DEFAULT_VEC_DIR = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft"
 DEFAULT_NODES_DATA = "evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft/draft_407_75_db.json"
 
-# 全局 embedding 配置（由 playground 设置）
+# Global embedding configuration (set by the playground).
 _embedding_config: dict | None = None
 
 
 def set_embedding_config(config: dict | None) -> None:
-    """设置全局 embedding 配置（由 playground 调用）"""
+    """Set the global embedding configuration (called by the playground)."""
     global _embedding_config
     _embedding_config = config
 
 
 def get_embedding_config() -> dict | None:
-    """获取全局 embedding 配置"""
+    """Get the global embedding configuration."""
     return _embedding_config
 
 
 def _project_root() -> Path:
-    """项目根目录（含 evomaster/、playground/；从 rag_utils 上三级到 core 再上两级）"""
+    """Project root directory (contains evomaster/ and playground/; go three levels up from rag_utils to core, then two more levels up)."""
     return Path(__file__).resolve().parent.parent.parent.parent.parent
 
 
 def _resolve_db_path(path_str: str, root: Path) -> str:
-    """将相对路径（如 evomaster/...）转为绝对路径；已是绝对路径则返回原样。"""
+    """Convert a relative path (such as evomaster/...) to an absolute path; return as-is if it's already absolute."""
     if not path_str or not path_str.strip():
         return path_str
     p = Path(path_str.strip().replace("\\", "/"))
@@ -40,7 +40,7 @@ def _resolve_db_path(path_str: str, root: Path) -> str:
 
 
 def resolve_db_to_absolute_paths(db: dict, project_root: Path | None = None) -> dict:
-    """将 db 中的 vec_dir、nodes_data、model 转为绝对路径（便于 RAG 与各 Agent 使用）。"""
+    """Convert vec_dir, nodes_data, and model in db to absolute paths (for convenient use by RAG and all agents)."""
     root = project_root or _project_root()
     result = {
         "vec_dir": _resolve_db_path(db["vec_dir"], root),
@@ -48,7 +48,7 @@ def resolve_db_to_absolute_paths(db: dict, project_root: Path | None = None) -> 
         "model": _resolve_db_path(db["model"], root),
     }
     
-    # 添加 embedding 配置参数
+    # Add embedding configuration parameters.
     embedding_config = get_embedding_config()
     if embedding_config:
         emb_type = embedding_config.get("type", "local")
@@ -59,7 +59,7 @@ def resolve_db_to_absolute_paths(db: dict, project_root: Path | None = None) -> 
             result["model"] = openai_cfg.get("model", "text-embedding-3-large")
             result["embedding_dimensions"] = openai_cfg.get("dimensions")
         else:
-            # local 模式下不再强制回退到项目内置模型，必须在配置中显式提供 local.model
+            # In local mode, do not fall back to a built-in model; local.model must be provided explicitly in the config.
             local_cfg = embedding_config.get("local", {})
             local_model = (local_cfg.get("model") or "").strip()
             if local_model:
@@ -70,7 +70,7 @@ def resolve_db_to_absolute_paths(db: dict, project_root: Path | None = None) -> 
 
 
 def parse_plan_output(text: str) -> dict:
-    """从 Plan Agent 输出中解析 query、top_k、threshold"""
+    """Parse query, top_k, and threshold from the Plan Agent output."""
     out = {"query": "", "top_k": 5, "threshold": 1.5}
     if not text:
         return out
@@ -87,14 +87,14 @@ def parse_plan_output(text: str) -> dict:
 
 
 def extract_agent_response(trajectory: Any) -> str:
-    """从轨迹中提取 Agent 的最终回答。若 Agent 用 finish 结束，取 finish 的 message；否则取最后一条 assistant content。"""
+    """Extract the final answer from an agent trajectory. If the agent finishes via a finish tool, use its message; otherwise use the last assistant content."""
     if not trajectory or not trajectory.dialogs:
         return ""
     last_dialog = trajectory.dialogs[-1]
     for message in reversed(last_dialog.messages):
         if not (hasattr(message, "role") and getattr(message.role, "value", message.role) == "assistant"):
             continue
-        # 若该条 assistant 调用了 finish，优先用 finish 的 message 作为回答
+        # If this assistant message invoked the finish tool, prefer using the finish message as the answer.
         if hasattr(message, "tool_calls") and message.tool_calls:
             for tc in message.tool_calls:
                 fn = getattr(tc, "function", tc) if hasattr(tc, "function") else tc
@@ -113,13 +113,13 @@ def extract_agent_response(trajectory: Any) -> str:
 
 
 def get_db_from_description(description: str) -> dict:
-    """从任务描述中解析数据库参数，未出现则用默认值（相对路径）。"""
+    """Parse database parameters from the task description, falling back to default (relative) values if a field is missing."""
     db = {
         "vec_dir": DEFAULT_VEC_DIR,
         "nodes_data": DEFAULT_NODES_DATA,
-        # 默认不指定具体模型，避免隐式依赖项目内置路径；由上层配置或描述中显式给出
+        # By default do not specify a concrete model to avoid implicit dependence on project-internal paths; this should be given explicitly in higher-level config or in the description.
         "model": "",
-        # 默认 embedding 参数（会被 resolve_db_to_absolute_paths 覆盖/补全）
+        # Default embedding parameters (will be overwritten / completed by resolve_db_to_absolute_paths).
         "embedding_type": "local",
         "embedding_dimensions": "",
     }
@@ -139,6 +139,6 @@ def get_db_from_description(description: str) -> dict:
 
 
 def update_agent_format_kwargs(agent, **kwargs) -> None:
-    """更新 agent 的 prompt_format_kwargs（用于 user prompt 占位符）"""
+    """Update an agent's prompt_format_kwargs (used for user prompt placeholders)."""
     if hasattr(agent, "_prompt_format_kwargs"):
         agent._prompt_format_kwargs.update(kwargs)

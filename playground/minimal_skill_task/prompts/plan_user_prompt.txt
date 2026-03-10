@@ -1,5 +1,5 @@
-# 当前阶段输入（含 Analyze 输出：仅 (1) 数据库结构说明 与 (2) query 写作规范）
+# Current stage input (including Analyze output: only (1) database structure description and (2) query writing guidelines)
 {stage_input}
 
-# Instruction 全文
+# Full instruction
 {task_description}
