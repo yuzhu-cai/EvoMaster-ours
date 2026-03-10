@@ -77,7 +77,7 @@ EvoMaster is the engine behind the cutting-edge **SciMaster** family of agents. 
 
 We are committed to open-sourcing EvoMaster and its ecosystem in stages to ensure quality and stability.
 
-[ ] **Phase 1: The Core (Expected: End of Feb 2026)**
+[x] **Phase 1: The Core (Expected: End of Feb 2026)**
 * Release of `EvoMaster` base framework code.
 * Basic documentation and easy agent examples.
 
@@ -128,10 +128,12 @@ EvoMaster/
 | Playground | Description | Documentation |
 |------------|-------------|---------------|
 | `minimal` | Basic single-agent playground | [README](./playground/minimal/README.md) |
-| `minimal_kaggle` | Kaggle competition automation | [README](./playground/minimal_kaggle/README.md) |
+| `minimal_kaggle` | Simple Kaggle competition automation | [README](./playground/minimal_kaggle/README.md) |
 | `minimal_multi_agent` | Planning + Coding agents | [README](./playground/minimal_multi_agent/README.md) |
 | `minimal_skill_task` | RAG-based Analyze→Search→Summarize | [README](./playground/minimal_skill_task/README.md) |
 | `x_master` | 4-phase parallel workflow | [README](./playground/x_master/README.md) |
+| `ML-Master 2.0` |  Complex agentic science multi-agent framework for Autonomous Machine Learning| [README](./playground/ml_master_2/README.md) |
+
 
 ## 🚀 Quick Start
 
