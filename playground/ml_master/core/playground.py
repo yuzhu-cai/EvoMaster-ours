@@ -31,6 +31,15 @@ class MLMasterPlayground(BasePlayground):
     """UCT-driven orchestrator for draft/debug/improve workflow."""
 
     def __init__(self, config_dir: Path | None = None, config_path: Path | None = None):
+        """Initialize MLMasterPlayground.
+
+        Args:
+            config_dir: Directory path.
+            config_path: Filesystem path.
+
+        Returns:
+            None.
+        """
         if config_path is None and config_dir is None:
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "ml_master"
 
@@ -44,6 +53,11 @@ class MLMasterPlayground(BasePlayground):
         self.max_workers = int(cfg.get("max_parallel", 1)) if cfg.get("enabled", False) else 1
 
     def setup(self) -> None:
+        """Execute setup.
+
+        Returns:
+            None.
+        """
         self.logger.info("Setting up MLMasterPlayground...")
         self._setup_session()
         self._setup_agents()
@@ -86,6 +100,14 @@ class MLMasterPlayground(BasePlayground):
 
             # Step 2: worker execution loop.
             def worker_loop(worker_index: int) -> dict[str, Any]:
+                """Execute worker loop.
+
+                Args:
+                    worker_index: Numeric control parameter.
+
+                Returns:
+                    dict[str, Any]: Result of this function.
+                """
                 worker_agents = worker_agents_map[worker_index]
                 worker_workspace = resolve_worker_workspace(self.config, worker_index, workspace)
                 worker_workspace.mkdir(parents=True, exist_ok=True)

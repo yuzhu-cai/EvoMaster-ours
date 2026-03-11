@@ -1,4 +1,5 @@
-# playground/ml_master/utils/mlebench_grade.py
+"""Utilities for running `mlebench grade-sample` on best submissions."""
+
 from __future__ import annotations
 
 import json
@@ -11,11 +12,18 @@ from typing import Any
 
 
 def _parse_report_json(output: str) -> dict[str, Any] | None:
-    # 从输出里抓最后一个 JSON dict 且含 competition_id
+    """Parse the last JSON object containing `competition_id` from CLI output.
+
+    Args:
+        output: Combined stdout/stderr text from mlebench.
+
+    Returns:
+        dict[str, Any] | None: Parsed report JSON when found, otherwise `None`.
+    """
     matches = re.findall(r"(\{[\s\S]*?\})", output)
-    for s in reversed(matches):
+    for chunk in reversed(matches):
         try:
-            obj = json.loads(s)
+            obj = json.loads(chunk)
             if isinstance(obj, dict) and "competition_id" in obj:
                 return obj
         except Exception:
@@ -30,9 +38,16 @@ def grade_best_submission_and_save(
     out_name: str = "mlebench_grade.json",
     overwrite: bool = False,
 ) -> Path:
-    """
-    在 workspace_dir 下寻找 best_submission/*.csv，执行 mlebench grade-sample，并把结果写到 workspace_dir/out_name
-    返回写入的 json 路径。
+    """Grade the newest CSV in `best_submission` and persist a JSON report.
+
+    Args:
+        workspace_dir: Workspace root that contains `best_submission`.
+        competition_id: Competition identifier passed to mlebench.
+        out_name: Output JSON file name under workspace directory.
+        overwrite: Whether to overwrite an existing output file.
+
+    Returns:
+        Path: Path to the saved grading report JSON.
     """
     workspace_dir = Path(workspace_dir)
     out_path = workspace_dir / out_name
@@ -58,7 +73,7 @@ def grade_best_submission_and_save(
         out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return out_path
 
-    # 多个就取最新
+    # Use the most recently modified submission when multiple files exist.
     csvs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     csv_path = csvs[0]
     payload["submission_csv"] = str(csv_path)
@@ -69,13 +84,13 @@ def grade_best_submission_and_save(
         return out_path
 
     cmd = ["mlebench", "grade-sample", str(csv_path), competition_id]
-    p = subprocess.run(cmd, capture_output=True, text=True)
-    combined = (p.stdout or "") + "\n" + (p.stderr or "")
+    process = subprocess.run(cmd, capture_output=True, text=True)
+    combined = (process.stdout or "") + "\n" + (process.stderr or "")
 
     report = _parse_report_json(combined)
     payload.update(
-        status="completed" if p.returncode == 0 and report is not None else "failed",
-        returncode=p.returncode,
+        status="completed" if process.returncode == 0 and report is not None else "failed",
+        returncode=process.returncode,
         report=report,
         raw_output_tail=combined[-6000:],
     )

@@ -10,6 +10,17 @@ class DebugExp(NodeExp):
     """Debug stage for repairing failed nodes."""
 
     def run(self, task_description: str, prev_code: str, term_out: str, issue: str) -> dict:
+        """Run this experiment stage.
+
+        Args:
+            task_description: Natural language task description.
+            prev_code: Previous Python code string.
+            term_out: Terminal output text.
+            issue: Issue description used for debugging.
+
+        Returns:
+            dict: Result of this function.
+        """
         node_id = self.node.id
         BaseAgent.set_exp_info(exp_name=f"debug_{node_id[:8]}", exp_index=self.exp_index)
 

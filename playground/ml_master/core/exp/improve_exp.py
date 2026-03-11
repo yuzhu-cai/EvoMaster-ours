@@ -17,6 +17,18 @@ class ImproveExp(NodeExp):
         memory: str,
         term_out: str,
     ) -> dict:
+        """Run this experiment stage.
+
+        Args:
+            task_description: Natural language task description.
+            best_code: Current best Python code string.
+            best_metric: Metric value or metric-related input.
+            memory: Context memory text.
+            term_out: Terminal output text.
+
+        Returns:
+            dict: Result of this function.
+        """
         node_id = self.node.id
         BaseAgent.set_exp_info(exp_name=f"improve_{node_id[:8]}", exp_index=self.exp_index)
 

@@ -40,12 +40,26 @@ def _create_app(base_dir: Path) -> Flask:
     new_registry = registry.set_data_dir(private_dir)
 
     def run_validation(submission: Path, competition_id: str) -> Tuple[bool, str]:
+        """Run validation.
+
+        Args:
+            submission: Submission-related path or value.
+            competition_id: Identifier string.
+
+        Returns:
+            Tuple[bool, str]: Result of this function.
+        """
         competition = new_registry.get_competition(competition_id)
         is_valid, message = _bench_validate(submission, competition)
         return is_valid, message
 
     @app.route("/validate", methods=["POST"])
     def validate():
+        """Execute validate.
+
+        Returns:
+            Result of this function.
+        """
         submission_file = request.files["file"]
         competition_id = request.headers.get("exp-id")
         submission_path = Path("/tmp/submission_to_validate.csv")
@@ -60,17 +74,39 @@ def _create_app(base_dir: Path) -> Flask:
 
     @app.route("/health", methods=["GET"])
     def health():
+        """Execute health.
+
+        Returns:
+            Result of this function.
+        """
         return jsonify({"status": "running"}), 200
 
     return app
 
 
 def _is_local_url(url: str) -> bool:
+    """Execute is local url.
+
+    Args:
+        url: Value for url.
+
+    Returns:
+        bool: Result of this function.
+    """
     host = urlparse(url).hostname
     return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
 def _http_get(url: str, timeout: int):
+    """Execute http get.
+
+    Args:
+        url: Value for url.
+        timeout: Numeric control parameter.
+
+    Returns:
+        Result of this function.
+    """
     if _is_local_url(url):
         with requests.Session() as session:
             # Keep global proxies for external requests, but bypass for localhost.
@@ -84,6 +120,16 @@ def _parse_host_port(
     default_host: str = "127.0.0.1",
     default_port: int = 5003,
 ) -> Tuple[str, int]:
+    """Execute parse host port.
+
+    Args:
+        url: Value for url.
+        default_host: Value for default host.
+        default_port: Value for default port.
+
+    Returns:
+        Tuple[str, int]: Result of this function.
+    """
     parsed = urlparse(url)
     host = parsed.hostname or default_host
     port = parsed.port or default_port
@@ -91,6 +137,15 @@ def _parse_host_port(
 
 
 def _is_healthy(url: str, timeout: int = 5) -> bool:
+    """Execute is healthy.
+
+    Args:
+        url: Value for url.
+        timeout: Numeric control parameter.
+
+    Returns:
+        bool: Result of this function.
+    """
     try:
         resp = _http_get(url.rstrip("/") + "/health", timeout=timeout)
         return resp.status_code == 200
@@ -99,6 +154,15 @@ def _is_healthy(url: str, timeout: int = 5) -> bool:
 
 
 def _wait_for_health(url: str, timeout: int = 30) -> bool:
+    """Execute wait for health.
+
+    Args:
+        url: Value for url.
+        timeout: Numeric control parameter.
+
+    Returns:
+        bool: Result of this function.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         if _is_healthy(url, timeout=2):
@@ -108,6 +172,14 @@ def _wait_for_health(url: str, timeout: int = 30) -> bool:
 
 
 def _is_local_host(host: str) -> bool:
+    """Execute is local host.
+
+    Args:
+        host: Value for host.
+
+    Returns:
+        bool: Result of this function.
+    """
     return host in {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
 
 
