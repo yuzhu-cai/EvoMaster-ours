@@ -90,12 +90,12 @@ class SchedulerConfig(BaseConfig):
     max_retries: int = Field(default=3, description="最大重试次数")
 
 
-class EnvConfig(BaseConfig):
-    """环境配置（集群 / Docker / 调度器）。
-    Bohrium 鉴权（BOHRIUM_ACCESS_KEY, BOHRIUM_PROJECT_ID 等）由 .env 提供，供 MCP calculation path adaptor 注入到 executor/storage。"""
-    cluster: ClusterConfig = Field(default_factory=ClusterConfig, description="集群配置")
-    docker: DockerEnvConfig = Field(default_factory=DockerEnvConfig, description="Docker 配置")
-    scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig, description="调度器配置")
+# class EnvConfig(BaseConfig):
+#     """环境配置(集群 / Docker / 调度器)。
+#     Bohrium 鉴权(BOHRIUM_ACCESS_KEY, BOHRIUM_PROJECT_ID 等)由 .env 提供, 供 MCP calculation path adaptor 注入到 executor/storage。"""
+#     cluster: ClusterConfig = Field(description="集群配置")
+#     docker: DockerEnvConfig = Field(description="Docker 配置")
+#     scheduler: SchedulerConfig = Field(description="调度器配置")
 
 class ToolConfig(BaseConfig):
     """Tools 配置"""
@@ -138,7 +138,7 @@ class EvoMasterConfig(BaseConfig):
     session: dict[str, Any] = Field(default_factory=dict, description="Session 配置")
 
     # Env 配置
-    env: EnvConfig = Field(default_factory=EnvConfig, description="环境配置")
+    # env: EnvConfig = Field(default_factory=EnvConfig, description="环境配置")
 
     # Tools 配置
     tools: ToolConfig = Field(default_factory=ToolConfig, description="Tools 配置")

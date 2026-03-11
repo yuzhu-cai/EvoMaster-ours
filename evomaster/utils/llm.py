@@ -114,20 +114,18 @@ def build_multimodal_content(text: str, image_paths: list[str]) -> list[dict[str
 
 
 def truncate_content(content: str, max_length: int = 5000, head_length: int = 2500, tail_length: int = 2500) -> str:
-    """截断内容，如果超过最大长度，保留开头和结尾部分
+    """返回完整内容（不截断），用于日志记录展示全部内容
     
     Args:
-        content: 要截断的内容
-        max_length: 最大长度阈值，超过此长度才截断
-        head_length: 保留的开头部分长度
-        tail_length: 保留的结尾部分长度
+        content: 要显示的内容
+        max_length: 未使用，保留参数兼容性
+        head_length: 未使用，保留参数兼容性
+        tail_length: 未使用，保留参数兼容性
     
     Returns:
-        截断后的内容
+        完整内容
     """
-    if len(content) <= max_length:
-        return content
-    return content[:head_length] + "\n... [truncated] ...\n" + content[-tail_length:]
+    return content
 
 
 class LLMConfig(BaseModel):
@@ -321,9 +319,6 @@ class BaseLLM(ABC):
                         import json
                         args_dict = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
                         args_display = json.dumps(args_dict, indent=2, ensure_ascii=False)
-                        # 如果参数太长，截断
-                        if len(args_display) > 500:
-                            args_display = args_display[:500] + "\n    ... [truncated]"
                     except:
                         args_display = str(tool_args)
 
