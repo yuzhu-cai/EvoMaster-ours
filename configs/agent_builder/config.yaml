@@ -73,8 +73,7 @@ agents:
       builtin: ["*"]
       feishu_doc_read: "feishu_doc_read"
       feishu_doc_write: "feishu_doc_write"
-      send_file: "send_file"
-      ask_user: "ask_user"  
+      send_file: "send_file" 
       
     context:
       max_tokens: 128000

@@ -60,7 +60,7 @@ agents:
       memory_search: "memory_search"
       memory_save: "memory_save"
       memory_forget: "memory_forget"
-
+      
     context:
       max_tokens: 128000
       truncation_strategy: "summary"
