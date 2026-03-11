@@ -84,8 +84,16 @@ class SearchExp(BaseExp):
 
         # ---------- Round 2: Plan (second params) ----------
         first_round_empty = _is_result_empty(search_results_1 or "")
-        # For the second-round plan, provide only the "first-round search results" as stage_input; the detailed multi-round strategy is constrained by plan_system_prompt.
-        stage_input_2 = "First-round search results:\n" + (search_results_1 or "(none)")
+        # For the second-round plan, provide both:
+        # (1) the Analyze output (query-writing guidelines, DB description), and
+        # (2) the first-round search results, so the planner can refine queries with full context.
+        stage_input_2_parts = [
+            "Analyze output:\n",
+            (analyze_output or "(none)"),
+            "\n\nFirst-round search results:\n",
+            (search_results_1 or "(none)"),
+        ]
+        stage_input_2 = "".join(stage_input_2_parts)
         update_agent_format_kwargs(
             self.plan_agent,
             task_description=task_description,
