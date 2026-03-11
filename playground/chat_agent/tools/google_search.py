@@ -8,6 +8,7 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
@@ -43,12 +44,19 @@ class GoogleSearchTool(BaseTool):
     name: ClassVar[str] = "google_search"
     params_class: ClassVar[type[BaseToolParams]] = GoogleSearchToolParams
 
-    def __init__(self, api_key: str):
+    def __init__(self):
         super().__init__()
-        self.api_key = api_key
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """执行 Google 搜索"""
+        api_key = os.environ.get("SERPER_KEY_ID")
+        if not api_key:
+            return (
+                "google_search: SERPER_KEY_ID environment variable is not set. "
+                "Please set it to use Google search.",
+                {"error": "SERPER_KEY_ID not configured"},
+            )
+
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -61,12 +69,12 @@ class GoogleSearchTool(BaseTool):
 
         results = []
         for q in queries:
-            results.append(self._search_single(q))
+            results.append(self._search_single(q, api_key))
 
         response = "\n---\n".join(results)
         return response, {"queries": queries}
 
-    def _search_single(self, query: str) -> str:
+    def _search_single(self, query: str, api_key: str) -> str:
         """执行单个查询的 Google 搜索"""
         conn = http.client.HTTPSConnection("google.serper.dev")
 
@@ -86,7 +94,7 @@ class GoogleSearchTool(BaseTool):
             })
 
         headers = {
-            "X-API-KEY": self.api_key,
+            "X-API-KEY": api_key,
             "Content-Type": "application/json",
         }
 

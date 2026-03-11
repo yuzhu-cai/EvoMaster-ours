@@ -50,7 +50,16 @@ agents:
     finish_on_text_response: true
     tools:
       builtin: ["*"]
-      search: "google"   # "ai_search" 或 "google"(google_search + web_fetch)
+      google_search: "google_search"   # 自定义工具：google_search 或 ai_search
+      ai_search: "ai_search"   # 自定义工具：google_search 或 ai_search
+      web_fetch: "web_fetch"  # 网页抓取工具（可选）
+      ask_user: "ask_user"  # 用户提问工具（可选）
+      delegate_to_agent: "delegate_to_agent"  # 委托给其他代理工具（可选）
+      feishu_doc_read: "feishu_doc_read"  # 飞书文档阅读工具（可选）
+      send_file: "send_file"
+      memory_search: "memory_search"
+      memory_save: "memory_save"
+      memory_forget: "memory_forget"
 
     context:
       max_tokens: 128000

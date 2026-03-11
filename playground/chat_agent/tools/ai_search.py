@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import Field
@@ -40,14 +41,28 @@ class AISearchTool(BaseTool):
     name: ClassVar[str] = "ai_search"
     params_class: ClassVar[type[BaseToolParams]] = AISearchToolParams
 
-    def __init__(self, api_key: str, base_url: str, model: str):
+    def __init__(self):
         super().__init__()
-        self.api_key = api_key
-        self.base_url = base_url
-        self.model = model
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """执行 AI 综合搜索"""
+        api_key = os.environ.get("WEB_SEARCH_API_KEY")
+        base_url = os.environ.get("WEB_SEARCH_BASE_URL")
+        model = os.environ.get("WEB_SEARCH_MODEL")
+        if not all([api_key, base_url, model]):
+            missing = []
+            if not api_key:
+                missing.append("WEB_SEARCH_API_KEY")
+            if not base_url:
+                missing.append("WEB_SEARCH_BASE_URL")
+            if not model:
+                missing.append("WEB_SEARCH_MODEL")
+            return (
+                f"ai_search: missing environment variables: {', '.join(missing)}. "
+                "Please set them to use AI search.",
+                {"error": f"Missing: {missing}"},
+            )
+
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -61,9 +76,9 @@ class AISearchTool(BaseTool):
         try:
             from openai import OpenAI
 
-            client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+            client = OpenAI(api_key=api_key, base_url=base_url)
             response = client.chat.completions.create(
-                model=self.model,
+                model=model,
                 messages=[{"role": "user", "content": query}],
             )
             result = response.choices[0].message.content or ""
@@ -77,7 +92,7 @@ class AISearchTool(BaseTool):
                 result = f"{result}\n\nSources:\n{refs}"
 
             self.logger.info("AI search completed, result length: %d", len(result))
-            return result, {"query": query, "model": self.model, "citations": citations}
+            return result, {"query": query, "model": model, "citations": citations}
 
         except Exception as e:
             self.logger.error("AI search failed: %s", e)

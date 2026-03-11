@@ -346,13 +346,16 @@ class ConfigManager:
                builtin: []            → 禁用所有 builtin
           8) tools:
                mcp: "custom_mcp.json" → 使用指定的 MCP 配置文件
+          9) tools:
+               search: "google_search"       → 自定义工具配置（任意字段名）
 
         Returns:
-            标准化后的 dict, 形如 {"builtin": list[str], "mcp": str}
+            标准化后的 dict, 形如 {"builtin": list[str], "mcp": str, "custom": dict}
             其中 mcp 为 MCP 配置文件路径（相对于 config_dir），空字符串表示不启用 MCP
+            custom 包含除 builtin 和 mcp 之外的所有自定义工具配置
         """
-        _DEFAULT = {"builtin": ["*"], "mcp": ""}
-        _EMPTY = {"builtin": [], "mcp": ""}
+        _DEFAULT = {"builtin": ["*"], "mcp": "", "custom": {}}
+        _EMPTY = {"builtin": [], "mcp": "", "custom": {}}
 
         config = self.load()
         agents = self._require_dict(config.agents, "agents")
@@ -427,7 +430,10 @@ class ConfigManager:
                 f"got {type(raw_mcp).__name__}"
             )
 
-        return {"builtin": builtin, "mcp": mcp}
+        # 提取自定义工具配置（除 builtin 和 mcp 之外的所有字段）
+        custom = {k: v for k, v in raw_tools.items() if k not in ("builtin", "mcp")}
+
+        return {"builtin": builtin, "mcp": mcp, "custom": custom}
     
     def get_agent_skills_config(self, name: str) -> dict[str, Any]:
         """获取 Agent Skills 配置

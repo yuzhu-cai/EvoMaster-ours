@@ -421,8 +421,9 @@ class BasePlayground:
 
         Args:
             skill_config: 未使用（保留以兼容调用方），Skill 始终全量注册
-            tool_config: per-agent 工具配置，形如 {"builtin": list[str], "mcp": str}
+            tool_config: per-agent 工具配置，形如 {"builtin": list[str], "mcp": str, "custom": dict}
                          其中 mcp 为 MCP 配置文件路径，空字符串表示不启用
+                         custom 为自定义工具配置，形如 {"search": "google_search"}
         """
         tool_config = tool_config or {"builtin": ["*"], "mcp": ""}
 
@@ -442,6 +443,121 @@ class BasePlayground:
                 self.mcp_manager = self._setup_mcp_tools(mcp_config_file)
             elif self.mcp_manager is not None:
                 self.mcp_manager.register_tools(self.tools)
+
+        # 自动注册自定义工具
+        custom_tools = tool_config.get("custom", {})
+        if custom_tools:
+            self._register_custom_tools(custom_tools)
+
+    def _register_custom_tools(self, custom_tools: dict[str, Any]) -> None:
+        """自动发现并注册自定义工具
+
+        根据配置文件中的自定义工具配置，自动导入并注册工具类。
+        支持从 playground 目录下的 tools 子目录自动加载工具。
+
+        Args:
+            custom_tools: 自定义工具配置，形如 {"search": "google_search", "other": "custom_tool"}
+                         键是工具类型（如 "search"），值是工具名称（如 "google_search"）
+
+        示例:
+            配置: {"search": "google_search"}
+            会尝试加载: playground/{playground_name}/tools/google_search.py
+            并注册其中的工具类（类名通常是 GoogleSearchTool）
+        """
+        if not custom_tools:
+            return
+
+        # 推断 playground 目录
+        # config_dir 通常是 /path/to/configs/{playground_name}
+        # playground_dir 应该是 /path/to/playground/{playground_name}
+        playground_dir = Path(str(self.config_dir).replace("configs", "playground"))
+        tools_dir = playground_dir / "tools"
+
+        if not tools_dir.exists():
+            self.logger.warning(f"Custom tools directory not found: {tools_dir}")
+            return
+
+        self.logger.info(f"Loading custom tools from: {tools_dir}")
+
+        for tool_key, tool_name in custom_tools.items():
+            self.logger.info(f"Loading custom tool: {tool_key} -> {tool_name}")
+            if not isinstance(tool_name, str):
+                self.logger.warning(f"Invalid tool name for '{tool_key}': {tool_name}")
+                continue
+
+            # 尝试加载工具模块
+            tool_module_path = tools_dir / f"{tool_name}.py"
+            if not tool_module_path.exists():
+                self.logger.warning(f"Tool module not found: {tool_module_path}")
+                continue
+
+            try:
+                # 动态导入工具模块
+                import importlib.util
+                import sys
+
+                module_name = f"playground.{playground_dir.name}.tools.{tool_name}"
+                spec = importlib.util.spec_from_file_location(module_name, tool_module_path)
+                if spec is None or spec.loader is None:
+                    self.logger.warning(f"Failed to load module spec for: {tool_module_path}")
+                    continue
+
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[module_name] = module
+                spec.loader.exec_module(module)
+
+                # 查找工具类（通常是继承自 BaseTool 的类）
+                from evomaster.agent.tools.base import BaseTool
+                tool_class = None
+                for attr_name in dir(module):
+                    attr = getattr(module, attr_name)
+                    if (isinstance(attr, type) and
+                        issubclass(attr, BaseTool) and
+                        attr is not BaseTool and
+                        hasattr(attr, 'name')):
+                        tool_class = attr
+                        break
+
+                if tool_class is None:
+                    self.logger.warning(f"No tool class found in module: {tool_module_path}")
+                    continue
+
+                # 调用子类的工具初始化方法（如果存在）
+                tool_instance = self._create_custom_tool_instance(tool_class, tool_name, tool_key)
+
+                if tool_instance is not None:
+                    # 注册工具到所有 agent
+                    self.tools.register(tool_instance)
+                    self.logger.info(f"Registered custom tool: {tool_name} (class: {tool_class.__name__})")
+                else:
+                    self.logger.warning(f"Failed to create instance for tool: {tool_name}")
+
+            except Exception as e:
+                self.logger.error(f"Failed to load custom tool '{tool_name}': {e}", exc_info=True)
+
+    def _create_custom_tool_instance(self, tool_class: type, tool_name: str, tool_key: str):
+        """创建自定义工具实例
+
+        子类可以覆盖此方法来提供自定义的工具初始化逻辑。
+
+        Args:
+            tool_class: 工具类
+            tool_name: 工具名称（如 "google_search"）
+            tool_key: 工具配置键（如 "search"）
+
+        Returns:
+            工具实例，如果创建失败则返回 None
+        """
+        # 默认实现：尝试无参数构造
+        try:
+            return tool_class()
+        except TypeError:
+            # 如果需要参数，子类应该覆盖此方法
+            self.logger.warning(
+                f"Tool class {tool_class.__name__} requires constructor arguments. "
+                f"Please override _create_custom_tool_instance() in your playground class."
+            )
+            return None
 
     def _setup_agents(self) -> None:
         """按配置创建所有 Agent, 初始化self.agents"""
@@ -520,9 +636,10 @@ class BasePlayground:
         # 根据 tool_config 推断是否启用工具
         builtin = tool_config.get("builtin", ["*"])
         mcp_config_file = tool_config.get("mcp", "")
+        custom_tools = tool_config.get("custom", {})
         skills = skill_config.get("skills", [])
         # enable_tools = bool(builtin) or bool(mcp_config_file)
-        if builtin == [] and mcp_config_file == "" and skill_config.get("skills", []) == [] :
+        if builtin == [] and mcp_config_file == "" and skill_config.get("skills", []) == [] and not custom_tools:
             enable_tools = False
         else:
             enable_tools = True
@@ -540,6 +657,31 @@ class BasePlayground:
             enabled_tool_names.extend(self.mcp_manager.get_tool_names())
         if skills != []:
             enabled_tool_names.extend(["use_skill"])
+
+        # 添加自定义工具到 enabled_tool_names
+        # 自定义工具的工具名称就是配置中的键名（如 "search" -> "google_search" 或 "ai_search"）
+        for custom_tool_key, custom_tool_value in custom_tools.items():
+            self.logger.info(f"Custom tool: {custom_tool_key} -> {custom_tool_value}")
+            enabled_tool_names.append(custom_tool_value)
+            continue
+            # 根据配置值推断实际的工具名称
+            # 例如: search: "google" -> 启用 google_search 和 web_fetch
+            #      search: "ai_search" -> 启用 ai_search
+            if custom_tool_key == "search":
+                if custom_tool_value == "google":
+                    # Google 搜索模式：启用 google_search 和 web_fetch
+                    if self.tools.get_tool("google_search") is not None:
+                        enabled_tool_names.append("google_search")
+                    if self.tools.get_tool("web_fetch") is not None:
+                        enabled_tool_names.append("web_fetch")
+                elif custom_tool_value == "ai_search":
+                    # AI 搜索模式：启用 ai_search
+                    if self.tools.get_tool("ai_search") is not None:
+                        enabled_tool_names.append("ai_search")
+            else:
+                # 其他自定义工具：直接使用键名作为工具名称
+                if self.tools.get_tool(custom_tool_key) is not None:
+                    enabled_tool_names.append(custom_tool_key)
 
         self.logger.info(f"Enabled tools: {enabled_tool_names}")
 

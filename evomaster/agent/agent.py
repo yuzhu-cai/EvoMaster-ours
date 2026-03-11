@@ -597,9 +597,16 @@ class BaseAgent(ABC):
             return []
         else:
             all_specs = self.tools.get_tool_specs()
-            self.logger.info("Enabled tool names:")
-            self.logger.info([spec.function.name for spec in all_specs if spec.function.name in self.enabled_tool_names])
-            return [spec for spec in all_specs if spec.function.name in self.enabled_tool_names]
+            self.logger.info("All tool names:")
+            self.logger.info([spec.function.name for spec in all_specs])
+            if self.enabled_tool_names:
+                filtered_specs = [spec for spec in all_specs if spec.function.name in self.enabled_tool_names]
+                self.logger.info("Enabled tool names:")
+                self.logger.info([spec.function.name for spec in filtered_specs])
+                return filtered_specs
+            else:
+                # 如果没有指定 enabled_tool_names，返回所有工具
+                return all_specs
 
     def load_prompt_from_file(
         self,
@@ -1076,8 +1083,7 @@ Additional Information:
 
     def _get_tool_specs(self) -> list:
         """获取工具规格列表
-        
-        覆盖基类方法，但逻辑与基类相同（已移至基类）。
-        保留此方法以保持向后兼容性。
+
+        覆盖基类方法，调用基类实现。
         """
         return super()._get_tool_specs()

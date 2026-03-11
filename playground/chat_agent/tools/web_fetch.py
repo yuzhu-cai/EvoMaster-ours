@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import requests
@@ -64,13 +66,29 @@ class WebFetchTool(BaseTool):
     name: ClassVar[str] = "web_fetch"
     params_class: ClassVar[type[BaseToolParams]] = WebFetchToolParams
 
-    def __init__(self, jina_api_key: str | None = None, llm: BaseLLM | None = None):
+    def __init__(self):
         super().__init__()
-        self.jina_api_key = jina_api_key
-        self._llm = llm
+        self._llm = None
+
+    def _get_llm(self):
+        """延迟加载 LLM（从 chat_agent 配置）"""
+        if self._llm is None:
+            try:
+                from evomaster.config import ConfigManager
+                from evomaster.utils.llm import LLMConfig, create_llm
+
+                config_dir = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "chat_agent"
+                config_manager = ConfigManager(config_dir=config_dir)
+                llm_cfg = config_manager.get_llm_config()
+                self._llm = create_llm(LLMConfig(**llm_cfg))
+            except Exception as e:
+                self.logger.warning("Failed to create LLM for web_fetch extraction: %s", e)
+        return self._llm
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """抓取网页内容并用 LLM 提取关键信息"""
+        jina_api_key = os.environ.get("JINA_API_KEY")
+
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -88,14 +106,14 @@ class WebFetchTool(BaseTool):
             if time.time() - start_time > 300:
                 results.append(f"[web_fetch] Skipped {u}: total fetch time exceeded 5 minutes.")
                 continue
-            results.append(self._fetch_and_extract(u, goal))
+            results.append(self._fetch_and_extract(u, goal, jina_api_key))
 
         response = "\n---\n".join(results)
         return response, {"urls": urls, "goal": goal}
 
-    def _fetch_and_extract(self, url: str, goal: str) -> str:
+    def _fetch_and_extract(self, url: str, goal: str, jina_api_key: str | None) -> str:
         """抓取单个页面并用 LLM 提取信息"""
-        content = self._fetch_single(url)
+        content = self._fetch_single(url, jina_api_key)
 
         if content.startswith("[web_fetch]"):
             return content
@@ -108,11 +126,11 @@ class WebFetchTool(BaseTool):
         extracted = self._extract_with_llm(content, url, goal)
         return extracted
 
-    def _fetch_single(self, url: str) -> str:
+    def _fetch_single(self, url: str, jina_api_key: str | None) -> str:
         """使用 Jina Reader API 抓取单个页面"""
         headers = {}
-        if self.jina_api_key:
-            headers["Authorization"] = f"Bearer {self.jina_api_key}"
+        if jina_api_key:
+            headers["Authorization"] = f"Bearer {jina_api_key}"
 
         for attempt in range(3):
             try:
