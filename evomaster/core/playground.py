@@ -17,7 +17,7 @@ import random
 
 from evomaster.config import ConfigManager
 from evomaster.utils import LLMConfig, create_llm
-from evomaster.agent import create_default_registry, BaseAgent, Agent, AgentConfig
+from evomaster.agent import create_default_registry, create_registry, BaseAgent, Agent, AgentConfig
 from evomaster.agent.context import ContextConfig
 from evomaster.agent.session import LocalSession, LocalSessionConfig, DockerSession, DockerSessionConfig
 from evomaster.agent.tools import MCPToolManager
@@ -305,8 +305,21 @@ class BasePlayground:
         return SkillRegistry(skills_root, skills=skills)
 
 
+    def _get_or_create_full_skill_registry(self) -> SkillRegistry:
+        """始终创建/获取全量 SkillRegistry（与 builtin 一致：始终注册，config 仅控制是否暴露给 LLM）。"""
+        skills_config = getattr(self.config, "skills", None)
+        if isinstance(skills_config, dict):
+            skills_root = Path(skills_config.get("skills_root", "evomaster/skills"))
+        else:
+            skills_root = Path("evomaster/skills")
+        if self._base_skill_registry is None:
+            self.logger.info(f"Loading full skill registry from: {skills_root}")
+            self._base_skill_registry = SkillRegistry(skills_root)
+            self.logger.info(f"Loaded {len(self._base_skill_registry.get_all_skills())} skills")
+        return self._base_skill_registry
+
     def _resolve_skill_registry(self, skill_config: dict | None) -> SkillRegistry | None:
-        """根据 skill_config 解析 SkillRegistry（可为子集）。"""
+        """根据 skill_config 解析 SkillRegistry（可为子集）。用于 Agent 的 skill_registry 参数。"""
         if not skill_config:
             return None
 
@@ -370,31 +383,37 @@ class BasePlayground:
     def _setup_tools(
         self,
         skill_config: dict | None = None,
-        enable_tools: bool = True,
         tool_config: dict[str, Any] | None = None,
     ):
         """创建工具注册表并按需初始化 MCP 工具。
 
-        Args:
-            skill_config: Skill 配置，内部会按需解析 SkillRegistry
-            enable_tools: 当前 Agent 是否启用工具提示
-            tool_config: 全局工具配置（来自 ConfigManager）
-        """
-        skill_registry = self._resolve_skill_registry(skill_config)
-        # 工具始终注册；enable_tools 仅控制提示词中是否暴露工具信息
-        self.tools = create_default_registry(skill_registry)
-        tool_registry = self.tools
+        无论 tool_config 中是否启用了某些工具，所有内置工具都会被注册到 registry 中。
+        Skill 与 builtin 一致：始终注册 SkillTool，config 仅控制是否将 use_skill 暴露给 LLM。
+        工具的"启用/禁用"仅影响是否将工具信息暴露给 LLM（通过 enable_tools 和 _get_tool_specs 控制）。
 
-        tool_config = tool_config or {}
-        enable_mcp = tool_config.get("enable_mcp", True)
-        if enable_mcp and (hasattr(self.config, "mcp") or hasattr(self.config, "mcp_servers")):
+        Args:
+            skill_config: 未使用（保留以兼容调用方），Skill 始终全量注册
+            tool_config: per-agent 工具配置，形如 {"builtin": list[str], "mcp": str}
+                         其中 mcp 为 MCP 配置文件路径，空字符串表示不启用
+        """
+        tool_config = tool_config or {"builtin": ["*"], "mcp": ""}
+
+        mcp_config_file = tool_config.get("mcp", "")
+
+        # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM
+        skill_registry = self._get_or_create_full_skill_registry()
+        self.tools = create_registry(
+            builtin_names=["*"],
+            skill_registry=skill_registry,
+        )
+
+        # MCP: 当 mcp_config_file 非空时加载 MCP 工具
+        if mcp_config_file:
             # 只初始化一次连接，后续 agent 复用并注册到新的 registry
             if self.mcp_manager is None:
-                self.mcp_manager = self._setup_mcp_tools()
+                self.mcp_manager = self._setup_mcp_tools(mcp_config_file)
             elif self.mcp_manager is not None:
-                self.mcp_manager.register_tools(tool_registry)
-
-        return tool_registry
+                self.mcp_manager.register_tools(self.tools)
 
     def _setup_agents(self) -> None:
         """按配置创建所有 Agent, 初始化self.agents"""
@@ -402,33 +421,22 @@ class BasePlayground:
 
         for agent_name, agent_config in agents_config.items():
             llm_config = self._setup_agent_llm(agent_name)
-            tool_config = self._setup_agent_tools(agent_name)#TODO: 这里需要修改，因为工具配置是全局的，而不是每个agent独立的
+            tool_config = self._setup_agent_tools(agent_name)
             skill_config = self._setup_agent_skills(agent_name)
-
-            #TODO: 这里需要修改，因为enable_tools是全局的，而不是每个agent独立的
-            enable_tools = agent_config.get("enable_tools", True)
-            tools = self._setup_tools(
-                skill_config=skill_config,
-                enable_tools=enable_tools,
-                tool_config=tool_config,
-            )
 
             agent = self._create_agent(
                 name=agent_name,
                 agent_config=agent_config,
                 llm_config=llm_config,
-                
-                skill_config=skill_config,
-                
-                enable_tools=enable_tools,
                 tool_config=tool_config,
-                tools=tools,
+                skill_config=skill_config,
             )
             setattr(self.agents, f"{agent_name}_agent", agent)
 
             self.logger.info(f"{agent_name.capitalize()} Agent created with:")
             self.logger.info(f"  - LLM: {llm_config['model']}")
-            self.logger.info(f"  - Tools: {tools.get_tool_names()}")#TODO: 这里需要修改，因为工具配置是全局的，而不是每个agent独立的
+            self.logger.info(f"  - Available Tools: {agent.tools.get_tool_names()}")
+            self.logger.info(f"  - Auto Accessed Tools: {tool_config}")
             self.logger.info(f"  - Skills: {skill_config.get('skills', [])}")
 
         #向后兼容
@@ -454,12 +462,9 @@ class BasePlayground:
         self,
         name: str,
         agent_config: dict | None = None,
-        enable_tools: bool | None = None,
         llm_config: dict | None = None,
-        skill_config: dict | None = None,
         tool_config: dict | None = None,
-        tools=None,
-        **kwargs,
+        skill_config: dict | None = None,
     ):
         """创建 Agent 实例
 
@@ -468,28 +473,48 @@ class BasePlayground:
         Args:
             name: Agent 名称
             agent_config: Agent 配置字典
-            enable_tools: 是否启用工具调用
             llm_config: LLM 配置字典
+            tool_config: 工具配置字典，形如 {"builtin": list[str], "mcp": list[str]}
             skill_config: Skill 配置字典
-            tool_config: 工具配置字典（当前保留用于兼容调用方）
-            tools: 工具注册表
-            **kwargs: 其他参数
         Returns:
             Agent 实例
         """
-        
-
-        # 向后兼容
+        # 向后兼容：未传参时自动获取
         if agent_config is None:
             agent_config = self._get_agent_config(name)
         if llm_config is None:
             llm_config = self._setup_agent_llm(name)
-        if enable_tools is None:
-            enable_tools = agent_config.get("enable_tools", True)
+        if tool_config is None:
+            tool_config = self._setup_agent_tools(name)
         if skill_config is None:
             skill_config = self._setup_agent_skills(name)
 
-        
+        # 根据 tool_config 推断是否启用工具
+        builtin = tool_config.get("builtin", ["*"])
+        mcp_config_file = tool_config.get("mcp", "")
+        skills = skill_config.get("skills", [])
+        # enable_tools = bool(builtin) or bool(mcp_config_file)
+        if builtin == [] and mcp_config_file == "" and skill_config.get("skills", []) == [] :
+            enable_tools = False
+        else:
+            enable_tools = True
+
+        # 创建工具注册表（始终注册所有工具）
+        self._setup_tools(skill_config=skill_config, tool_config=tool_config)
+
+        enabled_tool_names = []
+        if builtin == ["*"]:
+            enabled_tool_names.extend(["execute_bash", "str_replace_editor", "think", "finish"])
+        elif builtin != []:
+            enabled_tool_names.extend(builtin)
+
+        if mcp_config_file != "":
+            enabled_tool_names.extend(self.mcp_manager.get_tool_names())
+        if skills != []:
+            enabled_tool_names.extend(["use_skill"])
+
+        self.logger.info(f"Enabled tools: {enabled_tool_names}")
+
         max_turns = agent_config.get('max_turns', 20)
         context_config_dict = agent_config.get('context', {})
         context_config = ContextConfig(**context_config_dict)
@@ -506,54 +531,40 @@ class BasePlayground:
         system_prompt_file = agent_config.get('system_prompt_file')
         user_prompt_file = agent_config.get('user_prompt_file')
 
-
         playground_base = Path(str(self.config_dir).replace("configs", "playground"))
         # 解析 system_prompt_file
         if system_prompt_file:
             prompt_path = Path(system_prompt_file)
             if not prompt_path.is_absolute():
-                # 修改：相对于 playground_base 解析
                 system_prompt_file = str((playground_base / prompt_path).resolve())
-        
+
         # 解析 user_prompt_file
         if user_prompt_file:
             prompt_path = Path(user_prompt_file)
             if not prompt_path.is_absolute():
-                # 修改：相对于 playground_base 解析
                 user_prompt_file = str((playground_base / prompt_path).resolve())
 
         # 获取提示词格式化参数（如果有）
         prompt_format_kwargs = agent_config.get('prompt_format_kwargs', {})
 
-        tools_to_use = tools if tools is not None else self.tools
-
-        # 保留 tool_config 参数用于兼容调用方；当前 agent 创建阶段无需直接使用
-        _ = tool_config
-
-        # 兼容旧调用：外部可能仍传 skill_registry / tool_config 参数
-        legacy_skill_registry = kwargs.pop("skill_registry", None)
-        kwargs.pop("tool_config", None)
-        if kwargs:
-            raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
-        agent_skill_registry = legacy_skill_registry or self._resolve_skill_registry(skill_config)
+        skill_registry = self._resolve_skill_registry(skill_config)
 
         # 创建 Agent
-        # 注意：无论 enable_tools 是什么值，都传递 tools 给 Agent
-        # enable_tools 只控制工具信息是否出现在提示词中，不影响工具注册
         agent = Agent(
             llm=llm,
             session=self.session,
-            tools=tools_to_use,  # 始终传递 tools，工具始终注册
+            tools=self.tools,
             system_prompt_file=system_prompt_file,
             user_prompt_file=user_prompt_file,
             prompt_format_kwargs=prompt_format_kwargs,
             config=agent_cfg,
-            skill_registry=agent_skill_registry,
+            skill_registry=skill_registry,
             output_config=output_config,
             config_dir=self.config_dir,
-            enable_tools=enable_tools,  # 控制工具信息是否出现在提示词中
+            enable_tools=enable_tools,
+            enabled_tool_names=enabled_tool_names,
         )
-        
+
         # 设置Agent名称（用于轨迹文件中标识不同的agent）
         agent.set_agent_name(name)
 
@@ -607,6 +618,7 @@ class BasePlayground:
             'output_config': agent.output_config.copy() if agent.output_config else None,
             'config_dir': agent.config_dir,
             'enable_tools': agent.enable_tools,
+            'enabled_tool_names': getattr(agent, 'enabled_tool_names', None),
         }
 
         if agent_class.__name__ == 'Agent':
@@ -650,43 +662,27 @@ class BasePlayground:
 
         self.logger.info("Multi-agent playground setup complete")
 
-    def _setup_mcp_tools(self):
+    def _setup_mcp_tools(self, config_file: str):
         """初始化 MCP 工具
 
         从 MCP 配置文件（JSON 格式）读取服务器列表，初始化连接并注册工具。
 
+        Args:
+            config_file: MCP 配置文件路径（相对于 config_dir 或绝对路径）
+
         Returns:
             MCPToolManager 实例，如果配置无效则返回 None
         """
-        # 1. 检查 MCP 配置
-        mcp_config = getattr(self.config, 'mcp', None)
-        if not mcp_config:
-            self.logger.debug("MCP not configured, skipping")
-            return None
-
-        # 2. 检查配置格式
-        if not isinstance(mcp_config, dict):
-            self.logger.error("Invalid MCP config format, expected dict")
-            return None
-
-        # 3. 检查是否启用
-        if not mcp_config.get('enabled', True):
-            self.logger.info("MCP is disabled in config")
-            return None
-
-        # 4. 获取配置文件路径
-        config_file = mcp_config.get('config_file', 'mcp_config.json')
-
-        # 5. 解析配置文件路径
+        # 1. 解析配置文件路径
         config_path = Path(config_file)
         if not config_path.is_absolute():
             config_path = self.config_manager.config_dir / config_path
 
         if not config_path.exists():
-            self.logger.warning(f"MCP config file not found: {config_path}")
+            self.logger.error(f"MCP config file not found: {config_path}")
             return None
 
-        # 5. 加载 MCP 配置
+        # 2. 加载 MCP 配置
         self.logger.info(f"Loading MCP config from: {config_path}")
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -729,6 +725,7 @@ class BasePlayground:
         manager = MCPToolManager()
 
         # 子类可以复写此方法来注入自定义逻辑（如 path adaptor、tool_include_only）
+        mcp_config = getattr(self.config, 'mcp', {}) or {}
         self._configure_mcp_manager(manager, mcp_config)
 
         # 8. 异步初始化 MCP 服务器

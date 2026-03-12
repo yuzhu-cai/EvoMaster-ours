@@ -77,18 +77,21 @@ class BaseAgent(ABC):
         output_config: dict[str, Any] | None = None,
         config_dir: Path | str | None = None,
         enable_tools: bool = True,
+        enabled_tool_names: list[str] | None = None,
     ):
         """初始化 Agent
 
         Args:
             llm: LLM 实例
             session: 环境会话，用于执行工具
-            tools: 工具注册中心（始终注册，但只有在 enable_tools=True 时才会在提示词中包含工具信息）
+            tools: 工具注册中心（始终注册所有工具，但只有启用的工具才会暴露给 LLM）
             config: Agent 配置
             skill_registry: Skills 注册中心（可选）
             output_config: 输出显示配置
             config_dir: 配置目录路径，用于加载提示词文件
             enable_tools: 是否在提示词中包含工具信息（默认 True）。如果为 False，工具仍然注册但不会出现在提示词中
+            enabled_tool_names: 启用的工具名称列表（可选）。None 或 ["*"] 表示所有已注册工具都启用。
+                仅影响暴露给 LLM 的工具列表，不影响代码中手动调用工具。
         """
         self.llm = llm
         self.session = session
@@ -96,6 +99,7 @@ class BaseAgent(ABC):
         self.config = config or AgentConfig()
         self.skill_registry = skill_registry
         self.enable_tools = enable_tools
+        self.enabled_tool_names = enabled_tool_names
 
         # 输出配置
         self.output_config = output_config or {}
@@ -212,6 +216,7 @@ class BaseAgent(ABC):
             ],
             tools=self._get_tool_specs(),
         )
+        # breakpoint()
 
         self.trajectory.dialogs.append(self.current_dialog)
         self._step_count = 0
@@ -270,10 +275,7 @@ class BaseAgent(ABC):
                     self.logger.info("=" * 80)
                     self.logger.info("📝 Finish Tool Arguments:")
                     for key, value in finish_args.items():
-                        # 截断过长的值用于显示
                         value_str = str(value)
-                        if len(value_str) > 2000:
-                            value_str = value_str[:1000] + "\n... [truncated] ...\n" + value_str[-1000:]
                         self.logger.info(f"  {key}: {value_str}")
                     self.logger.info("=" * 80)
                 except Exception as e:
@@ -334,7 +336,15 @@ class BaseAgent(ABC):
         try:
             # 执行工具
             observation, info = tool.execute(self.session, tool_args)
-            
+
+            # 截断过长的工具输出（超过 30000 字符时保留前 5000 + 后 5000）
+            if len(observation) > 30000:
+                observation = (
+                    observation[:15000]
+                    + "\n...[truncated]...\n"
+                    + observation[-15000:]
+                )
+
             # 记录工具调用结束
             self._log_tool_end(tool_name, observation, info)
             
@@ -367,11 +377,7 @@ class BaseAgent(ABC):
 
     def _log_tool_end(self, tool_name: str, observation: str, info: dict[str, Any]) -> None:
         """记录工具调用结束"""
-        # 截断过长的输出：超过5000字符时，保留前2500和最后2500
         obs_display = observation
-        if len(obs_display) > 5000:
-            obs_display = obs_display[:2500] + "\n... [truncated] ...\n" + obs_display[-2500:]
-        
         if self.log_to_file:
             self.logger.info("=" * 80)
             self.logger.info(f"Tool Call End: {tool_name}")
@@ -399,15 +405,18 @@ class BaseAgent(ABC):
 
     def _get_tool_specs(self) -> list:
         """获取工具规格列表
-        
+
         只有在 enable_tools=True 时才返回工具规格列表。
         如果 enable_tools=False，返回空列表（工具仍然注册，但不会出现在提示词中）。
+        如果设置了 enabled_tool_names，则只返回启用的工具的规格。
         """
         if not self.enable_tools:
             return []
-        if self.tools is None:
-            return []
-        return self.tools.get_tool_specs()
+        else:
+            all_specs = self.tools.get_tool_specs()
+            self.logger.info("Enabled tool names:")
+            self.logger.info([spec.function.name for spec in all_specs if spec.function.name in self.enabled_tool_names])
+            return [spec for spec in all_specs if spec.function.name in self.enabled_tool_names]
 
     def load_prompt_from_file(
         self,
@@ -785,6 +794,7 @@ class Agent(BaseAgent):
         output_config: dict[str, Any] | None = None,
         config_dir: Path | str | None = None,
         enable_tools: bool = True,
+        enabled_tool_names: list[str] | None = None,
     ):
         """初始化 Agent
 
@@ -800,8 +810,9 @@ class Agent(BaseAgent):
             output_config: 输出显示配置
             config_dir: 配置目录路径，用于加载提示词文件
             enable_tools: 是否在提示词中包含工具信息（默认 True）。如果为 False，工具仍然注册但不会出现在提示词中，Agent 将不会调用工具
+            enabled_tool_names: 启用的工具名称列表（可选）。None 或 ["*"] 表示所有已注册工具都启用。
         """
-        super().__init__(llm, session, tools, config, skill_registry, output_config, config_dir=config_dir, enable_tools=enable_tools)
+        super().__init__(llm, session, tools, config, skill_registry, output_config, config_dir=config_dir, enable_tools=enable_tools, enabled_tool_names=enabled_tool_names)
 
         # 存储提示词
         self._system_prompt: str | None = None
@@ -833,21 +844,7 @@ You have access to the following tools:
 - str_replace_editor: View, create, and edit files
 - think: Think about the problem (does not affect the environment)
 - finish: Signal that you have completed the task
-"""
 
-        # 如果有 skill_registry，添加 skills 信息
-        if self.skill_registry is not None:
-            skills_info = self.skill_registry.get_meta_info_context()
-            if skills_info:
-                prompt += f"\n{skills_info}\n"
-                prompt += """
-You can use the 'use_skill' tool to:
-1. Get detailed information about a skill: action='get_info'
-2. Get reference documentation: action='get_reference'
-3. Run scripts from skills: action='run_script'
-"""
-
-        prompt += """
 When you need to complete a task:
 1. First understand what needs to be done
 2. Check if any available skills can help you
@@ -859,27 +856,13 @@ Always be careful with file operations and bash commands.
         return prompt
 
     def _get_system_prompt(self) -> str:
-        """获取系统提示词，动态添加工作目录信息；若有 skill_registry 则自动注入 skills 信息"""
-        # working_dir = self.session.config.workspace_path
+        """获取系统提示词，动态添加工作目录信息"""
         working_dir = self.session.get_workspace_path()
-        # 如果没有启动并行和工作空间分离，那么get_workspace_path返回None，此时使用session.config.workspace_path
         if working_dir is None:
             working_dir = self.session.config.workspace_path
-        # 将相对路径转换为绝对路径
         working_dir_abs = str(Path(working_dir).absolute())
-        working_dir_info = f"\n\n重要提示：当前工作目录是 {working_dir_abs}。你必须在这个目录下进行所有操作，不能切换工作目录。所有文件操作、命令执行都必须在工作目录 {working_dir_abs} 下进行。"
+        working_dir_info = f"\n\nImportant: The current working directory is {working_dir_abs}. You must perform all operations in this directory and cannot change the working directory. All file operations and command executions must be performed within the working directory {working_dir_abs}."
         prompt = self._system_prompt + working_dir_info
-        # 若有 skill_registry，自动注入 skills 信息（与 _default_system_prompt 一致）
-        if self.skill_registry is not None:
-            skills_info = self.skill_registry.get_meta_info_context()
-            if skills_info:
-                prompt += f"\n{skills_info}\n"
-                prompt += """
-You can use the 'use_skill' tool to:
-1. Get detailed information about a skill: action='get_info'
-2. Get reference documentation: action='get_reference'
-3. Run scripts from skills: action='run_script'
-"""
         return prompt
 
     def _get_user_prompt(self, task: TaskInstance) -> str:

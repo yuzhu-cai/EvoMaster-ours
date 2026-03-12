@@ -101,15 +101,17 @@ class ResourceAllocator:
             gpu_allocation = self._gpu_list[gpu_index]
         
         # 分配 CPU（平均分配）
+        # 当任务数超过 max_parallel 时，使用取模复用资源槽位（如 3 个任务、max_parallel=2 时，任务 2 复用槽位 0）
         cpu_allocation = None
         if self._cpu_list:
             total_cpus = len(self._cpu_list)
             cpus_per_parallel = total_cpus // self.max_parallel
             if cpus_per_parallel > 0:
-                start_index = parallel_index * cpus_per_parallel
+                effective_index = parallel_index % self.max_parallel
+                start_index = effective_index * cpus_per_parallel
                 end_index = start_index + cpus_per_parallel - 1
                 # 处理最后一个并行进程，分配剩余的所有 CPU
-                if parallel_index == self.max_parallel - 1:
+                if effective_index == self.max_parallel - 1:
                     end_index = total_cpus - 1
                 
                 allocated_cpus = self._cpu_list[start_index:end_index + 1]
@@ -440,6 +442,10 @@ class LocalEnv(BaseEnv):
         gpu_allocation = None
         cpu_allocation = None
         
+        session_config = self.config.session_config
+        cpu_devices = getattr(session_config, 'cpu_devices', None)
+        gpu_devices = getattr(session_config, 'gpu_devices', None)
+
         if self._resource_allocator is not None and parallel_index is not None:
             # 注册执行任务（检查并行限制）
             self._resource_allocator.register_execution(parallel_index)
@@ -449,16 +455,18 @@ class LocalEnv(BaseEnv):
                 self.logger.info(
                     f"并行索引 {parallel_index}: GPU={gpu_allocation}, CPU={cpu_allocation}"
                 )
+                # 当资源分配器返回 None 时（如 cpus_per_parallel=0），回退到原始 cpu_devices
+                if cpu_allocation is None and cpu_devices is not None:
+                    if isinstance(cpu_devices, str):
+                        cpu_allocation = cpu_devices
+                    elif isinstance(cpu_devices, list):
+                        cpu_allocation = ",".join(str(cpu) for cpu in cpu_devices)
             finally:
                 # 注意：这里不能立即注销，因为命令还在执行
                 # 我们将在命令执行完成后注销
                 pass
         else:
-            # 未启用并行资源分配，使用原始配置
-            session_config = self.config.session_config
-            gpu_devices = getattr(session_config, 'gpu_devices', None)
-            cpu_devices = getattr(session_config, 'cpu_devices', None)
-            
+            # 未启用并行资源分配，或 parallel_index 未设置，使用原始配置
             if gpu_devices is not None:
                 if isinstance(gpu_devices, str):
                     gpu_allocation = gpu_devices
@@ -484,7 +492,7 @@ class LocalEnv(BaseEnv):
         if cpu_allocation is not None and sys.platform != "win32":
             # 使用 shlex.quote 来安全地转义命令，然后包装在 sh -c 中
             final_command = f"taskset -c {cpu_allocation} sh -c {shlex.quote(command)}"
-            self.logger.debug(f"Using CPU prefix with sh -c: taskset -c {cpu_allocation}")
+            self.logger.info(f"应用 CPU 亲和性限制: taskset -c {cpu_allocation}")
         else:
             final_command = command
 
