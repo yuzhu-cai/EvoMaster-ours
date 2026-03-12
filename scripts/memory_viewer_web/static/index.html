@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Memory Viewer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo"></div>
+    <div class="title">Memory Viewer</div>
+    <div class="meta" id="meta">loading...</div>
+    <div class="controls">
+      <button class="primary" id="refreshBtn">Refresh</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <section class="stats-row" id="statsRow">
+      <div class="stat-card shimmer"></div>
+      <div class="stat-card shimmer"></div>
+      <div class="stat-card shimmer"></div>
+      <div class="stat-card shimmer"></div>
+    </section>
+
+    <section class="chart-row" id="chartRow">
+      <div class="chart-card">
+        <div class="chart-title">Category Distribution</div>
+        <div id="categoryChart"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Source Distribution</div>
+        <div id="sourceChart"></div>
+      </div>
+    </section>
+
+    <section class="filter-bar">
+      <select id="userSelect">
+        <option value="">All Users</option>
+      </select>
+      <select id="categorySelect">
+        <option value="">All Categories</option>
+        <option value="preference">偏好 preference</option>
+        <option value="fact">事实 fact</option>
+        <option value="decision">决策 decision</option>
+        <option value="entity">实体 entity</option>
+        <option value="other">其他 other</option>
+      </select>
+      <input id="searchInput" type="text" placeholder="Search content..." />
+      <button class="primary" id="searchBtn">Search</button>
+      <span class="filter-count" id="filterCount"></span>
+    </section>
+
+    <section class="memory-list" id="memoryList">
+      <div class="shimmer" style="height:72px"></div>
+      <div class="shimmer" style="height:72px"></div>
+      <div class="shimmer" style="height:72px"></div>
+    </section>
+
+    <section class="pagination-bar" id="paginationBar"></section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
