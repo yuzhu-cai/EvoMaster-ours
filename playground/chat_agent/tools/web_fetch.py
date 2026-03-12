@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import requests
@@ -19,7 +18,6 @@ from evomaster.agent.tools.base import BaseTool, BaseToolParams
 
 if TYPE_CHECKING:
     from evomaster.agent.session import BaseSession
-    from evomaster.utils.llm import BaseLLM
 
 logger = logging.getLogger(__name__)
 
@@ -69,21 +67,6 @@ class WebFetchTool(BaseTool):
     def __init__(self):
         super().__init__()
         self._llm = None
-
-    def _get_llm(self):
-        """延迟加载 LLM（从 chat_agent 配置）"""
-        if self._llm is None:
-            try:
-                from evomaster.config import ConfigManager
-                from evomaster.utils.llm import LLMConfig, create_llm
-
-                config_dir = Path(__file__).resolve().parent.parent.parent.parent / "configs" / "chat_agent"
-                config_manager = ConfigManager(config_dir=config_dir)
-                llm_cfg = config_manager.get_llm_config()
-                self._llm = create_llm(LLMConfig(**llm_cfg))
-            except Exception as e:
-                self.logger.warning("Failed to create LLM for web_fetch extraction: %s", e)
-        return self._llm
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """抓取网页内容并用 LLM 提取关键信息"""

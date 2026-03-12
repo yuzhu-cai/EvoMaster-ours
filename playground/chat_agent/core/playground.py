@@ -26,6 +26,15 @@ class ChatAgentPlayground(BasePlayground):
         super().setup()
         self._setup_memory()
 
+    def _create_custom_tool_instance(self, tool_class, tool_name, tool_key):
+        """为需要依赖注入的自定义工具提供初始化逻辑"""
+        instance = super()._create_custom_tool_instance(tool_class, tool_name, tool_key)
+        if instance is not None and tool_name == "web_fetch":
+            from evomaster.utils.llm import LLMConfig, create_llm
+            llm_cfg = self.config_manager.get_llm_config()
+            instance._llm = create_llm(LLMConfig(**llm_cfg))
+        return instance
+
     def _setup_memory(self):
         """初始化记忆系统（如果在 config 中启用）。"""
         memory_cfg = self.config_manager.get("memory") or {}
