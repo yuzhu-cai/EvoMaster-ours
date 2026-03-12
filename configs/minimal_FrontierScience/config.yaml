@@ -1,0 +1,77 @@
+# Configuration for minimal_FrontierScience playground.
+
+llm:
+  openai:
+    provider: "openai"
+    model: "${GPT_CHAT_MODEL}"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    temperature: 0.2
+    max_tokens: 16384
+    timeout: 120
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "openai"
+
+agents:
+  general:
+    llm: "openai"
+    max_turns: 80
+    tools:
+      builtin: ["*"]
+      mcp: ""
+
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 6
+
+    system_prompt_file: "prompts/system_prompt.txt"
+    user_prompt_file: "prompts/user_prompt.txt"
+
+mcp:
+  config_file: "mcp_config.json"
+  enabled: false
+
+session:
+  type: "local"
+
+  local:
+    working_dir: "./playground/minimal_FrontierScience/workspace"
+    timeout: 120
+    gpu_devices: null
+    cpu_devices: null
+    symlinks: {}
+
+  docker:
+    image: "evomaster/base:latest"
+    container_name: null
+    use_existing_container: null
+    working_dir: "/workspace"
+    memory_limit: "64g"
+    cpu_limit: 16.0
+    gpu_devices: null
+    network_mode: "host"
+    volumes: {"./playground/minimal_FrontierScience/workspace": "/workspace"}
+    env_vars: {}
+    auto_remove: false
+    timeout: 300
+
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+  log_path: "./logs/evomaster.log"
+
+project_root: "."
+workspace: "./workspace"
+results_dir: "./results"
+debug: false
+
