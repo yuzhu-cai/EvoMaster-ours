@@ -28,6 +28,17 @@ def _post_validate(
     submission_path: Path,
     timeout: int,
 ) -> tuple[bool, dict | str]:
+    """Execute post validate.
+
+    Args:
+        server_url: Value for server url.
+        exp_id: Identifier string.
+        submission_path: Path to the submission CSV file.
+        timeout: Numeric control parameter.
+
+    Returns:
+        tuple[bool, dict | str]: Result of this function.
+    """
     import requests
 
     with submission_path.open("rb") as file_obj:

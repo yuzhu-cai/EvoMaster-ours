@@ -10,6 +10,15 @@ class DraftExp(NodeExp):
     """Draft stage for producing initial candidate code."""
 
     def run(self, task_description: str, memory: str) -> dict:
+        """Run this experiment stage.
+
+        Args:
+            task_description: Natural language task description.
+            memory: Context memory text.
+
+        Returns:
+            dict: Result of this function.
+        """
         node_id = self.node.id
         BaseAgent.set_exp_info(exp_name=f"draft_{node_id[:8]}", exp_index=self.exp_index)
 

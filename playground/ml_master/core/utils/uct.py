@@ -24,6 +24,11 @@ class MetricReview:
     raw_output: Optional[str] = None
 
     def __post_init__(self) -> None:
+        """Normalize fields after initialization.
+
+        Returns:
+            None.
+        """
         if self.lower_is_better is not None:
             self.maximize = not self.lower_is_better
         if self.metric is not None:
@@ -36,10 +41,23 @@ class MetricValue:
     maximize: bool = True
 
     def __post_init__(self) -> None:
+        """Normalize fields after initialization.
+
+        Returns:
+            None.
+        """
         if self.value is not None:
             self.value = float(self.value)
 
     def __gt__(self, other: "MetricValue") -> bool:  # type: ignore[override]
+        """Compare this value with another value.
+
+        Args:
+            other: Value for other.
+
+        Returns:
+            bool: Result of this function.
+        """
         if self.value is None:
             return False
         if other.value is None:
@@ -52,6 +70,11 @@ class MetricValue:
 
 class WorstMetricValue(MetricValue):
     def __init__(self) -> None:
+        """Initialize WorstMetricValue.
+
+        Returns:
+            None.
+        """
         super().__init__(value=None, maximize=True)
 
 
@@ -88,10 +111,32 @@ class UCTDecayConfig:
 
 
 def _linear_decay(t: int, initial_c: float, alpha: float, lower_bound: float) -> float:
+    """Execute linear decay.
+
+    Args:
+        t: Value for t.
+        initial_c: Value for initial c.
+        alpha: Value for alpha.
+        lower_bound: Value for lower bound.
+
+    Returns:
+        float: Result of this function.
+    """
     return max(initial_c - alpha * t, lower_bound)
 
 
 def _exponential_decay(t: int, initial_c: float, gamma: float, lower_bound: float) -> float:
+    """Execute exponential decay.
+
+    Args:
+        t: Value for t.
+        initial_c: Value for initial c.
+        gamma: Value for gamma.
+        lower_bound: Value for lower bound.
+
+    Returns:
+        float: Result of this function.
+    """
     return max(initial_c * (gamma**t), lower_bound)
 
 
@@ -103,6 +148,19 @@ def _piecewise_decay(
     alpha: float,
     lower_bound: float,
 ) -> float:
+    """Execute piecewise decay.
+
+    Args:
+        t: Value for t.
+        initial_c: Value for initial c.
+        t1: Value for t1.
+        t2: Value for t2.
+        alpha: Value for alpha.
+        lower_bound: Value for lower bound.
+
+    Returns:
+        float: Result of this function.
+    """
     if t < t1:
         return initial_c
     if t <= t2:
@@ -121,6 +179,21 @@ def _dynamic_piecewise_decay(
     lower_bound: float,
     phase_ratios: tuple[float, float],
 ) -> float:
+    """Execute dynamic piecewise decay.
+
+    Args:
+        steps_limit: Value for steps limit.
+        n_nodes: Node-related object.
+        initial_c: Value for initial c.
+        start_time: Value for start time.
+        time_limit: Value for time limit.
+        alpha: Value for alpha.
+        lower_bound: Value for lower bound.
+        phase_ratios: Value for phase ratios.
+
+    Returns:
+        float: Result of this function.
+    """
     now = time.time()
     elapsed = max(now - start_time, 1e-6)
     remaining = max(time_limit - elapsed, 1e-6)
@@ -175,29 +248,67 @@ class UCTNode:
     initial_uct: float | None = None
 
     def __post_init__(self) -> None:
+        """Normalize fields after initialization.
+
+        Returns:
+            None.
+        """
         if self.parent is not None:
             self.parent.children.add(self)
 
     def __hash__(self) -> int:
+        """Return the hash value for this instance.
+
+        Returns:
+            int: Result of this function.
+        """
         return hash(self.id)
 
     @property
     def num_children(self) -> int:
+        """Execute num children.
+
+        Returns:
+            int: Result of this function.
+        """
         return len(self.children)
 
     @property
     def debug_depth(self) -> int:
+        """Execute debug depth.
+
+        Returns:
+            int: Result of this function.
+        """
         if self.stage != "debug" or self.parent is None:
             return 0
         return 1 + self.parent.debug_depth
 
     def expect_child(self) -> None:
+        """Execute expect child.
+
+        Returns:
+            None.
+        """
         self.expected_child_count += 1
 
     def complete_child(self) -> None:
+        """Execute complete child.
+
+        Returns:
+            None.
+        """
         self.expected_child_count = max(self.expected_child_count - 1, 0)
 
     def is_fully_expanded(self, cfg: UCTSearchConfig) -> bool:
+        """Check whether fully expanded.
+
+        Args:
+            cfg: Configuration dictionary.
+
+        Returns:
+            bool: Result of this function.
+        """
         if self.stage == "root":
             return self.expected_child_count >= cfg.num_drafts
         if self.is_buggy:
@@ -207,6 +318,15 @@ class UCTNode:
         return self.expected_child_count >= cfg.num_improves
 
     def uct_value(self, exploration_constant: float, parent_visits: int) -> float:
+        """Execute uct value.
+
+        Args:
+            exploration_constant: Value for exploration constant.
+            parent_visits: Value for parent visits.
+
+        Returns:
+            float: Result of this function.
+        """
         if self.visits == 0:
             return float("inf")
         parent_total = max(parent_visits, 1)
@@ -215,10 +335,26 @@ class UCTNode:
         return exploitation + exploration
 
     def update_reward(self, reward: float) -> None:
+        """Execute update reward.
+
+        Args:
+            reward: Value for reward.
+
+        Returns:
+            None.
+        """
         self.visits += 1
         self.total_reward += reward
 
     def fetch_child_memory(self, include_code: bool = False) -> str:
+        """Execute fetch child memory.
+
+        Args:
+            include_code: Value for include code.
+
+        Returns:
+            str: Result of this function.
+        """
         summary: list[str] = []
         children = sorted(self.children, key=lambda child: child.created_at)
         for child in children:
@@ -242,6 +378,14 @@ class UCTNode:
         return "\n-------------------------------\n".join(summary)
 
     def fetch_parent_memory(self, include_code: bool = False) -> str:
+        """Execute fetch parent memory.
+
+        Args:
+            include_code: Value for include code.
+
+        Returns:
+            str: Result of this function.
+        """
         if self.parent and self.parent.is_buggy is False:
             part = f"Design: {self.parent.plan}\n"
             if include_code:
@@ -268,6 +412,19 @@ class UCTSearchManager:
         exp_id: Optional[str] = None,
         submission_dir: Optional[Path | str] = None,
     ) -> None:
+        """Initialize UCTSearchManager.
+
+        Args:
+            search_cfg: Configuration value.
+            decay_cfg: Configuration value.
+            time_limit: Value for time limit.
+            grader: Value for grader.
+            exp_id: Identifier string.
+            submission_dir: Directory path.
+
+        Returns:
+            None.
+        """
         self.search_cfg = search_cfg
         self.decay_cfg = decay_cfg
         self.time_limit = time_limit
@@ -287,6 +444,14 @@ class UCTSearchManager:
         self,
         fn: Callable[[UCTNode, Optional[Path], MetricReview, float], None],
     ) -> None:
+        """Set snapshot fn.
+
+        Args:
+            fn: Value for fn.
+
+        Returns:
+            None.
+        """
         self.snapshot_fn = fn
 
     def create_child(
@@ -296,12 +461,31 @@ class UCTSearchManager:
         plan: str = "",
         code: str = "",
     ) -> UCTNode:
+        """Create child.
+
+        Args:
+            parent: Parent UCT node.
+            stage: Value for stage.
+            plan: Value for plan.
+            code: Generated Python code string.
+
+        Returns:
+            UCTNode: Result of this function.
+        """
         parent.expect_child()
         child = UCTNode(stage=stage, plan=plan, code=code, parent=parent)
         logger.info("Created child node %s stage=%s parent=%s", child.id, stage, parent.id)
         return child
 
     def select_next(self, node: Optional[UCTNode] = None) -> Optional[UCTNode]:
+        """Select next.
+
+        Args:
+            node: UCT node object.
+
+        Returns:
+            Optional[UCTNode]: Result of this function.
+        """
         selected = node or self.root
         while selected and not selected.is_terminal:
             if not selected.is_fully_expanded(self.search_cfg):
@@ -322,6 +506,16 @@ class UCTSearchManager:
         *,
         debug_budget_exhausted: bool = False,
     ) -> float:
+        """Execute ingest result.
+
+        Args:
+            node: UCT node object.
+            review: Value for review.
+            debug_budget_exhausted: Value for debug budget exhausted.
+
+        Returns:
+            float: Result of this function.
+        """
         node.finish_time = time.time()
         node.analysis = review.summary
         node.is_buggy = review.is_bug or review.metric is None or not review.has_submission
@@ -362,6 +556,14 @@ class UCTSearchManager:
         return reward
 
     def _apply_metric_direction_guard(self, node: UCTNode) -> None:
+        """Execute apply metric direction guard.
+
+        Args:
+            node: UCT node object.
+
+        Returns:
+            None.
+        """
         if node.is_buggy:
             return
         if not self.best_node or not self.best_node.metric:
@@ -375,6 +577,14 @@ class UCTSearchManager:
         node.analysis = f"{node.analysis or ''}\n[metric] direction mismatch with best node".strip()
 
     def _apply_debug_success(self, node: UCTNode) -> None:
+        """Execute apply debug success.
+
+        Args:
+            node: UCT node object.
+
+        Returns:
+            None.
+        """
         if node.parent and node.parent.is_buggy and node.is_buggy is False:
             node.parent.is_debug_success = True
             node.parent.is_buggy = False
@@ -383,6 +593,14 @@ class UCTSearchManager:
             node.parent.continue_improve = node.continue_improve
 
     def _apply_grading_guard(self, node: UCTNode) -> None:
+        """Execute apply grading guard.
+
+        Args:
+            node: UCT node object.
+
+        Returns:
+            None.
+        """
         if not (self.grader and self.exp_id and self.submission_dir):
             return
         if node.is_buggy:
@@ -408,6 +626,15 @@ class UCTSearchManager:
         node.analysis = f"{node.analysis or ''}\n[grading] grading server call failed".strip()
 
     def _record_initial_stats(self, node: UCTNode, reward: float) -> None:
+        """Execute record initial stats.
+
+        Args:
+            node: UCT node object.
+            reward: Value for reward.
+
+        Returns:
+            None.
+        """
         if node.initial_reward is not None:
             return
         node.initial_reward = reward
@@ -420,6 +647,16 @@ class UCTSearchManager:
             node.initial_uct = None
 
     def _emit_snapshot(self, node: UCTNode, review: MetricReview, reward: float) -> None:
+        """Execute emit snapshot.
+
+        Args:
+            node: UCT node object.
+            review: Value for review.
+            reward: Value for reward.
+
+        Returns:
+            None.
+        """
         if not self.snapshot_fn:
             return
 
@@ -439,6 +676,15 @@ class UCTSearchManager:
             current = current.parent
 
     def _backpropagate(self, node: UCTNode, reward: float) -> None:
+        """Execute backpropagate.
+
+        Args:
+            node: UCT node object.
+            reward: Value for reward.
+
+        Returns:
+            None.
+        """
         current: UCTNode | None = node
         while current is not None:
             if current.stage == "draft" and current.locked:
@@ -447,6 +693,14 @@ class UCTSearchManager:
             current = current.parent
 
     def _get_node_reward(self, node: UCTNode) -> float:
+        """Execute get node reward.
+
+        Args:
+            node: UCT node object.
+
+        Returns:
+            float: Result of this function.
+        """
         if node.is_buggy or node.metric.value is None:
             return -1.0
 
@@ -477,6 +731,15 @@ class UCTSearchManager:
         return reward
 
     def _check_metric_valid(self, node: UCTNode, upper_bound: int | None = None) -> bool:
+        """Execute check metric valid.
+
+        Args:
+            node: UCT node object.
+            upper_bound: Value for upper bound.
+
+        Returns:
+            bool: Result of this function.
+        """
         bound = upper_bound or self.search_cfg.invalid_metric_upper_bound
         best = self.best_metric
         current = node.metric.value
@@ -488,6 +751,14 @@ class UCTSearchManager:
         return ratio <= bound
 
     def _check_improvement(self, node: UCTNode) -> None:
+        """Execute check improvement.
+
+        Args:
+            node: UCT node object.
+
+        Returns:
+            None.
+        """
         parent = node.parent
         local_best = node.local_best_node or (parent.local_best_node if parent else None) or parent
         cfg = self.search_cfg
@@ -531,6 +802,14 @@ class UCTSearchManager:
         node.continue_improve = False
 
     def _uct_select(self, node: UCTNode) -> UCTNode:
+        """Execute uct select.
+
+        Args:
+            node: UCT node object.
+
+        Returns:
+            UCTNode: Result of this function.
+        """
         c_value = self._exploration_constant()
 
         if node.stage == "root":
@@ -547,6 +826,11 @@ class UCTSearchManager:
         return max(node.children, key=lambda child: child.uct_value(c_value, node.visits))
 
     def _exploration_constant(self) -> float:
+        """Execute exploration constant.
+
+        Returns:
+            float: Result of this function.
+        """
         cfg = self.decay_cfg
         t = self.current_step
 

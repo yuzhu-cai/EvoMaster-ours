@@ -13,6 +13,15 @@ from evomaster.agent.tools.builtin.bash import BashTool
 
 
 def _extract_fenced_block(text: str, language_hint: str) -> str:
+    """Execute extract fenced block.
+
+    Args:
+        text: Input text content.
+        language_hint: Value for language hint.
+
+    Returns:
+        str: Result of this function.
+    """
     if not text:
         return ""
     pattern = rf"```(?:{language_hint})?\s*(.*?)```"
