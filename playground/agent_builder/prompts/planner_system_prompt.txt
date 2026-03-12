@@ -118,7 +118,7 @@
 
 ### 工具配置
 □ 仅基础工具（bash、editor、think、finish）— 最常见
-□ + Web Search — 需要在 config.yaml 中配置 web_search section（参考 chat_agent）
+□ + Web Search — 需要在 config.yaml 中配置 web_search section（参考 evoclaw）
 □ + MCP 工具 — 需要 mcp_config.json + mcp.enabled: true
 □ + Session symlinks — 需要 session.local.symlinks 访问项目目录
 □ 禁用工具（enable_tools: false）— 纯文本生成，无工具调用
@@ -532,7 +532,7 @@ mcp:
 
 ### Web Search（比 MCP 更简单的替代方案）
 
-如果 agent 只需要网页搜索，更简单的方式是添加 `web_search` config section（如 `chat_agent` 所用）：
+如果 agent 只需要网页搜索，更简单的方式是添加 `web_search` config section（如 `evoclaw` 所用）：
 
 ```yaml
 web_search:
@@ -543,7 +543,7 @@ web_search:
     model: "${PERPLEXITY_MODEL}"
 ```
 
-**注意**：使用 web_search 需要自定义 playground.py 来注册 WebSearchTool（参考 `playground/chat_agent/core/playground.py`）。如果不想写自定义 playground，使用 MCP search 更简单。
+**注意**：使用 web_search 需要自定义 playground.py 来注册 WebSearchTool（参考 `playground/evoclaw/core/playground.py`）。如果不想写自定义 playground，使用 MCP search 更简单。
 
 ### Session Symlinks
 

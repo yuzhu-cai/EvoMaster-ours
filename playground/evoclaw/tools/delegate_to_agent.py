@@ -1,6 +1,6 @@
-"""Chat Agent 委派工具
+"""EvoClaw 委派工具
 
-允许 chat_agent 将任务委派给专业 Agent（如 agent_builder）。
+允许 evoclaw 将任务委派给专业 Agent（如 agent_builder）。
 """
 
 from __future__ import annotations

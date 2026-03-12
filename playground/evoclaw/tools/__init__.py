@@ -1,4 +1,4 @@
-"""Chat Agent 专用工具"""
+"""EvoClaw 专用工具"""
 
 from .ai_search import AISearchTool, AISearchToolParams
 from .google_search import GoogleSearchTool, GoogleSearchToolParams
