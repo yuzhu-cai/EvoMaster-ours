@@ -12,34 +12,33 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 PROJECT_DIR = Path("/data/bingzehao/EvoMaster-ours")
 RUN_PY = PROJECT_DIR / "run.py"
 BASE_CONFIG = Path("/data/bingzehao/EvoMaster-ours/configs/ml_master/config.yaml")
-
 EXP_ROOT = Path("/data/exp_data")
 AGENT = "ml_master"
 MAX_PARALLEL = 1
 
 COMPETITIONS = [
-    # "aerial-cactus-identification",
-    # "aptos2019-blindness-detection",
-    # "denoising-dirty-documents",
+    "aerial-cactus-identification",
+    "aptos2019-blindness-detection",
+    "denoising-dirty-documents",
     "detecting-insults-in-social-commentary",
-    # "dog-breed-identification",
-    # "dogs-vs-cats-redux-kernels-edition",
-    # "histopathologic-cancer-detection",
-    # "jigsaw-toxic-comment-classification-challenge",
-    # "leaf-classification",
-    # "mlsp-2013-birds",
-    # "new-york-city-taxi-fare-prediction",
-    # "nomad2018-predict-transparent-conductors",
-    # "plant-pathology-2020-fgvc7",
-    # "random-acts-of-pizza",
-    # "ranzcr-clip-catheter-line-classification",
-    # "siim-isic-melanoma-classification",
-    # "spooky-author-identification",
-    # "tabular-playground-series-dec-2021",
-    # "tabular-playground-series-may-2022",
-    # "text-normalization-challenge-english-language",
-    # "text-normalization-challenge-russian-language",
-    # "the-icml-2013-whale-challenge-right-whale-redux"
+    "dog-breed-identification",
+    "dogs-vs-cats-redux-kernels-edition",
+    "histopathologic-cancer-detection",
+    "jigsaw-toxic-comment-classification-challenge",
+    "leaf-classification",
+    "mlsp-2013-birds",
+    "new-york-city-taxi-fare-prediction",
+    "nomad2018-predict-transparent-conductors",
+    "plant-pathology-2020-fgvc7",
+    "random-acts-of-pizza",
+    "ranzcr-clip-catheter-line-classification",
+    "siim-isic-melanoma-classification",
+    "spooky-author-identification",
+    "tabular-playground-series-dec-2021",
+    "tabular-playground-series-may-2022",
+    "text-normalization-challenge-english-language",
+    "text-normalization-challenge-russian-language",
+    "the-icml-2013-whale-challenge-right-whale-redux"
 ]
 
 # 并行分CPU
@@ -57,11 +56,6 @@ def make_tmp_config(comp_id: str) -> Path:
     public_dir = str(EXP_ROOT / comp_id / "prepared" / "public")
     cfg.setdefault("session", {}).setdefault("local", {}).setdefault("symlinks", {})
     cfg["session"]["local"]["symlinks"] = {public_dir: "input"}
-
-    # 内并行
-    # cfg["session"]["local"].setdefault("parallel", {})
-    # cfg["session"]["local"]["parallel"]["enabled"] = True
-    # cfg["session"]["local"]["parallel"]["max_parallel"] = 2
 
     #改工作目录
     cfg["session"]["local"]["working_dir"] = f"./playground/ml_master/workspace/{comp_id}"

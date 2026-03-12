@@ -268,7 +268,7 @@ grading_servers:
 
 # mle-bench 提交配置
 mlebench:
-  auto_grade: true
+  auto_grade: false
   grade_output: "mlebench_grade.json"
   grade_overwrite: true
 
