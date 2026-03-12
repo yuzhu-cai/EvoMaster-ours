@@ -1,4 +1,4 @@
-# Chat Agent 配置文件
+# EvoClaw 配置文件
 # 面向对话式交互的 Agent，适用于飞书等即时通讯场景
 
 # ============================================
@@ -117,7 +117,7 @@ session:
   type: "local"
 
   local:
-    working_dir: "./playground/chat_agent/workspace"
+    working_dir: "./playground/evoclaw/workspace"
     timeout: 60
     gpu_devices: "0"
     cpu_devices: "0-15"
@@ -132,7 +132,7 @@ session:
     cpu_limit: 16.0
     gpu_devices: "0"
     network_mode: "host"
-    volumes: {"./playground/chat_agent/workspace": "/workspace"}
+    volumes: {"./playground/evoclaw/workspace": "/workspace"}
     env_vars: {}
     auto_remove: false
     timeout: 300

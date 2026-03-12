@@ -107,7 +107,7 @@ class TaskDispatcher:
     def __init__(
         self,
         project_root: Path,
-        default_agent: str = "chat_agent",
+        default_agent: str = "evoclaw",
         default_config_path: Optional[str] = None,
         max_workers: int = 4,
         task_timeout: int = 600,
@@ -309,7 +309,7 @@ class TaskDispatcher:
         """在后台线程中执行任务，复用会话上下文。
 
         如果 agent_name 与默认 agent 不同，采用子任务模式：
-        独立运行指定 agent，结果注入 chat_agent 上下文。
+        独立运行指定 agent，结果注入 evoclaw 上下文。
         """
         from evomaster.utils.types import TaskInstance
 
@@ -366,7 +366,7 @@ class TaskDispatcher:
                                 logger.exception("Failed to finalize question card")
                         return answer
 
-                    # 将结果注入 chat_agent 的 dialog 作为上下文
+                    # 将结果注入 evoclaw 的 dialog 作为上下文
                     if session.initialized and session.agent:
                         summary = (
                             f"[子任务结果 - {agent_name}]\n"
@@ -492,7 +492,7 @@ class TaskDispatcher:
                             logger.exception("Failed to finalize step reporter")
                     return answer
 
-                # 正常 chat_agent 流程
+                # 正常 evoclaw 流程
                 # 获取记忆系统（如果 playground 已初始化）
                 memory_manager = getattr(session.playground, "_memory_manager", None)
                 memory_config = getattr(session.playground, "_memory_config", {})
@@ -568,7 +568,7 @@ class TaskDispatcher:
                     self._memory_auto_capture(memory_manager, memory_config, user_id, task_text)
 
                 # === ask_user 检测 ===
-                # chat_agent 调用了 ask_user，逐个展示问题卡片
+                # evoclaw 调用了 ask_user，逐个展示问题卡片
                 if trajectory and trajectory.status == "waiting_for_input":
                     if reporter:
                         try:
@@ -578,7 +578,7 @@ class TaskDispatcher:
                                 first = [questions[0]]
                                 question_text = self._format_questions_for_card(first)
                                 option_actions = self._build_question_actions(
-                                    first, chat_id, "chat_agent",
+                                    first, chat_id, "evoclaw",
                                     question_text=question_text,
                                 )
                                 reporter.finalize_as_question(question_text, actions=option_actions)
@@ -587,13 +587,13 @@ class TaskDispatcher:
                                 session.collected_answers = []
                             return None
                         except Exception:
-                            logger.exception("Failed to finalize chat_agent question card")
+                            logger.exception("Failed to finalize evoclaw question card")
                     return _extract_final_answer(
                         {"trajectory": trajectory, "status": trajectory.status}
                     )
 
                 # === 委派检测 ===
-                # chat_agent 可能通过 delegate_to_agent 工具触发了委派
+                # evoclaw 可能通过 delegate_to_agent 工具触发了委派
                 delegation = self._check_delegation(session)
                 if delegation:
                     delegated_agent = delegation["agent_name"]
@@ -603,7 +603,7 @@ class TaskDispatcher:
                         delegated_agent, delegated_task[:100],
                     )
 
-                    # 先 finalize chat_agent 的卡片（显示委派消息）
+                    # 先 finalize evoclaw 的卡片（显示委派消息）
                     chat_answer = _extract_final_answer(
                         {"trajectory": trajectory, "status": trajectory.status}
                     )
@@ -890,7 +890,7 @@ class TaskDispatcher:
         """注入记忆工具到 agent（memory_search / memory_save / memory_forget）。"""
         if memory_manager is None:
             return
-        from playground.chat_agent.tools.memory_tools import (
+        from playground.evoclaw.tools.memory_tools import (
             MemorySearchTool, MemorySaveTool, MemoryForgetTool,
         )
         for tool_cls in (MemorySearchTool, MemorySaveTool, MemoryForgetTool):
@@ -1212,7 +1212,7 @@ class TaskDispatcher:
                         except Exception:
                             logger.exception("Failed to finalize step reporter (answer_question)")
 
-                    # 将结果注入 chat_agent 上下文
+                    # 将结果注入 evoclaw 上下文
                     chat_session = self._session_manager.get(chat_id)
                     if chat_session and chat_session.initialized and chat_session.agent:
                         summary = (
@@ -1224,7 +1224,7 @@ class TaskDispatcher:
                     return None
 
                 # === confirm 路径：Phase 2 builder 完成后的处理 ===
-                # 将结果注入 chat_agent 上下文
+                # 将结果注入 evoclaw 上下文
                 chat_session = self._session_manager.get(chat_id)
                 if chat_session and chat_session.initialized and chat_session.agent:
                     summary = (
@@ -1246,7 +1246,7 @@ class TaskDispatcher:
                     phase1_content, "green",
                 )
 
-                # Phase 2 完成，清理子任务会话，后续消息重新走 chat_agent
+                # Phase 2 完成，清理子任务会话，后续消息重新走 evoclaw
                 self._session_manager.remove(session_key)
 
                 return None
@@ -1295,7 +1295,7 @@ class TaskDispatcher:
 
     @staticmethod
     def _check_delegation(session) -> dict[str, str] | None:
-        """检查 chat_agent 是否通过 delegate_to_agent 触发了委派。
+        """检查 evoclaw 是否通过 delegate_to_agent 触发了委派。
 
         扫描 trajectory 最近几步的 ToolMessage，查找 delegated=True 标记。
         """
