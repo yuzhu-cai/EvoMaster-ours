@@ -1,0 +1,10 @@
+Please complete the following scientific task.
+
+Task ID: {task_id}
+Task Type: {task_type}
+Description:
+{description}
+
+Additional Information:
+{input_data}
+
