@@ -400,7 +400,7 @@ class BasePlayground:
 
         mcp_config_file = tool_config.get("mcp", "")
 
-        # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM
+        # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM #TODO: xinyu把skill改成了全部注册，prompt里会全部给，这里还要改代码。
         skill_registry = self._get_or_create_full_skill_registry()
         self.tools = create_registry(
             builtin_names=["*"],

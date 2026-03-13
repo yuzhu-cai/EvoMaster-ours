@@ -319,8 +319,8 @@ def create_registry(
                 )
             tools.append(factories[name]())
 
-    # 如果提供了 skill_registry 则始终注册 SkillTool（与 builtin 一致，config 仅控制是否暴露给 LLM）
-    if skill_registry is not None:
+    # 如果提供了 skill_registry 且包含 skill，注册 SkillTool
+    if skill_registry is not None and skill_registry.get_all_skills():
         from .skill import SkillTool
         tools.append(SkillTool(skill_registry))
 
