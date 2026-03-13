@@ -33,6 +33,11 @@ def get_external_script_path(env_key: str, explicit_path: Path | None = None) ->
     return Path(override).expanduser().resolve()
 
 
+def get_serper_api_key() -> str:
+    """Load Serper API key from SERPER_API_KEY."""
+    return os.getenv("SERPER_API_KEY", "").strip()
+
+
 def _load_module(script_path: Path) -> Any:
     resolved = str(script_path.resolve())
     if resolved in _MODULE_CACHE:

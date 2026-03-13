@@ -9,7 +9,6 @@ from __future__ import annotations
 import http.client
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -17,7 +16,7 @@ from pydantic import Field
 
 from evomaster.agent.tools.base import BaseTool, BaseToolParams
 
-from .common import call_external_function, ensure_text, get_external_script_path
+from .common import call_external_function, ensure_text, get_external_script_path, get_serper_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +73,9 @@ def _contains_chinese(text: str) -> bool:
 
 
 def _search_one(query: str) -> str:
-    key = os.getenv("SERPER_KEY_ID", "").strip()
+    key = get_serper_api_key()
     if not key:
-        return "[search_web] SERPER_KEY_ID is not set."
+        return "[search_web] Serper API key is not set. Use SERPER_API_KEY."
 
     payload = (
         {"q": query, "location": "China", "gl": "cn", "hl": "zh-cn"}
