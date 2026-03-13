@@ -1,4 +1,4 @@
-"""Minimal Skill Task Playground：Analyze → Plan → Search → Summarize 四 Agent 流程"""
+"""Minimal Skill Task Playground: Analyze → Plan → Search → Summarize four-agent pipeline."""
 
 import logging
 import os
@@ -44,13 +44,13 @@ class MinimalSkillTaskPlayground(BasePlayground):
         base_url = openai_cfg.get("base_url", "")
         api_key = openai_cfg.get("api_key", "")
 
-        # 注入到环境变量，供 rag/scripts/search.py 读取
+        # Inject into environment variables so rag/scripts/search.py can read them.
         if api_key:
             os.environ["OPENAI_EMBEDDING_API_KEY"] = api_key
         if base_url:
             os.environ["OPENAI_EMBEDDING_BASE_URL"] = base_url
 
-        # 日志只打印非敏感信息
+        # Log only non-sensitive information.
         self.logger.info(f"  OpenAI embedding model: {model}")
         if base_url:
             self.logger.info(f"  OpenAI embedding base_url: {base_url}")
@@ -75,7 +75,7 @@ class MinimalSkillTaskPlayground(BasePlayground):
             self._setup_trajectory_file(output_file)
 
             db = get_db_from_description(task_description)
-            db = resolve_db_to_absolute_paths(db)  # vec_dir、nodes_data、model 转为绝对路径
+            db = resolve_db_to_absolute_paths(db)  # Convert vec_dir, nodes_data, and model to absolute paths.
             task_id = getattr(self, "task_id", "task_0")
 
 
