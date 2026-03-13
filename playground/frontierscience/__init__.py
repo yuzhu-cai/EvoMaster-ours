@@ -1,0 +1,2 @@
+"""FrontierScience playground package."""
+

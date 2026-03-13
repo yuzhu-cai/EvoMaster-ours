@@ -1,4 +1,4 @@
-# Configuration for minimal_FrontierScience playground.
+# Configuration for FrontierScience playground.
 
 llm:
   openai:
@@ -39,7 +39,7 @@ session:
   type: "local"
 
   local:
-    working_dir: "./playground/minimal_FrontierScience/workspace"
+    working_dir: "./playground/frontierscience/workspace"
     timeout: 120
     gpu_devices: null
     cpu_devices: null
@@ -54,7 +54,7 @@ session:
     cpu_limit: 16.0
     gpu_devices: null
     network_mode: "host"
-    volumes: {"./playground/minimal_FrontierScience/workspace": "/workspace"}
+    volumes: {"./playground/frontierscience/workspace": "/workspace"}
     env_vars: {}
     auto_remove: false
     timeout: 300

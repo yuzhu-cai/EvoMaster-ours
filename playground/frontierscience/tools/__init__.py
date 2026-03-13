@@ -1,4 +1,4 @@
-"""Tool entrypoints for minimal_FrontierScience."""
+"""Tool entrypoints for FrontierScience."""
 
 from evomaster.agent.tools.base import BaseTool
 

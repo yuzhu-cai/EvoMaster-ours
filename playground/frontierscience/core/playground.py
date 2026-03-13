@@ -1,4 +1,4 @@
-"""minimal_FrontierScience playground implementation."""
+"""FrontierScience playground implementation."""
 
 from __future__ import annotations
 
@@ -12,13 +12,13 @@ from .exp import FrontierScienceExp
 from ..tools import build_frontier_tools
 
 
-@register_playground("minimal_FrontierScience")
-class MinimalFrontierSciencePlayground(BasePlayground):
+@register_playground("frontierscience")
+class FrontierSciencePlayground(BasePlayground):
     """A minimal playground specialized for science QA with web/scholar tools."""
 
     def __init__(self, config_dir: Path | None = None, config_path: Path | None = None):
         if config_path is None and config_dir is None:
-            config_dir = Path(__file__).resolve().parents[3] / "configs" / "minimal_FrontierScience"
+            config_dir = Path(__file__).resolve().parents[3] / "configs" / "frontierscience"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.agents.declare("general_agent")
