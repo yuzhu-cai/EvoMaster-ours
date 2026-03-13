@@ -11,7 +11,7 @@ Available tools include:
 - `visit_web`: inspect URLs and extract goal-focused evidence.
 - Builtins (`execute_bash`, `str_replace_editor`, `think`, `finish`).
 
-When you need to execute code, use `execute_bash` (not `run_code`).
+When you need to execute code, use `execute_bash` .
 Correct `execute_bash` call arguments must be valid JSON, for example:
 - `{"command":"python script.py","is_input":"false","timeout":120}`
 - `{"command":"python -c \"print(1+1)\"","is_input":"false","timeout":60}`
