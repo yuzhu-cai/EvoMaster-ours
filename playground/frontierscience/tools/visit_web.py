@@ -1,4 +1,8 @@
-"""visit_web tool wrapper."""
+"""FrontierScience Web Visit Tool
+
+访问网页并提取相关内容。支持通过 Jina API 或直接访问获取网页内容，
+自动提取 HTML 中的文本内容。支持单个 URL 或批量 URL 访问。
+"""
 
 from __future__ import annotations
 
@@ -22,7 +26,15 @@ logger = logging.getLogger(__name__)
 
 
 class VisitWebParams(BaseToolParams):
-    """Visit webpages and extract relevant content."""
+    """Visit webpages and extract relevant content.
+
+    Fetches webpage content and extracts text, supporting both single URLs and batch processing.
+    Automatically tries Jina API first (if JINA_API_KEY is set) for better content extraction,
+    then falls back to direct HTTP requests with HTML parsing.
+
+    Use this when you need to read the actual content of specific web pages.
+    For finding pages to visit, use search_web or google_scholar first.
+    """
 
     name: ClassVar[str] = "visit_web"
     url: str | list[str] = Field(description="URL string or list of URLs.")
@@ -30,6 +42,8 @@ class VisitWebParams(BaseToolParams):
 
 
 class VisitWebTool(BaseTool):
+    """网页访问工具（支持 Jina API 和直接访问）"""
+
     name: ClassVar[str] = "visit_web"
     params_class: ClassVar[type[BaseToolParams]] = VisitWebParams
 
@@ -42,26 +56,26 @@ class VisitWebTool(BaseTool):
             params = self.parse_params(args_json)
             assert isinstance(params, VisitWebParams)
             url_count = len(params.url) if isinstance(params.url, list) else 1
-            logger.info("visit_web called (url_count=%d)", url_count)
+            self.logger.info("visit_web called (url_count=%d)", url_count)
             if self.external_script_path is not None:
                 try:
                     result = call_external_function(self.external_script_path, "visit_web", params.url, params.goal)
-                    logger.info("visit_web completed via external script: %s", self.external_script_path)
+                    self.logger.info("visit_web completed via external script: %s", self.external_script_path)
                     return ensure_text(result), {
                         "tool": self.name,
                         "mode": "external_script",
                         "script_path": str(self.external_script_path),
                     }
                 except Exception as ext_exc:
-                    logger.warning("visit_web external script failed, fallback to builtin: %s", ext_exc)
+                    self.logger.warning("visit_web external script failed, fallback to builtin: %s", ext_exc)
                     local = local_visit_web(params.url, params.goal)
                     merged = f"{local}\n\n[external visit_web error] {ext_exc}"
                     return ensure_text(merged), {"tool": self.name, "mode": "builtin_fallback"}
             result = local_visit_web(params.url, params.goal)
-            logger.info("visit_web completed via builtin")
+            self.logger.info("visit_web completed via builtin")
             return ensure_text(result), {"tool": self.name, "mode": "builtin"}
         except Exception as exc:
-            logger.error("visit_web failed: %s", exc, exc_info=True)
+            self.logger.error("visit_web failed: %s", exc, exc_info=True)
             return f"[{self.name}] Error: {exc}", {"tool": self.name, "error": str(exc)}
 
 

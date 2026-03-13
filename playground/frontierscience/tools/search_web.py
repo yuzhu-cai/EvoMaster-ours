@@ -1,4 +1,8 @@
-"""search_web tool wrapper."""
+"""FrontierScience Web Search Tool
+
+通过 Serper API 进行 Google 搜索，返回原始搜索结果列表（标题、链接、摘要）。
+支持单个查询或批量查询，自动检测中文并调整搜索区域。
+"""
 
 from __future__ import annotations
 
@@ -19,13 +23,23 @@ logger = logging.getLogger(__name__)
 
 
 class SearchWebParams(BaseToolParams):
-    """Search the web using search_web.py."""
+    """Search the web for real-time results.
+
+    Returns top organic search results with titles, URLs, snippets and dates.
+    Supports both single query strings and batch queries (list of strings).
+    Automatically detects Chinese queries and adjusts search region accordingly.
+
+    Use this when you need raw search result links to visit specific pages,
+    or when you want to see multiple sources before diving deeper.
+    """
 
     name: ClassVar[str] = "search_web"
     query: str | list[str] = Field(description="Single query string or list of queries.")
 
 
 class SearchWebTool(BaseTool):
+    """网页搜索工具（Serper API）"""
+
     name: ClassVar[str] = "search_web"
     params_class: ClassVar[type[BaseToolParams]] = SearchWebParams
 
@@ -38,20 +52,20 @@ class SearchWebTool(BaseTool):
             params = self.parse_params(args_json)
             assert isinstance(params, SearchWebParams)
             query_type = "list" if isinstance(params.query, list) else "string"
-            logger.info("search_web called (query_type=%s)", query_type)
+            self.logger.info("search_web called (query_type=%s)", query_type)
             if self.external_script_path is not None:
                 result = call_external_function(self.external_script_path, "search_web", params.query)
-                logger.info("search_web completed via external script: %s", self.external_script_path)
+                self.logger.info("search_web completed via external script: %s", self.external_script_path)
                 return ensure_text(result), {
                     "tool": self.name,
                     "mode": "external_script",
                     "script_path": str(self.external_script_path),
                 }
             result = local_search_web(params.query)
-            logger.info("search_web completed via builtin")
+            self.logger.info("search_web completed via builtin")
             return ensure_text(result), {"tool": self.name, "mode": "builtin"}
         except Exception as exc:
-            logger.error("search_web failed: %s", exc, exc_info=True)
+            self.logger.error("search_web failed: %s", exc, exc_info=True)
             return f"[{self.name}] Error: {exc}", {"tool": self.name, "error": str(exc)}
 
 
@@ -60,9 +74,9 @@ def _contains_chinese(text: str) -> bool:
 
 
 def _search_one(query: str) -> str:
-    key = os.getenv("SERPER_API_KEY", "").strip()
+    key = os.getenv("SERPER_KEY_ID", "").strip()
     if not key:
-        return "[search_web] SERPER_API_KEY is not set."
+        return "[search_web] SERPER_KEY_ID is not set."
 
     payload = (
         {"q": query, "location": "China", "gl": "cn", "hl": "zh-cn"}

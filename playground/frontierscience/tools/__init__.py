@@ -2,9 +2,9 @@
 
 from evomaster.agent.tools.base import BaseTool
 
-from .google_scholar_tool import GoogleScholarParams, GoogleScholarTool
-from .search_web_tool import SearchWebParams, SearchWebTool
-from .visit_web_tool import VisitWebParams, VisitWebTool
+from .google_scholar import GoogleScholarParams, GoogleScholarTool
+from .search_web import SearchWebParams, SearchWebTool
+from .visit_web import VisitWebParams, VisitWebTool
 
 
 def build_frontier_tools() -> list[BaseTool]:
