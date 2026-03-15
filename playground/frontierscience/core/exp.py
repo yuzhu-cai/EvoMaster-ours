@@ -19,12 +19,15 @@ class FrontierScienceExp(BaseExp):
         self,
         task_description: str,
         task_id: str = "exp_001",
+        task_type: str = "frontier_science",
+        input_data: dict[str, Any] | None = None,
         images: list[str] | None = None,
     ) -> dict[str, Any]:
         image_list = images or []
         self.logger.info(
-            "FrontierScienceExp started (task_id=%s, text_len=%d, image_count=%d)",
+            "FrontierScienceExp started (task_id=%s, task_type=%s, text_len=%d, image_count=%d)",
             task_id,
+            task_type,
             len(task_description),
             len(image_list),
         )
@@ -32,8 +35,9 @@ class FrontierScienceExp(BaseExp):
         try:
             task = TaskInstance(
                 task_id=task_id,
-                task_type="frontier_science",
+                task_type=task_type,
                 description=task_description,
+                input_data=input_data or {},
                 images=image_list,
             )
 
@@ -56,6 +60,7 @@ class FrontierScienceExp(BaseExp):
 
             result = {
                 "task_id": task_id,
+                "task_type": task_type,
                 "status": status,
                 "steps": steps,
                 "trajectory": trajectory,
@@ -72,6 +77,7 @@ class FrontierScienceExp(BaseExp):
             )
             result = {
                 "task_id": task_id,
+                "task_type": task_type,
                 "status": "failed",
                 "steps": 0,
                 "error": str(exc),
@@ -79,4 +85,3 @@ class FrontierScienceExp(BaseExp):
             }
             self.results.append(result)
             return result
-

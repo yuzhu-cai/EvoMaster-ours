@@ -1,4 +1,4 @@
-Please complete the following scientific task.
+Please complete the following scientific task with rigorous reasoning and evidence.
 
 Task ID: {task_id}
 Task Type: {task_type}
@@ -7,4 +7,11 @@ Description:
 
 Additional Information:
 {input_data}
+
+Execution requirements:
+1. Solve the task step by step with evidence-grounded reasoning.
+2. For key claims, use reliable sources and resolve conflicting evidence explicitly.
+3. If formulas/derivations are needed, include important intermediate steps.
+4. Make the final answer complete and self-contained.
+5. Before finishing, write the full final answer to `solution.md` in the working directory, then call `finish`.
 

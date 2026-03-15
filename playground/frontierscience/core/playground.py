@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -84,13 +85,42 @@ class FrontierSciencePlayground(BasePlayground):
             exp.set_run_dir(self.run_dir)
         return exp
 
+    def _extract_task_meta(self, task_description: str) -> tuple[str, dict[str, str]]:
+        pattern = re.compile(
+            r"^\s*\[frontierscience_task_meta\]\s*\n(?P<body>.*?)\n\s*\[/frontierscience_task_meta\]\s*\n?",
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        match = pattern.match(task_description or "")
+        if match is None:
+            return task_description, {}
+
+        body = match.group("body")
+        meta: dict[str, str] = {}
+        for raw_line in body.splitlines():
+            line = raw_line.strip()
+            if not line or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            key = k.strip()
+            val = v.strip()
+            if key:
+                meta[key] = val
+
+        cleaned_description = (task_description[match.end() :]).lstrip()
+        return cleaned_description, meta
+
     def run(
         self,
         task_description: str,
         output_file: str | None = None,
         images: list[str] | None = None,
     ) -> dict[str, Any]:
-        task_id = getattr(self, "task_id", "exp_001")
+        default_task_id = getattr(self, "task_id", "exp_001")
+        cleaned_description, task_meta = self._extract_task_meta(task_description)
+        runtime_task_id = task_meta.get("task_id", default_task_id) or default_task_id
+        runtime_task_type = task_meta.get("task_type", "frontier_science") or "frontier_science"
+        task_input_data = {k: v for k, v in task_meta.items() if k not in {"task_id", "task_type"}}
+        self.task_id = runtime_task_id
         try:
             self.setup()
             self._setup_trajectory_file(output_file)
@@ -98,14 +128,22 @@ class FrontierSciencePlayground(BasePlayground):
             exp = self._create_exp()
             image_count = len(images or [])
             self.logger.info(
-                "Running FrontierScienceExp (task_id=%s, image_count=%d)",
-                task_id,
+                "Running FrontierScienceExp (task_id=%s, task_type=%s, image_count=%d)",
+                runtime_task_id,
+                runtime_task_type,
                 image_count,
             )
-            result = exp.run(task_description=task_description, task_id=task_id, images=images)
+            result = exp.run(
+                task_description=cleaned_description,
+                task_id=runtime_task_id,
+                task_type=runtime_task_type,
+                input_data=task_input_data,
+                images=images,
+            )
             self.logger.info(
-                "FrontierScienceExp finished (task_id=%s, status=%s, steps=%s)",
-                task_id,
+                "FrontierScienceExp finished (task_id=%s, task_type=%s, status=%s, steps=%s)",
+                runtime_task_id,
+                runtime_task_type,
                 result.get("status"),
                 result.get("steps"),
             )
@@ -113,12 +151,13 @@ class FrontierSciencePlayground(BasePlayground):
         except Exception as exc:
             self.logger.error(
                 "Minimal FrontierScience playground failed (task_id=%s): %s",
-                task_id,
+                runtime_task_id,
                 exc,
                 exc_info=True,
             )
             return {
-                "task_id": task_id,
+                "task_id": runtime_task_id,
+                "task_type": runtime_task_type,
                 "status": "failed",
                 "steps": 0,
                 "error": str(exc),

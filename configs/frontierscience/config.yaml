@@ -8,7 +8,7 @@ llm:
     base_url: "${GPT_BASE_URL}"
     temperature: 0.2
     max_tokens: 128000
-    timeout: 1200
+    timeout: 12000
     max_retries: 3
     retry_delay: 1.0
 
@@ -17,16 +17,16 @@ llm:
 agents:
   general:
     llm: "openai"
-    max_turns: 80
+    max_turns: 800
     tools:
       builtin: ["*"]
       mcp: ""
 
     context:
-      max_tokens: 128000
-      truncation_strategy: "latest_half"
+      max_tokens: 200000
+      truncation_strategy: "summary"
       preserve_system_messages: true
-      preserve_recent_turns: 6
+      preserve_recent_turns: 5
 
     system_prompt_file: "prompts/system_prompt.txt"
     user_prompt_file: "prompts/user_prompt.txt"
