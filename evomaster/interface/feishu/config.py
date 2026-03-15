@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import yaml
 from pydantic import BaseModel, Field
@@ -60,6 +60,10 @@ class FeishuBotConfig(BaseModel):
     max_sessions: int = Field(
         default=100,
         description="最大并发会话数",
+    )
+    available_agents: Dict[str, str] = Field(
+        default_factory=dict,
+        description="可用子智能体白名单，格式为 {agent_name: description}，空字典表示不展示任何内置智能体",
     )
 
     class Config:

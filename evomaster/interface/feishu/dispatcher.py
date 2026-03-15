@@ -118,6 +118,7 @@ class TaskDispatcher:
         feishu_app_secret: Optional[str] = None,
         feishu_domain: str = "https://open.feishu.cn",
         feishu_doc_folder_token: Optional[str] = None,
+        available_agents: dict[str, str] | None = None,
     ):
         """
         Args:
@@ -133,6 +134,7 @@ class TaskDispatcher:
             feishu_app_secret: 飞书 App Secret
             feishu_domain: 飞书 API 域名
             feishu_doc_folder_token: 飞书文件夹 token（用于文档写入工具）
+            available_agents: 可用子智能体白名单 {name: description}
         """
         from .session_manager import ChatSessionManager
 
@@ -155,6 +157,7 @@ class TaskDispatcher:
         self._feishu_app_secret = feishu_app_secret
         self._feishu_domain = feishu_domain
         self._feishu_doc_folder_token = feishu_doc_folder_token
+        self._available_agents = available_agents or {}
 
         # 飞书 Client（用于 patch 卡片等操作）
         self._feishu_client = None
@@ -214,6 +217,11 @@ class TaskDispatcher:
         # /help 命令：显示使用帮助
         if stripped == "/help":
             self._send_help_card(chat_id, message_id)
+            return
+
+        # /list 命令：显示可用子智能体
+        if stripped == "/list":
+            self._send_list_card(chat_id, message_id)
             return
 
         agent = agent_name or self._default_agent
@@ -1378,6 +1386,87 @@ class TaskDispatcher:
             except Exception:
                 logger.exception("Error in on_result callback")
 
+    def _collect_available_agents(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+        """收集可用子智能体列表。
+
+        Returns:
+            (builtin_agents, generated_agents): 每项为 (name, description)
+        """
+        # 1. 内置智能体：从配置白名单获取
+        builtin = [(name, desc) for name, desc in self._available_agents.items()]
+
+        # 2. 自定义智能体：扫描 configs/_generated/ 目录
+        generated = []
+        gen_dir = self._project_root / "configs" / "_generated"
+        if gen_dir.exists():
+            for child in sorted(gen_dir.iterdir()):
+                if child.is_dir() and (child / "config.yaml").exists():
+                    desc = self._extract_config_description(child / "config.yaml")
+                    generated.append((child.name, desc))
+
+        return builtin, generated
+
+    @staticmethod
+    def _extract_config_description(config_path: Path) -> str:
+        """从 config.yaml 注释头提取描述"""
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line.startswith("#"):
+                        break
+                    text = line.lstrip("#").strip()
+                    if not text or "配置文件" in text:
+                        continue
+                    return text
+        except Exception:
+            pass
+        return ""
+
+    def _send_list_card(self, chat_id: str, message_id: str) -> None:
+        """发送可用子智能体列表卡片"""
+        builtin, generated = self._collect_available_agents()
+
+        parts = []
+
+        if builtin:
+            parts.append("**内置智能体**")
+            for name, desc in builtin:
+                line = f"• `{name}`"
+                if desc:
+                    line += f" — {desc}"
+                parts.append(line)
+
+        if generated:
+            if parts:
+                parts.append("")
+            parts.append("**自定义智能体**（通过 Agent Builder 创建）")
+            for name, desc in generated:
+                line = f"• `{name}`"
+                if desc:
+                    line += f" — {desc}"
+                parts.append(line)
+
+        if not builtin and not generated:
+            parts.append("暂无可用的子智能体。\n\n你可以直接告诉我想创建什么智能体，我会帮你设计并构建。")
+
+        parts.append("\n---")
+        parts.append("使用方式: `/agent <名称> <任务描述>`")
+
+        content = "\n".join(parts)
+
+        if self._feishu_client:
+            from .messaging.sender import send_card_message
+            send_card_message(
+                self._feishu_client, chat_id,
+                title="📋 可用智能体",
+                content=content,
+                reply_to_message_id=message_id,
+                header_template="indigo",
+            )
+        elif self._on_result:
+            self._on_result(chat_id, message_id, content)
+
     def _send_welcome_card(self, chat_id: str, message_id: str) -> None:
         """发送欢迎卡片，介绍 bot 功能和使用方法。"""
         if not self._feishu_client:
@@ -1385,7 +1474,7 @@ class TaskDispatcher:
             if self._on_result:
                 self._on_result(
                     chat_id, message_id,
-                    "新会话已开始。直接发送消息即可对话，或使用 /agent <名称> <任务> 调用专属智能体。",
+                    "新会话已开始。直接发送消息即可对话，或使用 /agent <名称> <任务> 调用专属智能体。\n命令: /help /list /new",
                 )
             return
 
@@ -1403,6 +1492,7 @@ class TaskDispatcher:
             "---\n"
             "**常用命令**\n"
             "`/help` — 显示本帮助信息\n"
+            "`/list` — 查看可用的子智能体列表\n"
             "`/new` — 清除上下文，开始新会话"
         )
 
@@ -1421,7 +1511,7 @@ class TaskDispatcher:
             if self._on_result:
                 self._on_result(
                     chat_id, message_id,
-                    "使用帮助：直接发消息对话；/agent <名称> <任务> 调用智能体；/new 新会话。",
+                    "使用帮助：直接发消息对话；/agent <名称> <任务> 调用智能体；/list 查看可用智能体；/new 新会话。",
                 )
             return
 
@@ -1439,6 +1529,7 @@ class TaskDispatcher:
             "---\n"
             "**命令列表**\n"
             "`/help` — 显示本帮助信息\n"
+            "`/list` — 查看可用的子智能体列表\n"
             "`/new` — 清除上下文，开始新会话"
         )
 
