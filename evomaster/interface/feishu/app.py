@@ -174,6 +174,7 @@ class FeishuBot:
             feishu_app_secret=config.app_secret,
             feishu_domain=config.domain,
             feishu_doc_folder_token=config.doc_folder_token,
+            available_agents=config.available_agents,
         )
 
         self._ws_client: Optional[lark.ws.Client] = None
@@ -218,14 +219,14 @@ class FeishuBot:
             send_text_message(
                 self._client,
                 ctx.chat_id,
-                "请提供任务描述。\n用法：直接发送消息对话，或使用 /agent <agent名称> <任务描述>\n命令：/new（新会话）、/shutdown（关闭 Bot）",
+                "请提供任务描述。\n用法：直接发送消息对话，或使用 /agent <agent名称> <任务描述>\n命令：/new（新会话）、/list（查看智能体）、/shutdown（关闭 Bot）",
                 reply_to_message_id=ctx.message_id,
             )
             return
 
         # 特殊命令直接 dispatch，不发确认消息
         stripped = task_text.strip()
-        if stripped in ("/new", "/shutdown"):
+        if stripped in ("/new", "/shutdown", "/list"):
             self._dispatcher.dispatch(
                 chat_id=ctx.chat_id,
                 message_id=ctx.message_id,

@@ -32,3 +32,10 @@ feishu:
 
   # 最大并发会话数
   max_sessions: 100
+
+  # 可用子智能体白名单（/list 命令展示）
+  # 格式: agent名称: 描述
+  available_agents:
+    agent_builder: "创建/设计/构建新的 AI Agent"
+    browse_master: "网页浏览与信息搜索"
+    ml_master_2: "机器学习任务自动化"
