@@ -224,6 +224,17 @@ class TaskDispatcher:
             self._send_list_card(chat_id, message_id)
             return
 
+        # 白名单校验：/agent 指定的 agent 必须在允许列表中
+        if agent_name and agent_name != self._default_agent:
+            allowed = self._get_allowed_agent_names()
+            if agent_name not in allowed:
+                if self._on_result:
+                    self._on_result(
+                        chat_id, message_id,
+                        f"智能体 `{agent_name}` 不在可用列表中。\n发送 /list 查看可用的智能体。",
+                    )
+                return
+
         agent = agent_name or self._default_agent
         future = self._executor.submit(
             self._run_task_with_session,
@@ -1385,6 +1396,17 @@ class TaskDispatcher:
                 self._on_result(chat_id, message_id, result_text)
             except Exception:
                 logger.exception("Error in on_result callback")
+
+    def _get_allowed_agent_names(self) -> set[str]:
+        """返回所有允许调用的 agent 名称集合"""
+        allowed = set(self._available_agents.keys())
+        # _generated/ 下的自定义 agent 始终允许
+        gen_dir = self._project_root / "configs" / "_generated"
+        if gen_dir.exists():
+            for child in gen_dir.iterdir():
+                if child.is_dir() and (child / "config.yaml").exists():
+                    allowed.add(child.name)
+        return allowed
 
     def _collect_available_agents(self) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
         """收集可用子智能体列表。
