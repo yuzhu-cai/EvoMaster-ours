@@ -464,7 +464,10 @@ class ConfigManager:
             raise ValueError(
                 f"Config field 'agents.{name}.skills' cannot mix '*' with specific skill names"
             )
-        return {"skills": raw_skills}
+        result: dict[str, Any] = {"skills": raw_skills}
+        skill_dir = agent_cfg.get("skill_dir", "./evomaster/skills_ts")
+        result["skill_dir"] = str(skill_dir)
+        return result
 
 
     def get_session_config(self, session_type: str = "docker") -> dict[str, Any]:

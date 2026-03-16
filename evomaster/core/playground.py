@@ -129,6 +129,7 @@ class BasePlayground:
         self.tools = None
         self.mcp_manager = None
         self._base_skill_registry = None
+        self.openclaw_bridge = None
 
     def _start_loop_in_thread(self) -> threading.Thread:
 
@@ -334,7 +335,10 @@ class BasePlayground:
 
 
     def _get_or_create_full_skill_registry(self) -> SkillRegistry:
-        """始终创建/获取全量 SkillRegistry（与 builtin 一致：始终注册，config 仅控制是否暴露给 LLM）。"""
+        """始终创建/获取全量 SkillRegistry（与 builtin 一致：始终注册，config 仅控制是否暴露给 LLM）。
+
+        同时扫描 evomaster/skills（Python 技能）和 evomaster/skills_ts（TypeScript/Openclaw 技能）。
+        """
         skills_config = getattr(self.config, "skills", None)
         if isinstance(skills_config, dict):
             skills_root = Path(skills_config.get("skills_root", "evomaster/skills"))
@@ -343,7 +347,12 @@ class BasePlayground:
         if self._base_skill_registry is None:
             self.logger.info(f"Loading full skill registry from: {skills_root}")
             self._base_skill_registry = SkillRegistry(skills_root)
-            self.logger.info(f"Loaded {len(self._base_skill_registry.get_all_skills())} skills")
+            # 也扫描 skills_ts 目录（Openclaw 技能）
+            skills_ts_root = Path(skills_root).parent / "skills_ts"
+            if skills_ts_root.exists():
+                self.logger.info(f"Also loading skills from: {skills_ts_root}")
+                self._base_skill_registry.load_from_directory(skills_ts_root)
+            self.logger.info(f"Loaded {len(self._base_skill_registry.get_all_skills())} skills total")
         return self._base_skill_registry
 
     def _resolve_skill_registry(self, skill_config: dict | None) -> SkillRegistry | None:
@@ -429,11 +438,20 @@ class BasePlayground:
 
         mcp_config_file = tool_config.get("mcp", "")
 
+        # Openclaw bridge 初始化（只初始化一次）
+        # openclaw 可能在顶层或 custom 中（get_agent_tools_config 将非 builtin/mcp 放入 custom）
+        openclaw_config = tool_config.get("openclaw") or tool_config.get("custom", {}).get("openclaw") or {}
+        # 写了 openclaw 且有 plugins 即视为启用；enabled 可省略
+        openclaw_enabled = bool(openclaw_config.get("plugins")) or openclaw_config.get("enabled", False)
+        if openclaw_enabled and self.openclaw_bridge is None:
+            self._setup_openclaw_bridge(openclaw_config)
+
         # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM
         skill_registry = self._get_or_create_full_skill_registry()
         self.tools = create_registry(
             builtin_names=["*"],
             skill_registry=skill_registry,
+            openclaw_bridge=self.openclaw_bridge,
         )
 
         # MCP: 当 mcp_config_file 非空时加载 MCP 工具
@@ -448,6 +466,43 @@ class BasePlayground:
         custom_tools = tool_config.get("custom", {})
         if custom_tools:
             self._register_custom_tools(custom_tools)
+
+    def _setup_openclaw_bridge(self, openclaw_config: dict[str, Any]) -> None:
+        """初始化 Openclaw bridge 子进程
+
+        创建并启动 Node.js bridge 子进程，用于执行 Openclaw 类型技能。
+
+        Args:
+            openclaw_config: Openclaw 配置字典，形如:
+                {
+                    "enabled": true,
+                    "skills_ts_dir": "./evomaster/skills_ts",
+                    "plugins": ["feishu"]
+                }
+        """
+        from evomaster.agent.tools.openclaw_bridge import OpenclawBridge
+
+        skills_ts_dir = Path(openclaw_config.get("skills_ts_dir", "./evomaster/skills_ts"))
+        if not skills_ts_dir.is_absolute():
+            skills_ts_dir = skills_ts_dir.resolve()
+
+        plugins = openclaw_config.get("plugins", [])
+        if not plugins:
+            self.logger.warning("Openclaw enabled but no plugins specified, skipping bridge init")
+            return
+
+        self.logger.info(f"Starting Openclaw bridge from: {skills_ts_dir} with plugins: {plugins}")
+        try:
+            self.openclaw_bridge = OpenclawBridge(skills_ts_dir)
+            self.openclaw_bridge.start(plugins)
+            tools_info = self.openclaw_bridge.get_tools_info()
+            self.logger.info(
+                f"Openclaw bridge started with {len(tools_info)} tools: "
+                f"{', '.join(tools_info.keys())}"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to start Openclaw bridge: {e}", exc_info=True)
+            self.openclaw_bridge = None
 
     def _register_custom_tools(self, custom_tools: dict[str, Any]) -> None:
         """自动发现并注册自定义工具
@@ -1082,6 +1137,15 @@ class BasePlayground:
         对于 DockerSession，如果 auto_remove=False，则保留容器不关闭 session，
         以便在后续运行中复用同一个容器。
         """
+        # 清理 Openclaw bridge
+        if self.openclaw_bridge is not None:
+            try:
+                self.openclaw_bridge.stop()
+                self.logger.debug("Openclaw bridge stopped")
+            except Exception as e:
+                self.logger.warning(f"Error stopping Openclaw bridge: {e}")
+            self.openclaw_bridge = None
+
         if self.mcp_manager:
             try:
                 loop = self._mcp_loop

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -14,6 +15,7 @@ from .base import BaseTool, BaseToolParams
 
 if TYPE_CHECKING:
     from evomaster.agent.session import BaseSession
+    from evomaster.agent.tools.openclaw_bridge import OpenclawBridge
     from evomaster.skills import Skill, SkillRegistry
 
 
@@ -55,14 +57,16 @@ class SkillTool(BaseTool):
     name: ClassVar[str] = "use_skill"
     params_class: ClassVar[type[BaseToolParams]] = SkillToolParams
 
-    def __init__(self, skill_registry: SkillRegistry):
+    def __init__(self, skill_registry: SkillRegistry, bridge: OpenclawBridge | None = None):
         """初始化 SkillTool
 
         Args:
             skill_registry: SkillRegistry 实例
+            bridge: OpenclawBridge 实例（可选，用于执行 Openclaw 类型技能）
         """
         super().__init__()
         self.skill_registry = skill_registry
+        self._bridge = bridge
 
     def get_description(self) -> str:
         """动态注入 skills 元信息到工具描述中"""
@@ -70,6 +74,8 @@ class SkillTool(BaseTool):
 
         skills_context = self.skill_registry.get_meta_info_context()
         if skills_context:
+            # print("base_description", base_description)
+            self.logger.info("skills_context", skills_context)
             return (
                 f"{base_description}\n\n"
                 f"{skills_context}\n"
@@ -77,6 +83,8 @@ class SkillTool(BaseTool):
                 "1. Get detailed information about a skill: action='get_info'\n"
                 "2. Get reference documentation: action='get_reference'\n"
                 "3. Run scripts from skills: action='run_script'"
+                "4. Example 1 of script_args: \"script_args\": \"{ \"action\": \"read\", \"doc_token\": \"<your doc token>\" }\""
+                "5. Example 2 of script_args: \"script_args\": \"--top_k 1 --threshold 0.7 --output json\""
             )
         return base_description
 
@@ -178,6 +186,9 @@ class SkillTool(BaseTool):
     ) -> tuple[str, dict[str, Any]]:
         """运行技能中的脚本
 
+        对于 Openclaw 类型技能，通过 bridge 执行工具。
+        对于普通技能，通过 session 的 bash 工具执行脚本。
+
         Args:
             session: 环境会话
             skill: Skill 实例
@@ -187,6 +198,10 @@ class SkillTool(BaseTool):
         Returns:
             (observation, info) 元组
         """
+        # Openclaw 类型技能：通过 bridge 执行
+        if skill.meta_info.type == "openclaw":
+            return self._run_openclaw_tool(skill, script_args)
+
         if not script_name:
             return (
                 "Error: script_name is required for action='run_script'",
@@ -248,4 +263,59 @@ class SkillTool(BaseTool):
             return (
                 f"Error executing script: {str(e)}",
                 {"error": "script_execution_failed"}
+            )
+
+    def _run_openclaw_tool(
+        self,
+        skill: Skill,
+        script_args: str | None,
+    ) -> tuple[str, dict[str, Any]]:
+        """通过 OpenclawBridge 执行 Openclaw 工具
+
+        Args:
+            skill: Skill 实例（type='openclaw'）
+            script_args: JSON 格式的工具参数
+
+        Returns:
+            (observation, info) 元组
+        """
+        if not self._bridge:
+            return (
+                "Error: Openclaw bridge not initialized. "
+                "Enable openclaw in tool config to use this skill.",
+                {"error": "bridge_not_initialized"}
+            )
+
+        tool_name = skill.meta_info.tool_name
+        if not tool_name:
+            return (
+                f"Error: Skill '{skill.meta_info.name}' is marked as openclaw "
+                "but has no tool_name configured.",
+                {"error": "missing_tool_name"}
+            )
+
+        # 解析参数
+        try:
+            args = json.loads(script_args) if isinstance(script_args, str) and script_args else {}
+        except json.JSONDecodeError as e:
+            return (
+                f"Error: Invalid JSON in script_args: {e}",
+                {"error": "invalid_args"}
+            )
+
+        # 通过 bridge 执行
+        try:
+            result = self._bridge.execute_tool(tool_name, args)
+            return (
+                result,
+                {
+                    "action": "openclaw_execute",
+                    "skill_name": skill.meta_info.name,
+                    "tool_name": tool_name,
+                }
+            )
+        except Exception as e:
+            return (
+                f"Error executing openclaw tool '{tool_name}': {str(e)}",
+                {"error": "openclaw_execution_failed"}
             )

@@ -26,6 +26,8 @@ class SkillMetaInfo(BaseModel):
     name: str = Field(description="技能名称")
     description: str = Field(description="技能描述，包含使用场景和触发条件")
     license: str | None = Field(default=None, description="许可证信息")
+    type: str | None = Field(default=None, description="技能类型，如 'openclaw' 表示 Openclaw 插件技能")
+    tool_name: str | None = Field(default=None, description="Openclaw 工具名称，如 'feishu_doc'")
 
 
 class BaseSkill(ABC):
@@ -71,21 +73,49 @@ class BaseSkill(ABC):
 
         frontmatter_text = frontmatter_match.group(1)
 
-        # 简单的 YAML 解析（仅支持 key: value 格式）
+        # YAML 解析：支持 key: value 和 key: | 多行块格式
         frontmatter_data = {}
+        current_key = None
+        multiline_lines: list[str] = []
+
         for line in frontmatter_text.split('\n'):
-            line = line.strip()
-            if not line or line.startswith('#'):
+            stripped = line.strip()
+            if not stripped or stripped.startswith('#'):
                 continue
-            if ':' in line:
-                key, value = line.split(':', 1)
-                frontmatter_data[key.strip()] = value.strip()
+
+            # 检查是否是多行块的缩进续行
+            if current_key and (line.startswith('  ') or line.startswith('\t')):
+                multiline_lines.append(stripped)
+                continue
+
+            # 如果之前在收集多行值，保存它
+            if current_key and multiline_lines:
+                frontmatter_data[current_key] = ' '.join(multiline_lines)
+                current_key = None
+                multiline_lines = []
+
+            if ':' in stripped:
+                key, value = stripped.split(':', 1)
+                key = key.strip()
+                value = value.strip()
+                if value == '|' or value == '>':
+                    # 开始多行块
+                    current_key = key
+                    multiline_lines = []
+                else:
+                    frontmatter_data[key] = value
+
+        # 处理最后一个多行块
+        if current_key and multiline_lines:
+            frontmatter_data[current_key] = ' '.join(multiline_lines)
 
         # 创建 SkillMetaInfo
         return SkillMetaInfo(
             name=frontmatter_data.get('name', self.skill_path.name),
             description=frontmatter_data.get('description', ''),
             license=frontmatter_data.get('license'),
+            type=frontmatter_data.get('type'),
+            tool_name=frontmatter_data.get('tool_name'),
         )
 
     def get_full_info(self) -> str:
@@ -235,6 +265,36 @@ class SkillRegistry:
                     skill = Skill(skill_dir)
                     self._skills[skill.meta_info.name] = skill
                     self.logger.info(f"Loaded skill: {skill.meta_info.name}")
+                except Exception as e:
+                    self.logger.error(f"Failed to load skill from {skill_dir}: {e}")
+
+    def load_from_directory(self, directory: Path, skills: list[str] | None = None) -> None:
+        """从额外目录加载 skills
+
+        可多次调用以从多个目录加载 skills。
+
+        Args:
+            directory: 额外的 skills 目录
+            skills: 指定仅加载的 skill 目录名列表；None 表示加载全部
+        """
+        if not directory.exists():
+            self.logger.debug(f"Skills directory not found, skipping: {directory}")
+            return
+
+        selected_set = set(skills) if skills is not None else None
+        for skill_dir in directory.iterdir():
+            if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
+                if selected_set is not None and skill_dir.name not in selected_set:
+                    continue
+                try:
+                    skill = Skill(skill_dir)
+                    if skill.meta_info.name in self._skills:
+                        self.logger.warning(
+                            f"Skill '{skill.meta_info.name}' already loaded, "
+                            f"overwriting with {skill_dir}"
+                        )
+                    self._skills[skill.meta_info.name] = skill
+                    self.logger.info(f"Loaded skill: {skill.meta_info.name} (from {directory})")
                 except Exception as e:
                     self.logger.error(f"Failed to load skill from {skill_dir}: {e}")
 

@@ -202,3 +202,4 @@ playground/ml_master_2/wisdom/wisdom.json
 
 _generated/
 data/memory/
+evomaster/skills_ts/node_modules/*

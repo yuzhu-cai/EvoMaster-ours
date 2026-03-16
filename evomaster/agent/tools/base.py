@@ -287,6 +287,7 @@ def get_all_builtin_tool_names() -> list[str]:
 def create_registry(
     builtin_names: list[str] | None = None,
     skill_registry: SkillRegistry | None = None,
+    openclaw_bridge: object | None = None,
 ) -> ToolRegistry:
     """创建工具注册中心，支持按名称筛选 builtin 工具
 
@@ -296,6 +297,7 @@ def create_registry(
             - [] → 不注册任何 builtin（仅 skill / MCP）
             - ["execute_bash", "finish"] → 仅注册指定工具
         skill_registry: 可选的 SkillRegistry 实例，如果提供则注册 SkillTool
+        openclaw_bridge: 可选的 OpenclawBridge 实例，传递给 SkillTool
     """
     factories = _get_builtin_factories()
 
@@ -322,7 +324,7 @@ def create_registry(
     # 如果提供了 skill_registry 则始终注册 SkillTool（与 builtin 一致，config 仅控制是否暴露给 LLM）
     if skill_registry is not None:
         from .skill import SkillTool
-        tools.append(SkillTool(skill_registry))
+        tools.append(SkillTool(skill_registry, bridge=openclaw_bridge))
 
     registry.register_many(tools)
     return registry
