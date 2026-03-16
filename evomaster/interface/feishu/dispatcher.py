@@ -100,6 +100,9 @@ _SESSION_SUBTASK_AGENTS = {"agent_builder"}
 # 完成后需要确认按钮的子任务 agent（Phase 1 结束后显示「确认生成」按钮）
 _CONFIRM_SUBTASK_AGENTS = {"agent_builder"}
 
+# 保留同步委派流程的 agent（agent_builder 的 planner→确认→builder 流程）
+_SYNCHRONOUS_DELEGATION_AGENTS = {"agent_builder"}
+
 
 class TaskDispatcher:
     """任务调度器：通过会话管理实现多轮对话上下文延续"""
@@ -159,6 +162,10 @@ class TaskDispatcher:
         self._feishu_doc_folder_token = feishu_doc_folder_token
         self._available_agents = available_agents or {}
 
+        # 后台任务注册表
+        from .background_task import BackgroundTaskRegistry
+        self._bg_task_registry = BackgroundTaskRegistry()
+
         # 飞书 Client（用于 patch 卡片等操作）
         self._feishu_client = None
         if feishu_app_id and feishu_app_secret:
@@ -211,6 +218,8 @@ class TaskDispatcher:
             # 同时清除该 chat 的所有会话级子任务会话
             for agent_name in _SESSION_SUBTASK_AGENTS:
                 self._session_manager.remove(f"{chat_id}:{agent_name}")
+            # 清理旧的后台任务记录（仅已完成且已审阅的）
+            self._bg_task_registry.cleanup_old(chat_id, max_age_seconds=0)
             self._send_welcome_card(chat_id, message_id)
             return
 
@@ -536,6 +545,7 @@ class TaskDispatcher:
                     self._inject_send_file_tool(session.playground, chat_id)
                     self._inject_ask_user_tool(session.agent)
                     self._inject_memory_tools(session.agent, memory_manager, user_id)
+                    self._inject_background_tools(session.agent, chat_id)
 
                     # 设置 compaction 前的记忆提取钩子
                     if memory_manager and memory_config.get("auto_capture", True):
@@ -613,15 +623,8 @@ class TaskDispatcher:
 
                 # === 委派检测 ===
                 # evoclaw 可能通过 delegate_to_agent 工具触发了委派
-                delegation = self._check_delegation(session)
-                if delegation:
-                    delegated_agent = delegation["agent_name"]
-                    delegated_task = delegation["task"]
-                    logger.info(
-                        "Delegation detected: agent=%s, task=%s",
-                        delegated_agent, delegated_task[:100],
-                    )
-
+                delegations = self._check_all_delegations(session)
+                if delegations:
                     # 先 finalize evoclaw 的卡片（显示委派消息）
                     chat_answer = _extract_final_answer(
                         {"trajectory": trajectory, "status": trajectory.status}
@@ -632,87 +635,106 @@ class TaskDispatcher:
                         except Exception:
                             logger.exception("Failed to finalize chat reporter")
 
-                    # 创建子任务的 reporter
-                    subtask_reporter = None
-                    subtask_on_step = None
-                    if self._step_reporter_factory:
-                        try:
-                            subtask_reporter = self._step_reporter_factory(
-                                chat_id, message_id, sender_open_id
-                            )
-                            subtask_reporter.send_initial_card(
-                                f"[{delegated_agent}] {delegated_task[:200]}"
-                            )
-                            subtask_on_step = subtask_reporter.on_step
-                        except Exception:
-                            logger.exception("Failed to create subtask reporter")
-
-                    answer, sub_trajectory = self._run_session_subtask(
-                        chat_id, delegated_agent, delegated_task,
-                        subtask_on_step, sender_open_id,
-                    )
-
-                    # 检查 waiting_for_input（agent 在向用户提问）
-                    if sub_trajectory and sub_trajectory.status == "waiting_for_input":
-                        if subtask_reporter:
-                            try:
-                                sub_session_key = f"{chat_id}:{delegated_agent}"
-                                sub_session = self._session_manager.get(sub_session_key)
-                                self._finalize_subtask_with_question(
-                                    subtask_reporter, sub_trajectory, sub_session_key,
-                                    delegated_agent, sub_session,
-                                )
-                                return None
-                            except Exception:
-                                logger.exception("Failed to finalize question card")
-                        return None
-
-                    if session.initialized and session.agent:
-                        summary = (
-                            f"[子任务结果 - {delegated_agent}]\n"
-                            f"用户请求: {delegated_task}\n"
-                            f"结果: {answer}"
+                    for delegation in delegations:
+                        delegated_agent = delegation["agent_name"]
+                        delegated_task = delegation["task"]
+                        logger.info(
+                            "Delegation detected: agent=%s, task=%s",
+                            delegated_agent, delegated_task[:100],
                         )
-                        session.agent.add_user_message(summary)
-                    if subtask_reporter:
-                        try:
-                            if delegated_agent in _CONFIRM_SUBTASK_AGENTS:
-                                session_key = f"{chat_id}:{delegated_agent}"
-                                _answer_for_button = answer[:2000] if answer else ""
-                                actions = [
-                                    {
-                                        "text": "✅ 确认生成",
-                                        "type": "primary",
-                                        "value": {
-                                            "action": "confirm_agent_build",
-                                            "session_key": session_key,
-                                            "agent_name": delegated_agent,
-                                            "original_answer": _answer_for_button,
-                                        },
-                                    },
-                                    {
-                                        "text": "❌ 取消",
-                                        "type": "danger",
-                                        "value": {
-                                            "action": "cancel_agent_build",
-                                            "session_key": session_key,
-                                            "agent_name": delegated_agent,
-                                            "original_answer": _answer_for_button,
-                                        },
-                                    },
-                                ]
-                                subtask_reporter.finalize(
-                                    "completed", answer, actions=actions
+
+                        if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
+                            # === 同步委派（agent_builder 等）：保留现有流程 ===
+                            subtask_reporter = None
+                            subtask_on_step = None
+                            if self._step_reporter_factory:
+                                try:
+                                    subtask_reporter = self._step_reporter_factory(
+                                        chat_id, message_id, sender_open_id
+                                    )
+                                    subtask_reporter.send_initial_card(
+                                        f"[{delegated_agent}] {delegated_task[:200]}"
+                                    )
+                                    subtask_on_step = subtask_reporter.on_step
+                                except Exception:
+                                    logger.exception("Failed to create subtask reporter")
+
+                            answer, sub_trajectory = self._run_session_subtask(
+                                chat_id, delegated_agent, delegated_task,
+                                subtask_on_step, sender_open_id,
+                            )
+
+                            # 检查 waiting_for_input（agent 在向用户提问）
+                            if sub_trajectory and sub_trajectory.status == "waiting_for_input":
+                                if subtask_reporter:
+                                    try:
+                                        sub_session_key = f"{chat_id}:{delegated_agent}"
+                                        sub_session = self._session_manager.get(sub_session_key)
+                                        self._finalize_subtask_with_question(
+                                            subtask_reporter, sub_trajectory, sub_session_key,
+                                            delegated_agent, sub_session,
+                                        )
+                                        return None
+                                    except Exception:
+                                        logger.exception("Failed to finalize question card")
+                                return None
+
+                            if session.initialized and session.agent:
+                                summary = (
+                                    f"[子任务结果 - {delegated_agent}]\n"
+                                    f"用户请求: {delegated_task}\n"
+                                    f"结果: {answer}"
                                 )
-                                # 存储卡片 ID，下次多轮时可 patch 移除旧按钮
-                                sub_session = self._session_manager.get(session_key)
-                                if sub_session:
-                                    sub_session.last_card_message_id = subtask_reporter.card_message_id
-                            else:
-                                subtask_reporter.finalize("completed", answer)
-                            return None
-                        except Exception:
-                            logger.exception("Failed to finalize subtask reporter")
+                                session.agent.add_user_message(summary)
+                            if subtask_reporter:
+                                try:
+                                    if delegated_agent in _CONFIRM_SUBTASK_AGENTS:
+                                        session_key = f"{chat_id}:{delegated_agent}"
+                                        _answer_for_button = answer[:2000] if answer else ""
+                                        actions = [
+                                            {
+                                                "text": "✅ 确认生成",
+                                                "type": "primary",
+                                                "value": {
+                                                    "action": "confirm_agent_build",
+                                                    "session_key": session_key,
+                                                    "agent_name": delegated_agent,
+                                                    "original_answer": _answer_for_button,
+                                                },
+                                            },
+                                            {
+                                                "text": "❌ 取消",
+                                                "type": "danger",
+                                                "value": {
+                                                    "action": "cancel_agent_build",
+                                                    "session_key": session_key,
+                                                    "agent_name": delegated_agent,
+                                                    "original_answer": _answer_for_button,
+                                                },
+                                            },
+                                        ]
+                                        subtask_reporter.finalize(
+                                            "completed", answer, actions=actions
+                                        )
+                                        sub_session = self._session_manager.get(session_key)
+                                        if sub_session:
+                                            sub_session.last_card_message_id = subtask_reporter.card_message_id
+                                    else:
+                                        subtask_reporter.finalize("completed", answer)
+                                    return None
+                                except Exception:
+                                    logger.exception("Failed to finalize subtask reporter")
+                        else:
+                            # === 后台委派：非同步 agent 在后台线程运行 ===
+                            bg_task = self._bg_task_registry.create(
+                                chat_id, delegated_agent, delegated_task
+                            )
+                            self._dispatch_background_subtask(
+                                chat_id, bg_task, message_id, sender_open_id
+                            )
+
+                    # 处理待审阅的后台任务（在仍持有 lock 时）
+                    self._process_pending_reviews(session, chat_id, message_id, sender_open_id)
                     return None
 
                 # 无委派：正常返回
@@ -728,10 +750,14 @@ class TaskDispatcher:
                 if reporter:
                     try:
                         reporter.finalize("completed", answer)
+                        # 处理待审阅的后台任务（在仍持有 lock 时）
+                        self._process_pending_reviews(session, chat_id, message_id, sender_open_id)
                         return None  # 卡片已包含回答，不需要额外消息
                     except Exception:
                         logger.exception("Failed to finalize step reporter")
 
+                # 处理待审阅的后台任务（在仍持有 lock 时）
+                self._process_pending_reviews(session, chat_id, message_id, sender_open_id)
                 return answer
 
             except Exception as e:
@@ -915,6 +941,261 @@ class TaskDispatcher:
         for tool_cls in (MemorySearchTool, MemorySaveTool, MemoryForgetTool):
             tool = tool_cls(memory_manager=memory_manager, user_id=user_id)
             agent.tools.register(tool)
+
+    def _inject_background_tools(self, agent, chat_id: str) -> None:
+        """注入后台任务相关工具：动态 agent 列表 + check_background_tasks。"""
+        # 1. 更新 delegate_to_agent 的可用 agent 列表
+        delegate_tool = agent.tools.get_tool("delegate_to_agent")
+        if delegate_tool and hasattr(delegate_tool, "set_available_agents"):
+            # 合并内置 + 生成的 agent
+            all_agents = dict(self._available_agents)
+            gen_dir = self._project_root / "configs" / "_generated"
+            if gen_dir.exists():
+                for child in sorted(gen_dir.iterdir()):
+                    if child.is_dir() and (child / "config.yaml").exists():
+                        if child.name not in all_agents:
+                            desc = self._extract_config_description(child / "config.yaml")
+                            all_agents[child.name] = desc or "自定义智能体"
+            delegate_tool.set_available_agents(all_agents)
+
+        # 2. 注入/更新 check_background_tasks 工具
+        check_tool = agent.tools.get_tool("check_background_tasks")
+        if check_tool and hasattr(check_tool, "set_context"):
+            check_tool.set_context(self._bg_task_registry, chat_id)
+        else:
+            from playground.evoclaw.tools.check_background_tasks import CheckBackgroundTasksTool
+            check_tool = CheckBackgroundTasksTool(
+                task_registry=self._bg_task_registry, chat_id=chat_id
+            )
+            agent.tools.register(check_tool)
+
+    def _dispatch_background_subtask(
+        self,
+        chat_id: str,
+        bg_task,
+        message_id: str,
+        sender_open_id: Optional[str] = None,
+    ) -> None:
+        """启动后台 daemon 线程执行子智能体任务。"""
+        from .background_task import BackgroundTaskStatus
+
+        def _run():
+            logger.info(
+                "Background subtask started: task_id=%s, agent=%s",
+                bg_task.task_id, bg_task.agent_name,
+            )
+            # 创建独立的 step reporter（用户看到独立进度卡片）
+            bg_reporter = None
+            bg_on_step = None
+            if self._step_reporter_factory:
+                try:
+                    bg_reporter = self._step_reporter_factory(
+                        chat_id, message_id, sender_open_id
+                    )
+                    bg_reporter.send_initial_card(
+                        f"🔄 [{bg_task.agent_name}] {bg_task.task_description[:200]}"
+                    )
+                except Exception:
+                    logger.exception("Failed to create background reporter")
+
+            # 包装 on_step 回调，同时更新 registry 进度
+            # agent.run() 调用签名: on_step(step_record, step_number, max_steps)
+            def _on_step(step_record, step_number, max_steps):
+                # 提取工具名
+                tool_name = None
+                if hasattr(step_record, "tool_calls") and step_record.tool_calls:
+                    tool_name = step_record.tool_calls[0].name if hasattr(step_record.tool_calls[0], "name") else None
+                elif hasattr(step_record, "tool_responses") and step_record.tool_responses:
+                    tool_name = getattr(step_record.tool_responses[0], "name", None)
+                self._bg_task_registry.update_step(bg_task, step_number, tool_name)
+                # 转发给 reporter（同样需要 3 个参数）
+                if bg_reporter:
+                    try:
+                        bg_reporter.on_step(step_record, step_number, max_steps)
+                    except Exception:
+                        pass
+
+            try:
+                answer = self._run_subtask(
+                    bg_task.agent_name, bg_task.task_description,
+                    _on_step, chat_id=chat_id, sender_open_id=sender_open_id,
+                )
+                self._bg_task_registry.mark_completed(bg_task, answer)
+
+                if bg_reporter:
+                    try:
+                        bg_reporter.finalize("completed", answer)
+                    except Exception:
+                        logger.exception("Failed to finalize background reporter")
+
+            except Exception as e:
+                error_msg = str(e)
+                self._bg_task_registry.mark_failed(bg_task, error_msg)
+                logger.exception(
+                    "Background subtask failed: task_id=%s", bg_task.task_id
+                )
+                if bg_reporter:
+                    try:
+                        bg_reporter.finalize("failed")
+                    except Exception:
+                        pass
+
+            # 任务完成后触发审阅
+            self._on_background_task_completed(bg_task, chat_id, message_id, sender_open_id)
+
+        thread = threading.Thread(
+            target=_run,
+            name=f"bg-subtask-{bg_task.task_id}",
+            daemon=True,
+        )
+        thread.start()
+        logger.info(
+            "Background subtask dispatched: task_id=%s, thread=%s",
+            bg_task.task_id, thread.name,
+        )
+
+    def _on_background_task_completed(
+        self,
+        bg_task,
+        chat_id: str,
+        message_id: str,
+        sender_open_id: Optional[str] = None,
+    ) -> None:
+        """后台任务完成后的回调：尝试立即审阅或排队。"""
+        from .background_task import BackgroundTaskStatus
+
+        session = self._session_manager.get(chat_id)
+        if not session:
+            logger.warning(
+                "Session not found for review: chat_id=%s, task_id=%s",
+                chat_id, bg_task.task_id,
+            )
+            return
+
+        review_info = {
+            "task_id": bg_task.task_id,
+            "agent_name": bg_task.agent_name,
+            "task_description": bg_task.task_description,
+            "result": bg_task.result or bg_task.error or "",
+            "status": bg_task.status.value,
+        }
+
+        # 尝试非阻塞获取锁
+        acquired = session.lock.acquire(blocking=False)
+        if acquired:
+            try:
+                self._run_review(session, review_info, chat_id, message_id, sender_open_id)
+                self._bg_task_registry.mark_reviewed(bg_task)
+            except Exception:
+                logger.exception("Failed to run review for task_id=%s", bg_task.task_id)
+            finally:
+                session.lock.release()
+        else:
+            # evoclaw 正在处理用户消息，排队等待
+            logger.info(
+                "Session busy, queueing review: task_id=%s", bg_task.task_id
+            )
+            session.pending_reviews.append(review_info)
+
+    def _run_review(
+        self,
+        session,
+        review_info: dict,
+        chat_id: str,
+        message_id: str,
+        sender_open_id: Optional[str] = None,
+    ) -> None:
+        """持有 session lock 时调用：evoclaw 审阅后台任务结果并汇报。"""
+        if not session.initialized or not session.agent:
+            logger.warning("Cannot review: session not initialized for chat_id=%s", chat_id)
+            return
+
+        agent_name = review_info["agent_name"]
+        task_desc = review_info["task_description"]
+        result = review_info["result"]
+        status = review_info["status"]
+
+        status_label = "成功" if status == "completed" else "失败"
+        review_prompt = (
+            f"[后台任务审阅]\n"
+            f"Agent: {agent_name}\n"
+            f"任务: {task_desc}\n"
+            f"状态: {status_label}\n"
+            f"结果:\n{result}\n\n"
+            f"请审阅上述后台任务的结果，并向用户汇报关键信息。如果任务失败，解释原因并建议下一步。"
+        )
+
+        # 创建审阅卡片的 reporter
+        review_reporter = None
+        review_on_step = None
+        if self._step_reporter_factory:
+            try:
+                review_reporter = self._step_reporter_factory(
+                    chat_id, message_id, sender_open_id
+                )
+                review_reporter.send_initial_card(
+                    f"📋 审阅 [{agent_name}] 任务结果"
+                )
+                review_on_step = review_reporter.on_step
+            except Exception:
+                logger.exception("Failed to create review reporter")
+
+        try:
+            # 注册当前线程到 playground（可能是后台线程）
+            session.playground.register_thread()
+
+            trajectory = session.agent.continue_run(
+                review_prompt, on_step=review_on_step
+            )
+            answer = _extract_final_answer(
+                {"trajectory": trajectory, "status": trajectory.status}
+            )
+
+            if review_reporter:
+                try:
+                    review_reporter.finalize("completed", answer)
+                except Exception:
+                    logger.exception("Failed to finalize review reporter")
+
+            logger.info("Review completed for task by %s", agent_name)
+
+        except Exception:
+            logger.exception("Review failed for task by %s", agent_name)
+            if review_reporter:
+                try:
+                    review_reporter.finalize("failed")
+                except Exception:
+                    pass
+
+    def _process_pending_reviews(
+        self,
+        session,
+        chat_id: str,
+        message_id: str,
+        sender_open_id: Optional[str] = None,
+    ) -> None:
+        """处理排队的后台任务审阅（在持有 session lock 时调用）。"""
+        if not session.pending_reviews:
+            return
+
+        reviews = list(session.pending_reviews)
+        session.pending_reviews.clear()
+
+        for review_info in reviews:
+            try:
+                self._run_review(session, review_info, chat_id, message_id, sender_open_id)
+                # 标记为已审阅
+                task_id = review_info["task_id"]
+                tasks = self._bg_task_registry.get_tasks_for_chat(chat_id)
+                for t in tasks:
+                    if t.task_id == task_id:
+                        self._bg_task_registry.mark_reviewed(t)
+                        break
+            except Exception:
+                logger.exception(
+                    "Failed to process pending review: task_id=%s",
+                    review_info.get("task_id"),
+                )
 
     @staticmethod
     def _memory_auto_recall(agent, memory_manager, memory_config, user_id: str, query: str) -> None:
@@ -1333,6 +1614,33 @@ class TaskDispatcher:
                             "task": info["task"],
                         }
         return None
+
+    @staticmethod
+    def _check_all_delegations(session) -> list[dict[str, str]]:
+        """检查 evoclaw 最近几步中所有的 delegate_to_agent 调用。
+
+        支持一次 LLM 回复中触发多个委派（并行委派）。
+        """
+        if not session.initialized or not session.agent:
+            return []
+        traj = session.agent.trajectory
+        if not traj or not traj.steps:
+            return []
+        delegations = []
+        seen = set()
+        for step in reversed(traj.steps[-3:]):
+            for resp in step.tool_responses:
+                if getattr(resp, "name", "") == "delegate_to_agent":
+                    info = (getattr(resp, "meta", None) or {}).get("info", {})
+                    if info.get("delegated"):
+                        key = (info["agent_name"], info["task"])
+                        if key not in seen:
+                            seen.add(key)
+                            delegations.append({
+                                "agent_name": info["agent_name"],
+                                "task": info["task"],
+                            })
+        return delegations
 
     def _find_active_subtask(self, chat_id: str) -> str | None:
         """查找该 chat 下是否有活跃的子任务会话。
