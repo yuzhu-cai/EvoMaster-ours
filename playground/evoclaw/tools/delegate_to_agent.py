@@ -1,6 +1,7 @@
 """EvoClaw 委派工具
 
 允许 evoclaw 将任务委派给专业 Agent（如 agent_builder）。
+支持动态 agent 列表，由 dispatcher 在运行时注入。
 """
 
 from __future__ import annotations
@@ -17,8 +18,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 可委派 Agent 列表（扩展时只需加一行）
-DELEGATABLE_AGENTS = {
+# 默认可委派 Agent（dispatcher 未注入时的 fallback）
+_DEFAULT_AGENTS = {
     "agent_builder": "创建/设计/构建新的 AI Agent",
 }
 
@@ -36,7 +37,7 @@ class DelegateToAgentParams(BaseToolParams):
     name: ClassVar[str] = "delegate_to_agent"
 
     agent_name: str = Field(
-        description="委派目标 Agent 名称，当前可用: 'agent_builder'（创建新 Agent）"
+        description="委派目标 Agent 名称"
     )
     task: str = Field(
         description="任务描述，使用用户原始语言，包含完整上下文"
@@ -48,6 +49,25 @@ class DelegateToAgentTool(BaseTool):
 
     name: ClassVar[str] = "delegate_to_agent"
     params_class: ClassVar[type[BaseToolParams]] = DelegateToAgentParams
+
+    def __init__(self, available_agents: dict[str, str] | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self._available_agents: dict[str, str] = dict(available_agents or _DEFAULT_AGENTS)
+
+    def set_available_agents(self, agents: dict[str, str]) -> None:
+        """由 dispatcher 调用，注入运行时可用的 agent 列表。"""
+        self._available_agents = dict(agents)
+
+    def get_description(self) -> str:
+        """动态生成工具描述，包含当前可用的 agent 列表。"""
+        lines = ["将任务委派给专业 Agent 在后台执行。\n\n可用 Agent:"]
+        for name, desc in self._available_agents.items():
+            lines.append(f"- {name}: {desc}")
+        lines.append(
+            "\n只在用户明确需要专业 Agent 能力时委派。普通对话、搜索、问答自己处理。"
+            "\n委派后任务将在后台运行，用户可继续与你对话。"
+        )
+        return "\n".join(lines)
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """执行委派：验证 agent 名称并存储委派信息。
@@ -65,8 +85,8 @@ class DelegateToAgentTool(BaseTool):
         agent_name = params.agent_name
         task = params.task
 
-        if agent_name not in DELEGATABLE_AGENTS:
-            available = ", ".join(DELEGATABLE_AGENTS.keys())
+        if agent_name not in self._available_agents:
+            available = ", ".join(self._available_agents.keys())
             return (
                 f"未知 Agent: '{agent_name}'。可用: {available}",
                 {"error": "unknown_agent", "agent_name": agent_name},
@@ -75,6 +95,6 @@ class DelegateToAgentTool(BaseTool):
         self.logger.info("Delegation requested: agent=%s, task=%s", agent_name, task[:100])
 
         return (
-            f"委派已接受。任务将由 '{agent_name}' 处理。请告知用户请求正在处理。",
+            f"委派已接受。任务将由 '{agent_name}' 在后台处理。用户可继续与你对话，你可以用 check_background_tasks 查看进度。",
             {"delegated": True, "agent_name": agent_name, "task": task},
         )

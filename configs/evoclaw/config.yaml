@@ -55,6 +55,7 @@ agents:
       web_fetch: "web_fetch"  # 网页抓取工具（可选）
       ask_user: "ask_user"  # 用户提问工具（可选）
       delegate_to_agent: "delegate_to_agent"  # 委托给其他代理工具（可选）
+      check_background_tasks: "check_background_tasks"  # 查询后台任务状态
       feishu_doc_read: "feishu_doc_read"  # 飞书文档阅读工具（可选）
       send_file: "send_file"
       memory_search: "memory_search"
