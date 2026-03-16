@@ -17,7 +17,7 @@ import sys
 import threading
 from pyext import RuntimeModule
 
-# 设置日志
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -67,7 +67,7 @@ async def put_item_with_session_id(session_id:str, item:Dict[str, Any]):
 
 
 
-# 设置日志
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -148,7 +148,7 @@ async def stream_put_item(request:Request):
                     session_id = data.get("session_id", "unknown")
                     item = data.get("item", {})
 
-                    # 处理逻辑（你自己的函数）
+                    # Processing logic (your own function)
                     await put_item_with_session_id(session_id, item)
 
                     total_count += 1
@@ -252,7 +252,7 @@ async def execute_python_code(code: str, session_id:str, timeout: int) -> Tuple[
     return output, error, execution_time
 
 def _execute_code_safely(code: str, session_id:str, timeout: int) -> Tuple[str, Optional[str]]:
-    """在沙箱环境中安全执行代码，并控制实际执行超时"""
+    """Safely execute code in sandbox environment and control actual execution timeout"""
     logger.info(f"Executing in thread {threading.current_thread().ident}, process {os.getpid()}")
 
     module = session_manager.get_session(session_id)
@@ -288,7 +288,7 @@ def _execute_code_safely(code: str, session_id:str, timeout: int) -> Tuple[str, 
         return capture.get_stdout(), capture.get_stderr()
 
     try:
-        # 提交代码执行任务，并设置超时
+        # Submit code execution task and set timeout
         future = single_executor.submit(run_code)
         output_value, error_value = future.result(timeout=timeout)
 
@@ -316,7 +316,7 @@ def _execute_code_safely(code: str, session_id:str, timeout: int) -> Tuple[str, 
         error_value = error
 
     finally:
-        # 确保所有写操作完成后再关闭
+        # Ensure all write operations are completed before closing
         if not capture.stdout.closed or not capture.stderr.closed:
             if output_value is None:
                 output_value = capture.get_stdout()
@@ -347,7 +347,7 @@ def redirect_stderr(stream):
     return _RedirectStream(sys.stderr, stream)
 
 class _RedirectStream:
-    """用于重定向流的上下文管理器"""
+    """Context manager for redirecting streams"""
     def __init__(self, original_stream, target_stream):
         self.original_stream = original_stream
         self.target_stream = target_stream
@@ -365,7 +365,7 @@ async def execute_code_handler(request: CodeRequest):
 
     # print(request.dict())
 
-    """处理代码执行请求"""
+    """Handle code execution request"""
     if not request.code.strip():
         raise HTTPException(
             status_code=400,
@@ -403,7 +403,7 @@ async def execute_code_handler(request: CodeRequest):
 
 @app.post("/submit", response_model=CodeSubmitResponse)
 async def sumbit_code_handler(request: CodeSubmitRequest, background_tasks:BackgroundTasks):
-    """处理代码执行请求"""
+    """Handle code execution request"""
     if not request.code.strip():
         raise HTTPException(
             status_code=400,
