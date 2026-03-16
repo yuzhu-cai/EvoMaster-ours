@@ -57,25 +57,39 @@ class SkillTool(BaseTool):
     name: ClassVar[str] = "use_skill"
     params_class: ClassVar[type[BaseToolParams]] = SkillToolParams
 
-    def __init__(self, skill_registry: SkillRegistry, bridge: OpenclawBridge | None = None):
+    def __init__(
+        self,
+        skill_registry: SkillRegistry,
+        bridge: OpenclawBridge | None = None,
+        enabled_skills: list[str] | None = None,
+    ):
         """初始化 SkillTool
 
         Args:
-            skill_registry: SkillRegistry 实例
+            skill_registry: SkillRegistry 实例（始终包含全部 skill，用于执行）
             bridge: OpenclawBridge 实例（可选，用于执行 Openclaw 类型技能）
+            enabled_skills: None=skills: ["*"] 暴露全部；[]=不暴露任何 skill；[x,y]=仅暴露指定 skills。
         """
         super().__init__()
         self.skill_registry = skill_registry
         self._bridge = bridge
+        self.enabled_skills = enabled_skills
 
     def get_description(self) -> str:
         """动态注入 skills 元信息到工具描述中"""
         base_description = super().get_description()
 
-        skills_context = self.skill_registry.get_meta_info_context()
+        # 仅暴露 config 中配置的 skills 给 agent；执行时仍用完整 registry
+        # enabled_skills=None 表示 skills: ["*"]，暴露全部；[] 表示不暴露；[x,y] 表示仅暴露指定 skills
+        if self.enabled_skills is None:
+            skills_context = self.skill_registry.get_meta_info_context()
+        elif len(self.enabled_skills) == 0:
+            skills_context = ""  # 不暴露任何 skill
+        else:
+            registry_for_context = self.skill_registry.create_subset(self.enabled_skills)
+            skills_context = registry_for_context.get_meta_info_context()
         if skills_context:
-            # print("base_description", base_description)
-            self.logger.info("skills_context", skills_context)
+            self.logger.info("skills_context: %s", skills_context)
             return (
                 f"{base_description}\n\n"
                 f"{skills_context}\n"

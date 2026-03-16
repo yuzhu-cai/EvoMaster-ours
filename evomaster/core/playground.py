@@ -429,7 +429,7 @@ class BasePlayground:
         工具的"启用/禁用"仅影响是否将工具信息暴露给 LLM（通过 enable_tools 和 _get_tool_specs 控制）。
 
         Args:
-            skill_config: 未使用（保留以兼容调用方），Skill 始终全量注册
+            skill_config: Skill 配置，其中 skills 列表控制 skill_context 暴露给 agent 的 skills
             tool_config: per-agent 工具配置，形如 {"builtin": list[str], "mcp": str, "custom": dict}
                          其中 mcp 为 MCP 配置文件路径，空字符串表示不启用
                          custom 为自定义工具配置，形如 {"search": "google_search"}
@@ -446,12 +446,23 @@ class BasePlayground:
         if openclaw_enabled and self.openclaw_bridge is None:
             self._setup_openclaw_bridge(openclaw_config)
 
-        # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM #TODO: xinyu把skill改成了全部注册，prompt里会全部给，这里还要改代码。
+        # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM
+        # skill_context 仅暴露 config 中配置的 skills 给 agent，执行时仍用完整 registry
         skill_registry = self._get_or_create_full_skill_registry()
+        # skills: ["*"] → 暴露全部；未配置或 skills: [] → 不暴露任何 skill；[x,y] → 仅暴露指定 skills
+        enabled_skills_raw = (skill_config or {}).get("skills")
+        if enabled_skills_raw == ["*"]:
+            enabled_skills = None  # None 表示全部
+        elif enabled_skills_raw is None or enabled_skills_raw == []:
+            enabled_skills = []  # 未配置或空列表表示不启用任何 skill
+        else:
+            enabled_skills = enabled_skills_raw
+        self.logger.info("enabled_skills: %s", enabled_skills)
         self.tools = create_registry(
             builtin_names=["*"],
             skill_registry=skill_registry,
             openclaw_bridge=self.openclaw_bridge,
+            enabled_skills=enabled_skills,
         )
 
         # MCP: 当 mcp_config_file 非空时加载 MCP 工具
