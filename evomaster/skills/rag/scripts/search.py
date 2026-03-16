@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""RAG Searcher - 向量检索工具
+"""RAG Searcher - vector retrieval utility.
 
-提供基于 FAISS 和 transformer embeddings 的语义检索功能。
-支持本地 transformer 模型和 OpenAI embedding API。
+Provides semantic vector search based on FAISS and transformer embeddings.
+Supports both local transformer models and the OpenAI embedding API.
 
-设计目标：通用的"向量检索 +（可选）取回原始内容"组件。
-- 向量检索：依赖 vec_dir 下的 `faiss.index` 与 `nodes.jsonl`
-- 内容取回：可选加载 `nodes_data.json`，并通过 `content_path`（点路径）提取字段
+Design goal: a generic component for "vector retrieval + (optional) original content fetch".
+- Vector retrieval: depends on ``embeddings.npy`` and ``nodes.jsonl`` under ``vec_dir``; whether to load ``faiss.index``
+  is explicitly controlled by the caller via ``use_faiss`` (default: not loaded).
+- Content retrieval: optionally load ``nodes_data.json`` and extract fields via a dotted ``content_path``.
 """
 
 import contextlib
@@ -18,31 +19,35 @@ from typing import Any
 from abc import ABC, abstractmethod
 
 import numpy as np
-import faiss
+
+try:
+    import faiss
+except ImportError:
+    faiss = None  # Optional: use FAISS index when available, otherwise fall back to embeddings.npy only.
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================
-# Embedding 抽象基类和实现
+# Embedding abstraction and implementations
 # ============================================
 
 class BaseEmbedder(ABC):
-    """Embedding 模型的抽象基类"""
+    """Abstract base class for embedding models."""
     
     @abstractmethod
     def encode(self, text: str) -> np.ndarray:
-        """将文本编码为向量"""
+        """Encode text into a vector."""
         pass
     
     @abstractmethod
     def get_dimension(self) -> int:
-        """返回 embedding 维度"""
+        """Return embedding dimension."""
         pass
 
 
 class LocalTransformerEmbedder(BaseEmbedder):
-    """本地 Transformer 模型 Embedder（HuggingFace）"""
+    """Embedder backed by a local Transformer model (HuggingFace)."""
     
     def __init__(self, model_name: str, device: str = "cpu"):
         import torch
@@ -51,14 +56,14 @@ class LocalTransformerEmbedder(BaseEmbedder):
         self.model_name = model_name
         self.device = device
         
-        # 静默加载模型
+        # Load model quietly (suppress stderr noise).
         with open(os.devnull, "w", encoding="utf-8") as devnull:
             with contextlib.redirect_stderr(devnull):
                 self.tokenizer = AutoTokenizer.from_pretrained(model_name)
                 self.model = AutoModel.from_pretrained(model_name).to(self.device)
         self.model.eval()
         
-        # 获取 embedding 维度
+        # Get embedding dimension.
         self._dimension = self.model.config.hidden_size
         logger.info(f"Initialized local transformer embedder: {model_name} on {device}, dim={self._dimension}")
     
@@ -87,7 +92,7 @@ class LocalTransformerEmbedder(BaseEmbedder):
 
 
 class OpenAIEmbedder(BaseEmbedder):
-    """OpenAI Embedding API Embedder"""
+    """Embedder using the OpenAI Embedding API."""
     
     def __init__(
         self,
@@ -104,31 +109,31 @@ class OpenAIEmbedder(BaseEmbedder):
         self.model = model
         self.dimensions = dimensions
         
-        # 优先使用传入参数，否则从环境变量读取
+        # Prefer explicit parameters, otherwise fall back to environment variables.
         self.api_key = api_key or os.environ.get("OPENAI_EMBEDDING_API_KEY") or os.environ.get("OPENAI_API_KEY")
         self.base_url = base_url or os.environ.get("OPENAI_EMBEDDING_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
         
         if not self.api_key:
             raise ValueError("OpenAI API key is required. Set via parameter, OPENAI_EMBEDDING_API_KEY or OPENAI_API_KEY env var.")
         
-        # 初始化客户端
+        # Initialize OpenAI client.
         client_kwargs = {"api_key": self.api_key}
         if self.base_url:
             client_kwargs["base_url"] = self.base_url
         
         self.client = OpenAI(**client_kwargs)
         
-        # 默认维度（text-embedding-3-large 默认 3072，可自定义）
+        # Default embedding dimension (text-embedding-3-large defaults to 3072, and can be customized).
         self._dimension = dimensions or 3072
         logger.info(f"Initialized OpenAI embedder: {model}, base_url={base_url}, dim={self._dimension}")
     
     def encode(self, text: str) -> np.ndarray:
-        """调用 OpenAI embedding API"""
+        """Call the OpenAI embedding API."""
         kwargs = {
             "model": self.model,
             "input": text,
         }
-        # text-embedding-3-* 系列支持 dimensions 参数
+        # text-embedding-3-* models support the ``dimensions`` parameter.
         if self.dimensions and "text-embedding-3" in self.model:
             kwargs["dimensions"] = self.dimensions
         
@@ -148,20 +153,20 @@ def create_embedder(
     dimensions: int | None = None,
     device: str = "cpu",
 ) -> BaseEmbedder:
-    """创建 Embedder 实例
+    """Create an embedder instance.
     
     Args:
-        model: 模型名称或路径
-        embedding_type: "local", "openai", 或 "auto"（自动检测）
-        api_key: OpenAI API key（仅 openai 类型需要）
-        base_url: OpenAI API base URL（仅 openai 类型需要）
-        dimensions: Embedding 维度（仅 openai 的 text-embedding-3-* 支持）
-        device: 计算设备（仅 local 类型需要）
+        model: Model name or path.
+        embedding_type: One of ``"local"``, ``"openai"``, or ``"auto"`` (auto-detect).
+        api_key: OpenAI API key (required only for ``openai`` type).
+        base_url: OpenAI API base URL (required only for ``openai`` type).
+        dimensions: Embedding dimension (only supported by OpenAI text-embedding-3-* models).
+        device: Compute device (only relevant for ``local`` type).
     
     Returns:
-        BaseEmbedder 实例
+        A ``BaseEmbedder`` instance.
     """
-    # 自动检测类型
+    # Auto-detect embedding type.
     if embedding_type == "auto":
         if model and ("text-embedding" in model or model.startswith("openai/")):
             embedding_type = "openai"
@@ -178,16 +183,20 @@ def create_embedder(
             dimensions=dimensions,
         )
     else:
-        # 本地模型
-        default_model = "evomaster/skills/rag/local_models/all-mpnet-base-v2"
+        # Local model: do not fall back to any project-internal default path; require explicit model name/path.
+        if not model:
+            raise ValueError(
+                "Local embedding requires an explicit 'model' name/path. "
+                "Please configure it in your embedding settings or CLI arguments."
+            )
         return LocalTransformerEmbedder(
-            model_name=model or default_model,
+            model_name=model,
             device=device,
         )
 
 
 def _find_project_root() -> Path:
-    """查找项目根目录（包含 evomaster 目录的目录）。"""
+    """Find the project root directory (the directory that contains ``evomaster``)."""
     script_path = Path(__file__).resolve()
     current = script_path.parent
     while current != current.parent:
@@ -205,12 +214,13 @@ def _find_project_root() -> Path:
         if root.exists() and (root / "evomaster").exists():
             return root
     raise RuntimeError(
-        "无法找到项目根目录。请确保在 EvoMaster 项目目录结构中运行，或设置 EvoMaster_ROOT。"
+        "Failed to locate project root. Make sure you are running inside the EvoMaster project structure, "
+        "or set the EvoMaster_ROOT environment variable."
     )
 
 
 def _resolve_path(path_str: str, project_root: Path | None = None) -> Path:
-    """将路径解析为绝对路径；evomaster/ 开头则相对项目根。"""
+    """Resolve a path string to an absolute path; ``evomaster/``-prefixed paths are resolved relative to the project root."""
     path = Path(path_str)
     if path.is_absolute():
         return path.resolve()
@@ -224,53 +234,63 @@ def _resolve_path(path_str: str, project_root: Path | None = None) -> Path:
 
 class RAGSearcher:
     """
-    通用 RAG Searcher，提供向量检索功能
-    支持本地 transformer 模型和 OpenAI embedding API
+    Generic RAG Searcher providing vector retrieval capabilities.
+    Supports both local transformer models and the OpenAI embedding API.
     """
 
     def __init__(
         self,
         vec_dir: str,
-        model_name: str = "evomaster/skills/rag/local_models/all-mpnet-base-v2",
+        model_name: str | None = None,
         nodes_data_json: str | None = None,
         device: str = "cpu",
         node_id_key: str = "node_id",
-        # OpenAI embedding 参数
+        use_faiss: bool = False,
+        # OpenAI embedding parameters
         embedding_type: str = "auto",
         embedding_api_key: str | None = None,
         embedding_base_url: str | None = None,
         embedding_dimensions: int | None = None,
     ):
-        """初始化 RAG Searcher
-
+        """Initialize the RAG Searcher.
+        
         Args:
-            vec_dir: 向量数据库目录路径（包含 faiss.index, embeddings.npy, nodes.jsonl）
-            model_name: 用于编码的模型名称（本地路径或 OpenAI 模型名）
-            nodes_data_json: 节点数据 JSON 文件路径（可选，用于获取知识内容）
-            device: 计算设备 ('cpu' 或 'cuda')，仅本地模型使用
-            node_id_key: nodes.jsonl 每行 JSON 中作为 ID 的字段名（默认 'node_id'）
-            embedding_type: "local", "openai", 或 "auto"（自动检测）
-            embedding_api_key: OpenAI API key（仅 openai 类型需要）
-            embedding_base_url: OpenAI API base URL（仅 openai 类型需要）
-            embedding_dimensions: Embedding 维度（仅 openai 的 text-embedding-3-* 支持）
+            vec_dir: Vector database directory path (must contain ``embeddings.npy`` and ``nodes.jsonl``; whether to use
+                ``faiss.index`` is controlled by ``use_faiss``).
+            model_name: Model name for encoding (local path or OpenAI model name).
+            nodes_data_json: Path to a JSON file with node data (optional, used to fetch knowledge/content).
+            device: Compute device (``'cpu'`` or ``'cuda'``), used only for local models.
+            node_id_key: Field name in each ``nodes.jsonl`` JSON object used as the ID (default: ``'node_id'``).
+            use_faiss: Whether to load and use ``faiss.index`` under ``vec_dir`` (default False; only used when FAISS
+                is installed and the file exists).
+            embedding_type: One of ``"local"``, ``"openai"``, or ``"auto"`` (auto-detect).
+            embedding_api_key: OpenAI API key (only required for ``openai`` type).
+            embedding_base_url: OpenAI API base URL (only required for ``openai`` type).
+            embedding_dimensions: Embedding dimension (only supported by OpenAI text-embedding-3-* models).
         """
         self.vec_dir = Path(vec_dir)
         self.model_name = model_name
         self.device = device
         self.node_id_key = node_id_key
 
-        # 加载 FAISS index
-        # index_path = self.vec_dir / "faiss.index"
-        # if not index_path.exists():
-        #     raise FileNotFoundError(f"FAISS index not found: {index_path}")
-        # self.index = faiss.read_index(str(index_path))
-        # logger.info(f"Loaded FAISS index from {index_path}")
+        # Load FAISS index only when use_faiss=True, FAISS is available, and the index file exists.
+        index_path = self.vec_dir / "faiss.index"
+        if use_faiss and faiss is not None and index_path.exists():
+            self.index = faiss.read_index(str(index_path))
+            logger.info(f"Loaded FAISS index from {index_path}")
+        else:
+            self.index = None
+            if use_faiss:
+                if faiss is None:
+                    logger.warning("use_faiss=True but FAISS not installed, using embeddings.npy only")
+                elif not index_path.exists():
+                    logger.warning(f"use_faiss=True but FAISS index not found at {index_path}, using embeddings.npy only")
 
-        # 加载 embeddings 并预计算归一化向量（用于余弦相似度）
+        # Load embeddings and pre-compute normalized vectors (for cosine similarity).
         emb_path = self.vec_dir / "embeddings.npy"
         if emb_path.exists():
             self.emb = np.load(emb_path)
-            # 单条 embedding 时为 1D (dim,)，需 reshape 为 (1, dim) 以兼容后续计算
+            # When there is a single embedding, it is 1D (dim,) and must be reshaped to (1, dim) for downstream computation.
             if self.emb.ndim == 1:
                 self.emb = self.emb.reshape(1, -1)
             norms = np.linalg.norm(self.emb, axis=1, keepdims=True)
@@ -282,7 +302,7 @@ class RAGSearcher:
             self.emb_normalized = None
             logger.warning(f"Embeddings file not found: {emb_path}")
 
-        # 加载 node_id 映射
+        # Load node_id mapping.
         nodes_jsonl_path = self.vec_dir / "nodes.jsonl"
         self.node_ids = []
         if nodes_jsonl_path.exists():
@@ -290,14 +310,14 @@ class RAGSearcher:
                 for idx, line in enumerate(f):
                     if line.strip():
                         obj = json.loads(line)
-                        # 优先使用指定的 node_id_key，如果没有则尝试使用 task_name，最后使用索引
+                        # Prefer the configured node_id_key; if missing, try task_name; otherwise fall back to the index.
                         if self.node_id_key in obj:
                             node_id = obj[self.node_id_key]
                         elif "task_name" in obj:
                             node_id = obj["task_name"]
                             logger.debug(f"Using 'task_name' as node_id for line {idx}: {node_id}")
                         else:
-                            # 使用索引作为 node_id
+                            # Use the index as node_id.
                             node_id = str(idx)
                             logger.debug(f"Using index as node_id for line {idx}: {node_id}")
                         self.node_ids.append(node_id)
@@ -305,7 +325,7 @@ class RAGSearcher:
         else:
             logger.warning(f"Nodes JSONL file not found: {nodes_jsonl_path}")
 
-        # 加载 nodes_data（如果提供）
+        # Load nodes_data (if provided).
         self.nodes_data = {}
         if nodes_data_json:
             nodes_data_path = Path(nodes_data_json)
@@ -316,7 +336,7 @@ class RAGSearcher:
             else:
                 logger.warning(f"Nodes data file not found: {nodes_data_path}")
 
-        # 初始化 embedding 模型（支持本地模型和 OpenAI API）
+        # Initialize embedding model (supports both local models and the OpenAI API).
         self.embedder = create_embedder(
             model=model_name,
             embedding_type=embedding_type,
@@ -328,7 +348,7 @@ class RAGSearcher:
 
     @staticmethod
     def _get_by_dotted_path(obj: Any, dotted_path: str, default: Any = None) -> Any:
-        """使用点路径从 dict/对象中取值，例如 'content.text'。"""
+        """Get a value from a dict/object via a dotted path, e.g. ``'content.text'``."""
         if dotted_path is None or dotted_path == "":
             return obj
         cur: Any = obj
@@ -342,7 +362,7 @@ class RAGSearcher:
         return cur
 
     def _default_content_candidates(self) -> list[str]:
-        # 常见字段兜底（尽量通用，避免绑定某个项目）
+        # Common fallback fields (kept generic to avoid binding to any specific project).
         return [
             "content.text",
             "content.page_content",
@@ -356,13 +376,13 @@ class RAGSearcher:
         ]
 
     def encode(self, text: str) -> np.ndarray:
-        """将文本编码为向量
-
+        """Encode text into a vector.
+        
         Args:
-            text: 输入文本
-
+            text: Input text.
+        
         Returns:
-            编码后的向量（numpy array）
+            Encoded vector (numpy array).
         """
         return self.embedder.encode(text)
 
@@ -372,15 +392,15 @@ class RAGSearcher:
         top_k: int = 5,
         similarity_threshold: float | None = None
     ) -> list[tuple[str, float]]:
-        """搜索相似节点（余弦相似度）
-
+        """Search for similar nodes using cosine similarity.
+        
         Args:
-            query_emb: 查询向量
-            top_k: 返回前 k 个结果
-            similarity_threshold: 相似度阈值，低于此值的结果将被过滤（范围 -1 到 1）
-
+            query_emb: Query embedding vector.
+            top_k: Number of results to return.
+            similarity_threshold: Similarity threshold; results below this value are filtered out (range -1 to 1).
+        
         Returns:
-            列表，每个元素为 (node_id, cosine_similarity) 元组，按相似度降序排列
+            A list of ``(node_id, cosine_similarity)`` tuples, sorted by similarity in descending order.
         """
         if len(self.node_ids) == 0:
             logger.warning("No node IDs loaded, returning empty results")
@@ -389,21 +409,21 @@ class RAGSearcher:
         if self.emb_normalized is None:
             raise ValueError("Embeddings not loaded, cannot compute cosine similarity")
 
-        # 确保 query_emb 是 1D
+        # Ensure query_emb is 1D.
         if query_emb.ndim == 2:
             query_emb = query_emb[0]
 
-        # 归一化 query
+        # Normalize query embedding.
         q_norm = np.linalg.norm(query_emb)
         if q_norm == 0:
             logger.warning("Query embedding has zero norm")
             return []
         query_normalized = query_emb / q_norm
 
-        # 计算余弦相似度
+        # Compute cosine similarity.
         similarities = self.emb_normalized @ query_normalized.astype("float32")
 
-        # 取 top_k
+        # Take top_k results.
         top_k = min(top_k, len(self.node_ids))
         top_indices = np.argsort(similarities)[::-1][:top_k]
 
@@ -434,38 +454,38 @@ class RAGSearcher:
         top_k: int = 5,
         similarity_threshold: float | None = None
     ) -> list[tuple[str, float]]:
-        """使用文本查询进行搜索（便捷方法）
-
+        """Search with a text query (convenience method).
+        
         Args:
-            query_text: 查询文本
-            top_k: 返回前 k 个结果
-            similarity_threshold: 相似度阈值（范围 -1 到 1）
-
+            query_text: Query text.
+            top_k: Number of results to return.
+            similarity_threshold: Similarity threshold (range -1 to 1).
+        
         Returns:
-            列表，每个元素为 (node_id, cosine_similarity) 元组，按相似度降序排列
+            A list of ``(node_id, cosine_similarity)`` tuples, sorted by similarity in descending order.
         """
         query_emb = self.encode(query_text)
         return self.search_similar(query_emb, top_k=top_k, similarity_threshold=similarity_threshold)
 
     def get_knowledge(self, node_id: str) -> Any:
-        """获取节点的知识内容
-
+        """Get the knowledge content of a node.
+        
         Args:
-            node_id: 节点 ID
-
+            node_id: Node ID.
+        
         Returns:
-            节点的内容（格式取决于 nodes_data 的结构）。
-
+            The content of the node (format depends on the structure of nodes_data).
+        
         Note:
-            为了保持通用性，这里不会强绑定某个字段（例如 improve_knowledge）。
-            如需精确指定字段，建议使用 `get_knowledge_by_path()`。
+            To remain generic, this method does not bind to any specific field (such as ``improve_knowledge``).
+            For precise field selection, use ``get_knowledge_by_path()`` instead.
         """
         if not self.nodes_data:
             logger.warning("Nodes data not loaded, cannot retrieve knowledge")
             return None
 
         node = self.nodes_data.get(str(node_id), {})
-        # 兜底：按常见字段尝试提取；都没有就返回整个 node
+        # Fallback: try common fields; if none work, return the whole node.
         for path in self._default_content_candidates():
             val = self._get_by_dotted_path(node, path, default=None)
             if val not in (None, "", [], {}):
@@ -473,7 +493,7 @@ class RAGSearcher:
         return node
 
     def get_knowledge_by_path(self, node_id: str, content_path: str, default: Any = None) -> Any:
-        """按点路径提取节点内容字段（通用）。"""
+        """Extract a node content field via a dotted path (generic)."""
         if not self.nodes_data:
             logger.warning("Nodes data not loaded, cannot retrieve knowledge")
             return default
@@ -481,13 +501,13 @@ class RAGSearcher:
         return self._get_by_dotted_path(node, content_path, default=default)
 
     def get_node_data(self, node_id: str) -> dict | None:
-        """获取完整的节点数据
-
+        """Get the full data dictionary for a node.
+        
         Args:
-            node_id: 节点 ID
-
+            node_id: Node ID.
+        
         Returns:
-            完整的节点数据字典，如果不存在则返回 None
+            Full node data dict, or None if not found.
         """
         if not self.nodes_data:
             return None
@@ -495,14 +515,17 @@ class RAGSearcher:
 
 
 def main():
-    """命令行接口示例"""
+    """Command-line interface example."""
     import argparse
 
     parser = argparse.ArgumentParser(description="RAG Searcher CLI")
     parser.add_argument("--vec_dir", required=True, help="Vector database directory")
-    parser.add_argument("--model", 
-                       default="evomaster/skills/rag/local_models/all-mpnet-base-v2",
-                       help="Embedding model path, HuggingFace model name, or OpenAI model name (default: local model)")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Embedding model path, HuggingFace model name, or OpenAI model name "
+             "(required for local embedding; optional for OpenAI when using defaults)",
+    )
     parser.add_argument("--nodes_data", help="Nodes data JSON file")
     parser.add_argument(
         "--node_id_key",
@@ -524,7 +547,6 @@ def main():
         default="text",
         help="Output format (default: text)",
     )
-    # OpenAI embedding 参数
     parser.add_argument(
         "--embedding_type",
         choices=["auto", "local", "openai"],
@@ -544,32 +566,38 @@ def main():
         type=int,
         help="Embedding dimensions for text-embedding-3-* models (default: 3072)",
     )
+    parser.add_argument(
+        "--use_faiss",
+        action="store_true",
+        help="Load and use faiss.index from vec_dir when available (default: off; use for large-scale search)",
+    )
 
     args = parser.parse_args()
 
-    # 路径解析：evomaster/ 相对项目根
+    # Path resolution: ``evomaster/`` is relative to the project root.
     project_root = _find_project_root()
     vec_dir_resolved = str(_resolve_path(args.vec_dir, project_root))
     nodes_data_resolved = str(_resolve_path(args.nodes_data, project_root)) if args.nodes_data else None
     
-    # 仅对本地模型路径进行解析
+    # Resolve only local model paths.
     model_resolved = args.model
     if args.embedding_type != "openai" and str(args.model).replace("\\", "/").startswith("evomaster/"):
         model_resolved = str(_resolve_path(args.model, project_root))
 
-    # 初始化 searcher
+    # Initialize searcher.
     searcher = RAGSearcher(
         vec_dir=vec_dir_resolved,
         model_name=model_resolved,
         nodes_data_json=nodes_data_resolved,
         node_id_key=args.node_id_key,
+        use_faiss=args.use_faiss,
         embedding_type=args.embedding_type,
         embedding_api_key=args.embedding_api_key,
         embedding_base_url=args.embedding_base_url,
         embedding_dimensions=args.embedding_dimensions,
     )
 
-    # 搜索
+    # Run search.
     results = searcher.search_by_text(
         query_text=args.query,
         top_k=args.top_k,
@@ -595,7 +623,7 @@ def main():
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
-    # text 输出
+    # Text output.
     print(f"\nSearch results for: '{args.query}'")
     print("=" * 60)
     for i, (node_id, similarity) in enumerate(results, 1):

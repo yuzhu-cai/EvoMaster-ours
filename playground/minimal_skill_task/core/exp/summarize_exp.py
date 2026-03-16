@@ -1,4 +1,4 @@
-"""SummarizeExp：仅包含 summarize agent，根据多轮检索结果选定并输出 PDF"""
+"""SummarizeExp: contains only the summarize agent, which selects from multi-round retrieval results and outputs a PDF."""
 
 import logging
 from typing import Any
@@ -21,7 +21,7 @@ class SummarizeExp(BaseExp):
         db: dict,
         task_id: str = "exp_001",
     ) -> tuple[str, Any]:
-        """运行 Summarize Agent，返回 (summarize_result, trajectory)。"""
+        """Run the Summarize Agent and return (summarize_result, trajectory)."""
         self.logger.info("Starting SummarizeExp")
         update_agent_format_kwargs(
             self.summarize_agent,

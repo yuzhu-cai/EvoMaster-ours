@@ -8,7 +8,6 @@ from .rag_utils import (
     update_agent_format_kwargs,
     DEFAULT_VEC_DIR,
     DEFAULT_NODES_DATA,
-    DEFAULT_MODEL,
 )
 
 __all__ = [
@@ -19,5 +18,4 @@ __all__ = [
     "update_agent_format_kwargs",
     "DEFAULT_VEC_DIR",
     "DEFAULT_NODES_DATA",
-    "DEFAULT_MODEL",
 ]

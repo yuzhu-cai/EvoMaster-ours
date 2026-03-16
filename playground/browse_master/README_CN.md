@@ -34,51 +34,54 @@ Browse-Master Playground 实现两个Agent的工作流
 
 ```yaml
 # ============================================
-# agent 配置
+# Multi-Agent Configuration
 # ============================================
+# In the multi-agent system, each Agent has independent configuration
 
 agents:
   
   planner:
-    llm: "local_sglang"
-    max_turns: 50
-    enable_tools: True  # General Agent使用工具调用
+    llm: "openai"
+    max_turns: 10
+    tools:
+        builtin: []
 
     context:
-      max_tokens: 128000
+      max_tokens: 4096
       truncation_strategy: "latest_half"
       preserve_system_messages: true
       preserve_recent_turns: 5
 
-    # 提示词配置（相对于 playground/browse_master/）
+    # Prompt configuration (relative to playground/browse_master/)
     system_prompt_file: "prompts/planner_prefix.txt"
     user_prompt_file: "prompts/planner_user.txt"
 
   executor:
-    llm: "local_sglang"
+    llm: "openai"
     max_turns: 50
-    enable_tools: True  # General Agent使用工具调用
+    tools:
+        builtin: ["*"]     
+        mcp: "mcp_config.json"
 
     context:
-      max_tokens: 128000
+      max_tokens: 4096
       truncation_strategy: "latest_half"
       preserve_system_messages: true
       preserve_recent_turns: 5
 
-    # 提示词配置（相对于 playground/browse_master/）
+    # Prompt configuration (relative to playground/browse_master/)
     system_prompt_file: "prompts/executor_prefix.txt"
     user_prompt_file: "prompts/executor_user.txt"
 
 # ============================================
-# MCP 配置
+# MCP Configuration
 # ============================================
 mcp:
-  # MCP 配置文件路径（相对于 config_dir）
+  # MCP configuration file path (relative to config_dir or absolute path)
   config_file: "mcp_config.json"
 
-  # 是否启用 MCP（可选，默认 true）
+  # Whether to enable MCP (optional, default true)
   enabled: true
-
 ```
 
 ### 2. 部署 MCP 服务
@@ -108,10 +111,12 @@ Browse-Master 需要两个 MCP 服务：mcp-sandbox（代码执行）和 browse-
 
 ```bash
 cd playground/browse_master/mcp_sandbox
-./start_all.sh          # 启动所有服务
-./start_all.sh stop     # 停止所有服务
-./start_all.sh status   # 检查服务状态
-./start_all.sh restart  # 重启所有服务
+Usage:
+  ./start_all.sh              # Start all services (default ports)
+  ./start_all.sh stop         # Stop all services
+  ./start_all.sh status       # Check service status
+  ./start_all.sh restart      # Restart all services
+
 ```
 
 默认端口：
@@ -151,8 +156,7 @@ playground/browse_master/
 │   ├── playground.py       # 主 playground
 │   └── exp.py             # Plan-Execute 实验
 ├── prompts/                # Agent 提示词
-├── mcp_sandbox/            # MCP 工具和服务
-└── workspace/              # 工作目录
+└── mcp_sandbox/            # MCP 工具和服务
 ```
 
 ## 自定义搜索工具

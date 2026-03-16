@@ -1,4 +1,4 @@
-"""AnalyzeExp：仅包含 analyze agent，查看数据库结构并输出 query 写作规范"""
+"""AnalyzeExp: contains only the analyze agent, which inspects the database structure and outputs query writing guidelines."""
 
 import logging
 from pathlib import Path
@@ -10,7 +10,7 @@ from ..utils.rag_utils import extract_agent_response, update_agent_format_kwargs
 
 
 def _project_root() -> Path:
-    """EvoMaster 项目根目录（含 evomaster/、playground/、configs/；exp -> 上五级）"""
+    """EvoMaster project root directory (contains evomaster/, playground/, and configs/; go five levels up from exp)."""
     return Path(__file__).resolve().parent.parent.parent.parent.parent
 
 
@@ -26,15 +26,15 @@ class AnalyzeExp(BaseExp):
         db: dict,
         task_id: str = "exp_001",
     ) -> tuple[str, Any]:
-        """运行 Analyze Agent，返回 (analyze_output, trajectory)。"""
+        """Run the Analyze Agent and return (analyze_output, trajectory)."""
         self.logger.info("Starting AnalyzeExp")
         root = _project_root()
         vec_dir = db["vec_dir"]
-        # db 已在 workflow 中转为绝对路径；若仍是相对路径则相对项目根
+        # db has already been converted to absolute paths in the workflow; if still relative, resolve it against the project root.
         vec_path = Path(vec_dir) if Path(vec_dir).is_absolute() else root / vec_dir
         nodes_jsonl_path = vec_path / "nodes.jsonl"
 
-        # 与 minimal_kaggle 一致：运行时再注入 task_description 等，模板用 {task_description}
+        # Same as minimal_kaggle: inject task_description and other values at runtime; the template uses {task_description}.
         update_agent_format_kwargs(
             self.analyze_agent,
             task_description=task_description,

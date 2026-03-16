@@ -61,7 +61,7 @@ async def serper_google_search(
         return []
 
 
-# 异步主函数
+# Async main function
 async def main():
     query = "[Merrill et al. Transformers are Hard-Attention Automata]"
     result = await serper_google_search(
@@ -74,6 +74,6 @@ async def main():
     print(json.dumps(result, indent=2))
 
 
-# 脚本执行入口
+# Script execution entry
 if __name__ == "__main__":
     asyncio.run(main())

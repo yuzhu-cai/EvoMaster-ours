@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Vector Database Builder - 向量数据库构建接口
+"""Vector Database Builder - vector database construction interface.
 
-提供向量数据库的构建和管理接口。
-当前版本提供接口定义，具体实现待后续完善。
+Provides an interface for building and managing vector databases.
+The current version only defines the interface; concrete implementations are left for future work.
 """
 
 import logging
@@ -14,30 +14,30 @@ logger = logging.getLogger(__name__)
 
 class VectorDatabaseBuilder:
     """
-    向量数据库构建器
+    Vector database builder.
     
-    提供构建和管理向量数据库的接口。
-    当前版本先定义接口，具体实现待后续完善。
+    Provides an interface for constructing and managing vector databases.
+    The current version defines the interface; concrete implementations are left for future work.
     """
 
     def __init__(
         self,
         output_dir: str,
-        model_name: str = "evomaster/skills/rag/local_models/all-mpnet-base-v2",
+        model_name: str | None = None,
         device: str = "cpu"
     ):
-        """初始化数据库构建器
-
+        """Initialize the database builder.
+        
         Args:
-            output_dir: 输出目录路径
-            model_name: 用于编码的 transformer 模型名称
-            device: 计算设备 ('cpu' 或 'cuda')
+            output_dir: Output directory path.
+            model_name: Transformer model name used for encoding.
+            device: Compute device (``'cpu'`` or ``'cuda'``).
         """
         self.output_dir = Path(output_dir)
         self.model_name = model_name
         self.device = device
         
-        # 创建输出目录
+        # Create output directory.
         self.output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Initialized database builder, output_dir: {output_dir}")
 
@@ -48,16 +48,16 @@ class VectorDatabaseBuilder:
         chunk_overlap: int = 200,
         **kwargs
     ) -> None:
-        """从文档列表构建向量数据库
-
+        """Build a vector database from a list of documents.
+        
         Args:
-            documents: 文档列表，每个文档为包含 'content' 和 'metadata' 的字典
-            chunk_size: 文档分块大小
-            chunk_overlap: 分块重叠大小
-            **kwargs: 其他参数
-
+            documents: List of documents, each a dict with ``"content"`` and ``"metadata"``.
+            chunk_size: Document chunk size.
+            chunk_overlap: Chunk overlap size.
+            **kwargs: Additional parameters.
+        
         Note:
-            当前版本为接口定义，具体实现待后续完善。
+            The current version is an interface only; implementation is left for future work.
         """
         logger.warning(
             "build_from_documents is not yet implemented. "
@@ -73,14 +73,14 @@ class VectorDatabaseBuilder:
         documents: list[dict],
         **kwargs
     ) -> None:
-        """向现有数据库添加文档
-
+        """Add documents to an existing database.
+        
         Args:
-            documents: 文档列表
-            **kwargs: 其他参数
-
+            documents: List of documents.
+            **kwargs: Additional parameters.
+        
         Note:
-            当前版本为接口定义，具体实现待后续完善。
+            The current version is an interface only; implementation is left for future work.
         """
         logger.warning(
             "add_documents is not yet implemented. "
@@ -92,13 +92,13 @@ class VectorDatabaseBuilder:
         )
 
     def update_index(self, **kwargs) -> None:
-        """更新索引
-
+        """Update the index.
+        
         Args:
-            **kwargs: 其他参数
-
+            **kwargs: Additional parameters.
+        
         Note:
-            当前版本为接口定义，具体实现待后续完善。
+            The current version is an interface only; implementation is left for future work.
         """
         logger.warning(
             "update_index is not yet implemented. "
@@ -114,14 +114,14 @@ class VectorDatabaseBuilder:
         node_ids: list[str],
         **kwargs
     ) -> None:
-        """从数据库中删除文档
-
+        """Delete documents from the database.
+        
         Args:
-            node_ids: 要删除的节点 ID 列表
-            **kwargs: 其他参数
-
+            node_ids: List of node IDs to delete.
+            **kwargs: Additional parameters.
+        
         Note:
-            当前版本为接口定义，具体实现待后续完善。
+            The current version is an interface only; implementation is left for future work.
         """
         logger.warning(
             "delete_documents is not yet implemented. "
@@ -133,13 +133,13 @@ class VectorDatabaseBuilder:
         )
 
     def get_stats(self) -> dict[str, Any]:
-        """获取数据库统计信息
-
+        """Get database statistics.
+        
         Returns:
-            包含统计信息的字典
-
+            A dict containing statistics.
+        
         Note:
-            当前版本为接口定义，具体实现待后续完善。
+            The current version is an interface only; implementation is left for future work.
         """
         logger.warning(
             "get_stats is not yet implemented. "
@@ -152,14 +152,17 @@ class VectorDatabaseBuilder:
 
 
 def main():
-    """命令行接口示例"""
+    """Command-line interface example."""
     import argparse
 
     parser = argparse.ArgumentParser(description="Vector Database Builder CLI")
     parser.add_argument("--output_dir", required=True, help="Output directory")
-    parser.add_argument("--model", 
-                       default="evomaster/skills/rag/local_models/all-mpnet-base-v2",
-                       help="Embedding model path or HuggingFace model name (default: local model)")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Embedding model path or HuggingFace model name "
+             "(required for local embedding; optional for OpenAI when using defaults)",
+    )
     parser.add_argument("--action", choices=["build", "add", "stats"],
                        help="Action to perform")
 

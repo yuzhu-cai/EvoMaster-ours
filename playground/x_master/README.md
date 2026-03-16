@@ -4,55 +4,61 @@ A multi-agent playground implementing the X-Master workflow for complex problem 
 
 ## Overview
 
-X-Master Playground implements a four-phase workflow:
+X-Master Playground implements a four-phase workflow with parallel execution:
 
-- **Solver Phase**: Generate initial solution
-- **Critic Phase**: Review and correct the solution
-- **Rewrite Phase**: Synthesize and improve the solution
-- **Select Phase**: Choose the best final solution
+- **Solver Phase**: Generate initial solution(multiple Solver instances can run in parallel)
+- **Critic Phase**: Review and correct the solution (each Critic processes a corresponding initial solution in parallel)
+- **Rewrite Phase**: Synthesize and improve the solution (multiple Rewriter instances run in parallel, each integrating all corrected solutions)
+- **Select Phase**: Choose the best final solution(single agent)
 
-> **Note**: Parallel execution is not yet implemented. Currently each phase runs a single agent. The `agent_num` and `max_workers` config options are reserved for future parallel execution support.
+By enabling parallel configuration, you can launch multiple agent instances simultaneously, significantly improving efficiency, especially for exploring and optimizing complex tasks.
 
 ## Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                       Phase 1: Solve                        │
-│                     ┌──────────┐                            │
-│                     │  Solver  │                            │
-│                     └────┬─────┘                            │
-│                          ▼                                  │
-│                      Solution                               │
+│                      Step 1: Solve                          │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐                     │
+│  │ Solver 1 │ │ Solver 2 │ │ Solver N │                     │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘                     │
+│       │            │            │                           │
+│       └────────────┼────────────┘  (parallel execution)     │
+│                    ▼                                        │
+│        Multiple initial solutions                           │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Phase 2: Critique                      │
-│                     ┌──────────┐                            │
-│                     │  Critic  │                            │
-│                     └────┬─────┘                            │
-│                          ▼                                  │
-│                   Corrected Solution                        │
+│                     Step 2: Critique                        │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐                     │
+│  │ Critic 1 │ │ Critic 2 │ │ Critic N │                     │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘                     │
+│       │            │            │                           │
+│       └────────────┼────────────┘                           │
+│                    ▼               (parallel execution)     │
+│          Multiple revised solutions                         │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Phase 3: Rewrite                       │
-│                     ┌───────────┐                           │
-│                     │ Rewriter  │                           │
-│                     └─────┬─────┘                           │
-│                           ▼                                 │
-│                   Rewritten Solution                        │
+│                     Step 3: Rewrite                         │
+│  ┌───────────┐ ┌───────────┐ ┌───────────┐                  │
+│  │ Rewriter 1│ │ Rewriter 2│ │ Rewriter N│                  │
+│  └─────┬─────┘ └─────┬─────┘ └─────┬─────┘                  │
+│        │             │             │                        │
+│        └─────────────┼─────────────┘                        │
+│                      ▼               (parallel execution)   │
+│          Multiple rewritten solutions                       │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      Phase 4: Select                        │
+│                      Step 4: Select                         │
 │                     ┌──────────┐                            │
-│                     │ Selector │                            │
+│                     │ Selector │   (single Agent)           │
 │                     └────┬─────┘                            │
 │                          ▼                                  │
-│                   Final Solution                            │
+│                      Final Solution                         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,10 +69,10 @@ X-Master Playground implements a four-phase workflow:
 Edit `configs/x_master/config.yaml`:
 
 ```yaml
-# TODO: Parallel execution not yet implemented, agent_num and max_workers are reserved
 xmaster:
-  agent_num: 1        # Reserved for future parallel execution
-  max_workers: 1      # Reserved for future parallel execution
+  agent_num: 1        # Number of agents in Solve/Critique/Rewrite phases
+  max_workers: 1      # Maximum parallel workers
+  parallel: false     # Enable parallel execution (set to true to enable)
 
 llm:
   openai:
@@ -79,14 +85,19 @@ agents:
     llm: "openai"
     max_turns: 50
     enable_tools: true
+    system_prompt_file: "prompts/solver_prefix.txt"
+    user_prompt_file: "prompts/solver_user.txt"
+
   Critic:
     llm: "openai"
     max_turns: 50
     enable_tools: true
+
   Rewriter:
     llm: "openai"
     max_turns: 50
     enable_tools: true
+
   Selector:
     llm: "openai"
     max_turns: 50
@@ -135,22 +146,14 @@ Custom ports:
 SANDBOX_PORT=8001 SEARCH_PORT=8002 ./start_all.sh
 ```
 
-**Manual start (optional):**
-
-```bash
-# 1. Start mcp-sandbox
-cd playground/x_master/mcp_sandbox/MCP
-PORT=8001 python evomaster_mcp_server.py
-
-# 2. Start search-tools
-cd playground/x_master/mcp_sandbox/api_proxy
-./deploy_server.sh
-```
-
 ### 3. Run
 
 ```bash
+# Run with task description
 python run.py --agent x_master --task "Which condition of Arrhenius's sixth impossibility theorem do critical-level views violate?\n\nAnswer Choices:\nA. Egalitarian Dominance\nB. General Non-Extreme Priority\nC. Non-Elitism\nD. Weak Non-Sadism\nE. Weak Quality Addition"
+
+# Using Custom Configuration
+python run.py --agent x_master --config configs/x_master/config.yaml --task "Which condition of Arrhenius's sixth impossibility theorem do critical-level views violate?\n\nAnswer Choices:\nA. Egalitarian Dominance\nB. General Non-Extreme Priority\nC. Non-Elitism\nD. Weak Non-Sadism\nE. Weak Quality Addition"
 ```
 
 ### 4. View Results
@@ -182,8 +185,9 @@ Result structure:
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `xmaster.agent_num` | Reserved for future parallel execution | `1` |
-| `xmaster.max_workers` | Reserved for future parallel execution | `1` |
+| `xmaster.agent_num` | Number of agents in Solve/Critique/Rewrite phases | `1` |
+| `xmaster.max_workers` | Maximum parallel workers | `1` |
+| `xmaster.parallel` | Enable parallel execution mode | `false` |
 | `agents.Solver.max_turns` | Solver max turns | `50` |
 | `agents.Critic.max_turns` | Critic max turns | `50` |
 | `agents.Rewriter.max_turns` | Rewriter max turns | `50` |
@@ -220,6 +224,22 @@ playground/x_master/
 ├── prompts/                # Agent prompts
 ├── mcp_sandbox/            # MCP tools & services
 └── workspace/              # Working directory
+```
+
+## Customization
+
+## Use Different LLMs for Different Phases
+
+```yaml
+agents:
+  Solver:
+    llm: "openai"    
+  Critic:
+    llm: "anthropic"  
+  Rewriter:
+    llm: "openai"
+  Selector:
+    llm: "anthropic"
 ```
 
 ## Related

@@ -122,10 +122,10 @@ Results are saved in:
 
 ```
 runs/browse_master_{date}_{time}/
-├── logs/                                    # 执行日志
-├── trajectories/task_0/trajectory.json      # 实验轨迹
+├── logs/                                    
+├── trajectories/task_0/trajectory.json      
 ├── workspaces/
-└── config.yaml                              # 配置快照
+└── config.yaml                              
 ```
 
 
