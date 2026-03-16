@@ -14,6 +14,14 @@ logger = logging.getLogger("ml_master_vis")
 
 
 def create_app(run_dir: Path) -> Flask:
+    """Create app.
+
+    Args:
+        run_dir: Run directory path.
+
+    Returns:
+        Flask: Result of this function.
+    """
     app = Flask(
         __name__,
         static_folder="static",
@@ -24,6 +32,14 @@ def create_app(run_dir: Path) -> Flask:
     cache: Dict[str, Any] = {"payload": None, "run_dir": str(run_dir)}
 
     def get_payload(force: bool = False) -> Dict[str, Any]:
+        """Get payload.
+
+        Args:
+            force: Boolean control flag.
+
+        Returns:
+            Dict[str, Any]: Result of this function.
+        """
         if force or cache["payload"] is None:
             payload = build_tree_payload(run_dir)
             cache["payload"] = payload
@@ -32,14 +48,29 @@ def create_app(run_dir: Path) -> Flask:
     @app.get("/")
     def index():
         # Serve static index.html
+        """Execute index.
+
+        Returns:
+            Result of this function.
+        """
         return send_from_directory(app.static_folder, "index.html")
 
     @app.get("/health")
     def health():
+        """Execute health.
+
+        Returns:
+            Result of this function.
+        """
         return jsonify({"ok": True, "run_dir": str(run_dir)})
 
     @app.get("/api/tree")
     def api_tree():
+        """Execute api tree.
+
+        Returns:
+            Result of this function.
+        """
         force = request.args.get("refresh", "0") in ("1", "true", "yes")
         payload = get_payload(force=force)
         # Strip internal map from response
@@ -48,6 +79,14 @@ def create_app(run_dir: Path) -> Flask:
 
     @app.get("/api/node/<node_id>")
     def api_node(node_id: str):
+        """Execute api node.
+
+        Args:
+            node_id: Identifier string.
+
+        Returns:
+            Result of this function.
+        """
         payload = get_payload(force=False)
         nodes_by_id = payload.get("_nodes_by_id", {}) or {}
         if node_id == "__root__":
@@ -81,6 +120,14 @@ def create_app(run_dir: Path) -> Flask:
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    """Parse args.
+
+    Args:
+        argv: Value for argv.
+
+    Returns:
+        argparse.Namespace: Result of this function.
+    """
     p = argparse.ArgumentParser("ml_master_vis")
     p.add_argument("--run_dir", required=True, help="EvoMaster run dir, e.g. runs/ml_master_20260204_115212")
     p.add_argument("--host", default="127.0.0.1", help="bind host (default 127.0.0.1)")
@@ -90,6 +137,14 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 
 def main(argv: Optional[list[str]] = None) -> int:
+    """Execute main.
+
+    Args:
+        argv: Value for argv.
+
+    Returns:
+        int: Result of this function.
+    """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args(argv)
     run_dir = Path(args.run_dir).resolve()

@@ -18,6 +18,14 @@ class BuildStats:
 
 
 def _safe_float(x: Any) -> Optional[float]:
+    """Execute safe float.
+
+    Args:
+        x: Value for x.
+
+    Returns:
+        Optional[float]: Result of this function.
+    """
     try:
         if x is None:
             return None
@@ -27,6 +35,14 @@ def _safe_float(x: Any) -> Optional[float]:
 
 
 def _safe_int(x: Any) -> Optional[int]:
+    """Execute safe int.
+
+    Args:
+        x: Value for x.
+
+    Returns:
+        Optional[int]: Result of this function.
+    """
     try:
         if x is None:
             return None
@@ -127,6 +143,15 @@ def build_forest(nodes_by_id: Dict[str, Dict[str, Any]]) -> Tuple[List[Dict[str,
 
     # Depth computation for stats (DFS)
     def depth(n: Dict[str, Any], d: int) -> int:
+        """Execute depth.
+
+        Args:
+            n: Value for n.
+            d: Value for d.
+
+        Returns:
+            int: Result of this function.
+        """
         if not n["children"]:
             return d
         return max(depth(c, d + 1) for c in n["children"])
