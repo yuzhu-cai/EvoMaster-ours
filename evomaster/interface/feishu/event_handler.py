@@ -48,6 +48,14 @@ def parse_event(event_data) -> Optional[FeishuMessageContext]:
 
         content = parse_message_content(message.content, message_type)
 
+        # 去除 @mention 占位符（如 @_user_1）— 群聊 text 类型消息会包含这些
+        if hasattr(message, "mentions") and message.mentions:
+            for mention in message.mentions:
+                key = getattr(mention, "key", None)
+                if key:
+                    content = content.replace(key, "")
+            content = content.strip()
+
         # 提取 @mention 列表
         mentions = []
         if hasattr(message, "mentions") and message.mentions:
