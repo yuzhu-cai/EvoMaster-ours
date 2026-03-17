@@ -47,7 +47,21 @@ class DockerSession(BaseSession):
         self._last_ps1_count: int = 0
         self._prev_command_status: Literal["completed", "timeout"] = "completed"
         self._prev_command_output: str = ""
-        
+        self._workspace_path: str | None = None
+
+    def set_workspace_path(self, workspace_path: str | None) -> None:
+        """设置工作空间路径"""
+        self._workspace_path = workspace_path
+
+    def get_workspace_path(self) -> str | None:
+        """获取工作空间路径
+
+        优先返回显式设置的路径，否则返回配置中的 workspace_path。
+        """
+        if self._workspace_path is not None:
+            return self._workspace_path
+        return self.config.workspace_path
+
     def open(self) -> None:
         """启动 Docker 容器"""
         if self._is_open:

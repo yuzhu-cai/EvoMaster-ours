@@ -18,6 +18,7 @@ except ImportError:
 
 # 复用 evomaster.config 中的环境变量替换
 from evomaster.config import _substitute_env
+from evomaster.env.container_pool import ContainerPoolConfig
 
 
 class FeishuBotConfig(BaseModel):
@@ -64,6 +65,10 @@ class FeishuBotConfig(BaseModel):
     available_agents: Dict[str, str] = Field(
         default_factory=dict,
         description="可用子智能体白名单，格式为 {agent_name: description}，空字典表示不展示任何内置智能体",
+    )
+    container_pool: Optional[ContainerPoolConfig] = Field(
+        default=None,
+        description="Docker 容器池配置，None 或 enabled=False 表示不使用容器池",
     )
 
     class Config:

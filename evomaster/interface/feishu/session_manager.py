@@ -43,10 +43,11 @@ class ChatSessionManager:
     - 线程安全：全局锁保护 sessions 字典，per-session 锁串行处理同一 chat 的消息
     """
 
-    def __init__(self, max_sessions: int = 100):
+    def __init__(self, max_sessions: int = 100, on_session_cleanup: Optional[Callable[[PlaygroundSession], None]] = None):
         self._sessions: dict[str, PlaygroundSession] = {}
         self._global_lock = threading.Lock()
         self._max_sessions = max_sessions
+        self._on_session_cleanup = on_session_cleanup
 
     def get_or_create(
         self,
@@ -137,3 +138,12 @@ class ChatSessionManager:
             logger.exception(
                 "Error cleaning up session for chat_id=%s", session.chat_id
             )
+        # 释放容器回池（通过回调）
+        if self._on_session_cleanup:
+            try:
+                self._on_session_cleanup(session)
+            except Exception:
+                logger.exception(
+                    "Error in on_session_cleanup callback for chat_id=%s",
+                    session.chat_id,
+                )

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EvoMaster</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
+</head>
+<body>
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <h1 class="sidebar-title">EvoMaster</h1>
+      <button id="sidebar-toggle-close" class="sidebar-toggle-btn" title="Close sidebar">&#x2715;</button>
+    </div>
+
+    <div class="sidebar-actions">
+      <button id="btn-new-session" class="btn btn-primary">+ New Session</button>
+      <button id="btn-list-agents" class="btn btn-secondary">List Agents</button>
+    </div>
+
+    <div class="sidebar-section">
+      <h3 class="sidebar-section-title">Agent</h3>
+      <div id="agent-info" class="agent-info">
+        <span class="agent-name">--</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section">
+      <h3 class="sidebar-section-title">Session</h3>
+      <div id="session-status" class="session-status">
+        <span class="status-indicator status-disconnected"></span>
+        <span id="session-status-text">Disconnected</span>
+      </div>
+      <div id="session-id-display" class="session-id">--</div>
+    </div>
+  </aside>
+
+  <!-- Main chat area -->
+  <main id="chat-area" class="chat-area">
+    <!-- Top bar (mobile) -->
+    <header class="chat-header">
+      <button id="sidebar-toggle-open" class="sidebar-toggle-btn" title="Open sidebar">&#9776;</button>
+      <span class="chat-header-title">EvoMaster</span>
+    </header>
+
+    <!-- Messages -->
+    <div id="message-list" class="message-list"></div>
+
+    <!-- Input -->
+    <div class="input-bar">
+      <div class="input-wrapper">
+        <textarea id="message-input"
+                  class="message-input"
+                  placeholder="Send a message..."
+                  rows="1"></textarea>
+        <button id="btn-send" class="btn-send" title="Send">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- CDN Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.1/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

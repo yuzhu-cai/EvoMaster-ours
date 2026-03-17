@@ -12,6 +12,7 @@ dependencies = [
     "google-genai",
     "mcp",
     "flask",
+    "flask-socketio",
     "python-dotenv",
     # Calculation path adaptor (mat_master) needs OSS upload for local file -> URL
     "oss2",

@@ -363,8 +363,16 @@ class DockerEnv(BaseEnv):
         self._tmux_session = session_name
         self._tmux_log_path = log_path
 
-        # 安装 tmux（如果需要）
-        self.docker_exec("apt-get update && apt-get install -y tmux || true", timeout=120)
+        # 清理旧的 tmux 日志文件（容器池复用场景）
+        self.docker_exec(f"rm -f {log_path}")
+
+        # 安装 tmux（先检查是否已安装，跳过不必要的 apt-get update）
+        check = self.docker_exec("which tmux", timeout=10)
+        if check.get("exit_code") != 0:
+            self.docker_exec("apt-get update && apt-get install -y tmux || true", timeout=120)
+
+        # 杀掉可能残留的同名 tmux session（容器池复用场景）
+        self.docker_exec(f"tmux kill-session -t {session_name} 2>/dev/null || true", timeout=10)
 
         # 创建 tmux 会话
         self.docker_exec(f"tmux new-session -d -s {session_name} 'bash -i'")
@@ -377,9 +385,14 @@ class DockerEnv(BaseEnv):
         init_cmd = f"PROMPT_COMMAND='PS1=\"{ps1}\"'"
         self.tmux_send_keys(init_cmd, enter=True)
 
-        # 触发第一个提示符
+        # cd 到 working_dir（如果配置了）
+        working_dir = self.config.session_config.working_dir
+        if working_dir and working_dir != "/":
+            self.tmux_send_keys(f"cd {working_dir}", enter=True)
+
+        # 触发提示符并等待日志 flush
         self.tmux_send_keys("", enter=True)
-        time.sleep(0.5)
+        time.sleep(2)  # 从 0.5s 增加到 2s，确保 pipe-pane 日志 flush
 
         self.logger.debug(f"Tmux session {session_name} initialized")
 
