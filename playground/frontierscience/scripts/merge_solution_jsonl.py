@@ -33,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--jsonl",
         type=Path,
-        default=project_root / "test.jsonl",
+        default="/data/chengwang/FS/EvoMaster-ours/playground/frontierscience/test/test.jsonl",
         help="Input source jsonl (default: ./test.jsonl).",
     )
     parser.add_argument(

@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         default="009njbjuxu4q9001000degiwa1xfovvi008wbdqe",
         help="Judge API key.",
     )
-    parser.add_argument("--workers", type=int, default=4, help="Parallel worker count.")
+    parser.add_argument("--workers", type=int, default=10, help="Parallel worker count.")
     parser.add_argument("--max-tokens", type=int, default=128000, help="Max tokens for judge response.")
     parser.add_argument("--timeout", type=int, default=600, help="Judge request timeout in seconds.")
     parser.add_argument("--retries", type=int, default=2, help="Retry count per sample on API errors.")

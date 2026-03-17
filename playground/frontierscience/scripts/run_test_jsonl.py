@@ -58,7 +58,7 @@ def build_task_markdown(problem: str, task_id: str, task_type: str, extra_meta: 
 def parse_args() -> argparse.Namespace:
     script_path = Path(__file__).resolve()
     project_root = script_path.parents[3]
-    default_jsonl = project_root / "test.jsonl"
+    default_jsonl = "/data/chengwang/FS/EvoMaster-ours/playground/frontierscience/test/test.jsonl"
     default_base_run_dir = project_root / "runs" / f"frontierscience_jsonl_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     parser = argparse.ArgumentParser(
@@ -77,7 +77,7 @@ def parse_args() -> argparse.Namespace:
         help="Base output directory. One sub-directory per row will be created.",
     )
     parser.add_argument("--python", default=sys.executable, help="Python executable used to call run.py.")
-    parser.add_argument("--workers", type=int, default=1, help="Concurrent worker count. Use >1 for parallel run.")
+    parser.add_argument("--workers", type=int, default=20, help="Concurrent worker count. Use >1 for parallel run.")
     parser.add_argument(
         "--lines",
         default=None,
