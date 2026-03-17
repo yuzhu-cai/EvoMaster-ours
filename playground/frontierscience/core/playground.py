@@ -9,7 +9,8 @@ from typing import Any
 
 from evomaster.core import BasePlayground, register_playground
 
-from .exp import FrontierScienceExp
+from .reflect_exp import ReflectExp
+from .solve_exp import SolveExp
 from ..tools import build_frontier_tools
 
 
@@ -29,7 +30,7 @@ class FrontierSciencePlayground(BasePlayground):
             config_dir = Path(__file__).resolve().parents[3] / "configs" / "frontierscience"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.agents.declare("general_agent")
+        self.agents.declare("solve_agent", "reflect_agent")
         self._frontier_tool_names: list[str] = []
         self._base_enabled_tool_names: dict[str, list[str] | None] = {}
 
@@ -109,7 +110,6 @@ class FrontierSciencePlayground(BasePlayground):
 
         text = (task_description or "").lower()
 
-        # Only use closed-book mode when the task explicitly forbids external sources.
         strict_closed_markers = [
             "without external",
             "no external sources",
@@ -125,7 +125,6 @@ class FrontierSciencePlayground(BasePlayground):
             if marker in text:
                 return self._TASK_MODE_CLOSED_STRICT, f"strict_closed_marker:{marker}"
 
-        # Open-book signals: freshness, citations, paper-level evidence, or source hunting.
         open_keywords = [
             "latest",
             "recent",
@@ -150,16 +149,15 @@ class FrontierSciencePlayground(BasePlayground):
             "trial phase",
             "gaia dr3",
         ]
-        for kw in open_keywords:
-            if kw in text:
-                return self._TASK_MODE_OPEN, f"open_keyword:{kw}"
+        for keyword in open_keywords:
+            if keyword in text:
+                return self._TASK_MODE_OPEN, f"open_keyword:{keyword}"
 
         if "doi:" in text or "arxiv:" in text:
             return self._TASK_MODE_OPEN, "open_reference_marker:doi_or_arxiv"
         if re.search(r"\[[0-9]{1,3}\]", text):
             return self._TASK_MODE_OPEN, "open_reference_marker:bracket_citation"
 
-        # Default to open-book with conditional retrieval to avoid under-retrieval.
         return self._TASK_MODE_OPEN, "default_open_book"
 
     def _apply_task_routing(self, task_mode: str) -> None:
@@ -189,11 +187,20 @@ class FrontierSciencePlayground(BasePlayground):
                 agent.enabled_tool_names,
             )
 
-    def _create_exp(self):
-        agent = self.agents.get("general_agent") or self.agent
-        if agent is None:
-            raise RuntimeError("No available agent for FrontierScienceExp.")
-        exp = FrontierScienceExp(agent, self.config)
+    def _create_exp(self, name: str):
+        if name == "solve_exp":
+            agent = self.agents.get("solve_agent")
+            if agent is None:
+                raise RuntimeError("No available agent for SolveExp.")
+            exp = SolveExp(agent, self.config)
+        elif name == "reflect_exp":
+            agent = self.agents.get("reflect_agent")
+            if agent is None:
+                raise RuntimeError("No available agent for ReflectExp.")
+            exp = ReflectExp(agent, self.config)
+        else:
+            raise RuntimeError(f"Unknown experiment name: {name}")
+
         if self.run_dir:
             exp.set_run_dir(self.run_dir)
         return exp
@@ -213,9 +220,9 @@ class FrontierSciencePlayground(BasePlayground):
             line = raw_line.strip()
             if not line or "=" not in line:
                 continue
-            k, v = line.split("=", 1)
-            key = k.strip()
-            val = v.strip()
+            key, val = line.split("=", 1)
+            key = key.strip()
+            val = val.strip()
             if key:
                 meta[key] = val
 
@@ -251,31 +258,56 @@ class FrontierSciencePlayground(BasePlayground):
             self._apply_task_routing(task_mode)
             self._setup_trajectory_file(output_file)
 
-            exp = self._create_exp()
             image_count = len(images or [])
             self.logger.info(
-                "Running FrontierScienceExp (task_id=%s, task_type=%s, mode=%s, reason=%s, image_count=%d)",
+                "Stage 1: Running SolveExp (task_id=%s, task_type=%s, mode=%s, reason=%s, image_count=%d)",
                 runtime_task_id,
                 runtime_task_type,
                 task_mode,
                 routing_reason,
                 image_count,
             )
-            result = exp.run(
+            solve_exp = self._create_exp("solve_exp")
+            solve_result = solve_exp.run(
                 task_description=cleaned_description,
                 task_id=runtime_task_id,
                 task_type=runtime_task_type,
                 input_data=task_input_data,
                 images=images,
             )
+            initial_answer = solve_result.get("final_answer", "")
             self.logger.info(
-                "FrontierScienceExp finished (task_id=%s, task_type=%s, status=%s, steps=%s)",
+                "Stage 1: SolveExp finished (task_id=%s, status=%s, steps=%s)",
                 runtime_task_id,
-                runtime_task_type,
-                result.get("status"),
-                result.get("steps"),
+                solve_result.get("status"),
+                solve_result.get("steps"),
             )
-            return result
+
+            self.logger.info("Stage 2: Running ReflectExp (task_id=%s)", runtime_task_id)
+            reflect_exp = self._create_exp("reflect_exp")
+            reflect_result = reflect_exp.run(
+                task_description=cleaned_description,
+                task_id=runtime_task_id,
+                initial_answer=initial_answer,
+            )
+            self.logger.info(
+                "Stage 2: ReflectExp finished (task_id=%s, status=%s, steps=%s)",
+                runtime_task_id,
+                reflect_result.get("status"),
+                reflect_result.get("steps"),
+            )
+
+            return {
+                "task_id": runtime_task_id,
+                "task_type": runtime_task_type,
+                "status": reflect_result.get("status"),
+                "steps": (solve_result.get("steps") or 0) + (reflect_result.get("steps") or 0),
+                "initial_answer": initial_answer,
+                "refined_answer": reflect_result.get("refined_answer"),
+                "final_answer": reflect_result.get("refined_answer") or initial_answer,
+                "solve_trajectory": solve_result.get("trajectory"),
+                "reflect_trajectory": reflect_result.get("trajectory"),
+            }
         except Exception as exc:
             self.logger.error(
                 "Minimal FrontierScience playground failed (task_id=%s): %s",

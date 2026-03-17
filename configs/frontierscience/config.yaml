@@ -11,21 +11,22 @@ llm:
     timeout: 12000
     max_retries: 3
     retry_delay: 1.0
-    # 本地 LLM 配置示例
+
   local_sglang:
     provider: "deepseek"
     model: "DeepSeek/DeepSeek-V3-0324"
-    api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
+    api_key: "${DEEPSEEK_API_KEY}"
     base_url: "${DEEPSEEK_API_BASE}"
     temperature: 0.5
     max_tokens: 16384
-    timeout: 300  
+    timeout: 300
     max_retries: 3
     retry_delay: 1.0
 
   default: "local_sglang"
+
 agents:
-  general:
+  solve:
     llm: "local_sglang"
     max_turns: 800
     tools:
@@ -40,8 +41,26 @@ agents:
       preserve_system_messages: true
       preserve_recent_turns: 5
 
-    system_prompt_file: "prompts/system_prompt.txt"
-    user_prompt_file: "prompts/user_prompt.txt"
+    system_prompt_file: "prompts/solve_system_prompt.txt"
+    user_prompt_file: "prompts/solve_user_prompt.txt"
+
+  reflect:
+    llm: "local_sglang"
+    max_turns: 800
+    tools:
+      builtin: ["*"]
+      mcp: ""
+    skills:
+      - "pdf"
+
+    context:
+      max_tokens: 200000
+      truncation_strategy: "summary"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+
+    system_prompt_file: "prompts/reflect_system_prompt.txt"
+    user_prompt_file: "prompts/reflect_user_prompt.txt"
 
 mcp:
   config_file: "mcp_config.json"
@@ -86,4 +105,3 @@ project_root: "."
 workspace: "./workspace"
 results_dir: "./results"
 debug: false
-

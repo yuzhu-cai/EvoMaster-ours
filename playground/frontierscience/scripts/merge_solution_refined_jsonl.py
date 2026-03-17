@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# python playground/frontierscience/scripts/merge_solution_jsonl.py --jsonl test.jsonl --runs-dir runs/exp001 --output solution.jsonl
-"""Merge per-line solution.md files into solution.jsonl.
+# 用于合并经reflection之后的答案
+# python playground/frontierscience/scripts/merge_solution_refined_jsonl.py --jsonl test.jsonl --runs-dir runs/exp001 --output solution_refined.jsonl
+"""Merge per-line solution_refined.md files into solution_refined.jsonl.
 
 Expected run directory structure from run_test_jsonl.py:
   <runs_dir>/
@@ -9,8 +10,8 @@ Expected run directory structure from run_test_jsonl.py:
     ...
 
 This script reads test.jsonl line-by-line, finds the corresponding run
-directory by line prefix (e.g. 0002_), reads solution.md, and writes
-solution.jsonl with an added "solution" field per row.
+directory by line prefix (e.g. 0002_), reads solution_refined.md, and writes
+solution_refined.jsonl with an added "solution_refined" field per row.
 """
 
 from __future__ import annotations
@@ -29,12 +30,12 @@ def parse_args() -> argparse.Namespace:
     project_root = script_path.parents[3]
 
     parser = argparse.ArgumentParser(
-        description="Merge solution.md files into test.jsonl rows as 'solution'."
+        description="Merge solution_refined.md files into test.jsonl rows as 'solution_refined'."
     )
     parser.add_argument(
         "--jsonl",
         type=Path,
-        default="/data/chengwang/FS/EvoMaster-ours/playground/frontierscience/test/test.jsonl",
+        default=project_root / "test.jsonl",
         help="Input source jsonl (default: ./test.jsonl).",
     )
     parser.add_argument(
@@ -46,28 +47,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default="solution.jsonl",
-        help="Output jsonl path (default: <jsonl_dir>/solution.jsonl).",
+        default=None,
+        help="Output jsonl path (default: <jsonl_dir>/solution_refined.jsonl).",
     )
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Fail if any line cannot find solution.md.",
+        help="Fail if any line cannot find solution_refined.md.",
     )
     return parser.parse_args()
 
 
-def find_solution_file(row_run_dir: Path) -> Path | None:
+def find_refined_solution_file(row_run_dir: Path) -> Path | None:
     candidates = [
-        row_run_dir / "workspaces" / "task_0" / "solution.md",
-        row_run_dir / "workspace" / "solution.md",
-        row_run_dir / "solution.md",
+        row_run_dir / "workspaces" / "task_0" / "solution_refined.md",
+        row_run_dir / "workspace" / "solution_refined.md",
+        row_run_dir / "solution_refined.md",
     ]
     for path in candidates:
         if path.exists():
             return path
 
-    extra = sorted(row_run_dir.rglob("solution.md"))
+    extra = sorted(row_run_dir.rglob("solution_refined.md"))
     if extra:
         return extra[0]
     return None
@@ -93,7 +94,7 @@ def build_latest_run_map(runs_dir: Path) -> dict[int, Path]:
 
 def main() -> int:
     args = parse_args()
-    output_path = args.output or (args.jsonl.parent / "solution.jsonl")
+    output_path = args.output or (args.jsonl.parent / "solution_refined.jsonl")
 
     if not args.jsonl.exists():
         print(f"[ERROR] jsonl not found: {args.jsonl}")
@@ -124,28 +125,28 @@ def main() -> int:
                 print(f"[ERROR] line {line_no} is not a JSON object")
                 return 1
 
-            solution_text = ""
+            solution_refined_text = ""
             row_run_dir = run_map.get(line_no)
             if row_run_dir is not None:
-                solution_file = find_solution_file(row_run_dir)
+                solution_file = find_refined_solution_file(row_run_dir)
                 if solution_file is not None:
-                    solution_text = solution_file.read_text(encoding="utf-8")
+                    solution_refined_text = solution_file.read_text(encoding="utf-8")
 
-            if solution_text:
+            if solution_refined_text:
                 with_solution += 1
             else:
                 missing_lines.append(line_no)
 
-            row["solution"] = solution_text
+            row["solution_refined"] = solution_refined_text
             f_out.write(json.dumps(row, ensure_ascii=False) + "\n")
             total += 1
 
     print("=" * 60)
     print(f"[DONE] output: {output_path}")
-    print(f"[DONE] rows={total}, rows_with_solution={with_solution}, rows_missing={len(missing_lines)}")
+    print(f"[DONE] rows={total}, rows_with_solution_refined={with_solution}, rows_missing={len(missing_lines)}")
     if missing_lines:
         preview = ", ".join(str(n) for n in missing_lines[:20])
-        print(f"[WARN] missing solution lines (first 20): {preview}")
+        print(f"[WARN] missing solution_refined lines (first 20): {preview}")
         if args.strict:
             return 1
 
