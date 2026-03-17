@@ -1,11 +1,11 @@
 """Core modules for FrontierScience."""
 
-from .solve_exp import FrontierScienceExp
 from .playground import FrontierSciencePlayground
-from .reflect_exp import ReflectionExp
+from .reflect_exp import ReflectExp
+from .solve_exp import SolveExp
 
 __all__ = [
-    "FrontierScienceExp",
     "FrontierSciencePlayground",
-    "ReflectionExp",
+    "ReflectExp",
+    "SolveExp",
 ]
