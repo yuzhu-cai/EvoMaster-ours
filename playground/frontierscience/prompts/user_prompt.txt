@@ -1,4 +1,4 @@
-Please complete the following scientific task with rigorous reasoning and evidence.
+Please solve the following scientific task.
 
 Task ID: {task_id}
 Task Type: {task_type}
@@ -9,9 +9,14 @@ Additional Information:
 {input_data}
 
 Execution requirements:
-1. Solve the task step by step with evidence-grounded reasoning.
-2. For key claims, use reliable sources and resolve conflicting evidence explicitly.
-3. If formulas/derivations are needed, include important intermediate steps.
-4. Make the final answer complete and self-contained.
-5. Before finishing, write the full final answer to `solution.md` in the working directory, then call `finish`.
-
+1. First identify all required outputs, constraints, and sub-questions so that nothing important is missed.
+2. Answer the task directly and completely; make sure every requested part is explicitly covered.
+3. Use external retrieval when it is needed for correctness, paper-specific evidence, citations, or missing factual details.
+4. In non-strict modes:
+   - Prefer `search_web` / `google_scholar` to find relevant sources.
+   - Use `visit_web` only with `arxiv.org` URLs when full-paper access is needed.
+   - Prefer the PDF-reading skill for reading full arXiv papers after locating them.
+   - If two consecutive retrieval attempts for the same missing fact return `No results` or `BLOCKED`, stop looping and continue with best-effort reasoning.
+5. If formulas or derivations are needed, include the essential intermediate steps.
+6. Make the final answer self-contained, scientifically grounded, and aligned with the task's requested format.
+7. Write the full answer to `solution.md` in your workspace, then call `finish`.
