@@ -1,0 +1,15 @@
+web:
+  host: "127.0.0.1"
+  port: 5008
+  default_agent: "evoclaw"
+  max_concurrent_tasks: 4
+  task_timeout: 600
+  max_sessions: 100
+  available_agents:
+    agent_builder: "Create/design/build new AI Agents"
+    browse_master: "Web browsing and information search"
+  # container_pool:
+  #   enabled: false
+  #   image: "evomaster-sandbox:latest"
+  #   initial_size: 2
+  #   max_size: 4

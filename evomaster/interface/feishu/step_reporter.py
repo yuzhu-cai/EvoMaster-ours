@@ -185,7 +185,7 @@ class FeishuStepReporter:
             self._patch(title=title, content=content, template=template)
 
         # 长回答：额外发一条独立的完整卡片消息
-        if send_full_answer and final_answer:
+        if send_full_answer and final_answer and not actions:
             self._send_full_answer(final_answer, template)
 
         # 文档：追加总结

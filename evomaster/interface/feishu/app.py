@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -136,6 +137,16 @@ class FeishuBot:
         self._config = config
         self._project_root = Path(project_root)
 
+        # 容器池（可选）
+        self._container_pool = None
+        if config.container_pool and config.container_pool.enabled:
+            from evomaster.env.container_pool import ContainerPool
+
+            server_start = datetime.now().strftime("%Y%m%d_%H%M%S")
+            shared_mount_host = str(self._project_root / "runs" / f"feishu_{server_start}")
+            self._container_pool = ContainerPool(config.container_pool, shared_mount_host)
+            self._container_pool.start()
+
         # 创建飞书 Client
         self._client = create_feishu_client(
             app_id=config.app_id,
@@ -175,6 +186,7 @@ class FeishuBot:
             feishu_domain=config.domain,
             feishu_doc_folder_token=config.doc_folder_token,
             available_agents=config.available_agents,
+            container_pool=self._container_pool,
         )
 
         self._ws_client: Optional[lark.ws.Client] = None

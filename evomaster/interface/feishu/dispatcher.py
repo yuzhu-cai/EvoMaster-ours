@@ -10,6 +10,7 @@ import logging
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -95,13 +96,18 @@ def _extract_final_answer(result: dict[str, Any]) -> str:
 
 
 # 需要多轮会话的子任务 agent（使用独立会话 key）
-_SESSION_SUBTASK_AGENTS = {"agent_builder"}
+# agent_builder 改为每次使用唯一 session key，不再隐式路由后续消息
+_SESSION_SUBTASK_AGENTS = set()
 
 # 完成后需要确认按钮的子任务 agent（Phase 1 结束后显示「确认生成」按钮）
 _CONFIRM_SUBTASK_AGENTS = {"agent_builder"}
 
 # 保留同步委派流程的 agent（agent_builder 的 planner→确认→builder 流程）
 _SYNCHRONOUS_DELEGATION_AGENTS = {"agent_builder"}
+
+# 始终使用 local 模式的 agent（不进入容器池）
+# agent_builder 需要读写宿主机上的 playground/ 和 configs/ 目录
+_LOCAL_ONLY_AGENTS = {"agent_builder"}
 
 
 class TaskDispatcher:
@@ -122,6 +128,7 @@ class TaskDispatcher:
         feishu_domain: str = "https://open.feishu.cn",
         feishu_doc_folder_token: Optional[str] = None,
         available_agents: dict[str, str] | None = None,
+        container_pool: Any = None,
     ):
         """
         Args:
@@ -138,6 +145,7 @@ class TaskDispatcher:
             feishu_domain: 飞书 API 域名
             feishu_doc_folder_token: 飞书文件夹 token（用于文档写入工具）
             available_agents: 可用子智能体白名单 {name: description}
+            container_pool: ContainerPool 实例，None 表示不使用容器池
         """
         from .session_manager import ChatSessionManager
 
@@ -153,7 +161,20 @@ class TaskDispatcher:
             thread_name_prefix="feishu-task",
         )
         self._active_tasks: dict[str, Any] = {}
-        self._session_manager = ChatSessionManager(max_sessions=max_sessions)
+        self._container_pool = container_pool
+
+        # 会话清理回调：不释放容器 — 用户容器在 bot 生命周期内持久存在
+        on_session_cleanup = None
+        if self._container_pool is not None:
+            def _on_session_cleanup(session):
+                # 不释放容器，容器释放只在 ContainerPool.shutdown() 时发生
+                pass
+            on_session_cleanup = _on_session_cleanup
+
+        self._session_manager = ChatSessionManager(
+            max_sessions=max_sessions,
+            on_session_cleanup=on_session_cleanup,
+        )
 
         # 存储飞书凭证（用于动态创建工具）
         self._feishu_app_id = feishu_app_id
@@ -276,7 +297,7 @@ class TaskDispatcher:
             name=f"timeout-{message_id[:8]}",
         ).start()
 
-    def _create_playground(self, agent_name: str, sender_open_id: str | None = None):
+    def _create_playground(self, agent_name: str, sender_open_id: str | None = None, chat_id: str | None = None):
         """创建 playground 实例（不调用 setup）。"""
         from evomaster.core import get_playground_class
 
@@ -298,11 +319,39 @@ class TaskDispatcher:
 
         # 创建层级 run 目录: runs/feishu_{server_start}/{user_id}/{agent}_{timestamp}/
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        feishu_base = self._project_root / "runs" / f"feishu_{self._server_start_time}"
+        # 容器池模式：使用池的 shared_mount_host 作为 feishu_base，确保路径一致
+        if self._container_pool is not None:
+            feishu_base = Path(self._container_pool.shared_mount_host)
+        else:
+            feishu_base = self._project_root / "runs" / f"feishu_{self._server_start_time}"
         user_dir = sender_open_id or "unknown"
         run_dir = feishu_base / user_dir / f"{agent_name}_{timestamp}"
         task_id = f"feishu_{agent_name}"
         playground.set_run_dir(run_dir, task_id=task_id)
+
+        # 容器池模式：注入 use_existing_container
+        if self._container_pool is not None and agent_name not in _LOCAL_ONLY_AGENTS:
+            # workspace = 用户根目录（不再嵌套 workspaces/feishu_<agent>）
+            user_dir = sender_open_id or "unknown"
+            user_workspace_host = str((feishu_base / user_dir).absolute())
+            container_info = self._container_pool.acquire(
+                sender_open_id or "unknown", user_workspace_host
+            )
+            container_workspace = f"/workspaces/{user_dir}"
+
+            # 覆盖 session 配置
+            session_cfg = playground.config.session
+            session_cfg["type"] = "docker"
+            docker_cfg = session_cfg.setdefault("docker", {})
+            docker_cfg["use_existing_container"] = container_info.container_name
+            docker_cfg["auto_remove"] = False  # 池化容器不自动删除
+            docker_cfg["working_dir"] = container_workspace
+            docker_cfg["workspace_path"] = container_workspace
+            # 设置 volumes 以便 DockerEnv.is_mounted_path() 优化 host-side 文件 I/O
+            docker_cfg["volumes"] = {self._container_pool.shared_mount_host: "/workspaces"}
+
+            # 存储 container_info 到 playground 以便后续释放
+            playground._pool_container_info = container_info
 
         return playground
 
@@ -344,7 +393,7 @@ class TaskDispatcher:
         # 始终用默认 agent 创建/获取 session
         session = self._session_manager.get_or_create(
             chat_id,
-            playground_factory=lambda: self._create_playground(self._default_agent, sender_open_id),
+            playground_factory=lambda: self._create_playground(self._default_agent, sender_open_id, chat_id=chat_id),
         )
 
         # 同一 chat 串行处理
@@ -370,29 +419,22 @@ class TaskDispatcher:
             try:
                 # 子任务模式：/agent 指定了非默认 agent
                 if agent_name != self._default_agent:
-                    # 会话级子任务：支持多轮对话（如 agent_builder）
-                    if agent_name in _SESSION_SUBTASK_AGENTS:
-                        answer, sub_trajectory = self._run_session_subtask(
-                            chat_id, agent_name, task_text, on_step, sender_open_id
-                        )
-                    else:
-                        answer = self._run_subtask(agent_name, task_text, on_step, chat_id=chat_id, sender_open_id=sender_open_id)
-                        sub_trajectory = None
-
-                    # 检查 waiting_for_input（agent 在向用户提问）
-                    if sub_trajectory and sub_trajectory.status == "waiting_for_input":
+                    # 会话级子任务（如 agent_builder）：后台线程执行，避免阻塞 evoclaw lock
+                    if agent_name in _CONFIRM_SUBTASK_AGENTS:
+                        # Finalize 当前 reporter（显示"正在启动..."）
                         if reporter:
                             try:
-                                sub_session_key = f"{chat_id}:{agent_name}"
-                                sub_session = self._session_manager.get(sub_session_key)
-                                self._finalize_subtask_with_question(
-                                    reporter, sub_trajectory, sub_session_key,
-                                    agent_name, sub_session,
-                                )
-                                return None
+                                reporter.finalize("completed", f"正在启动 {agent_name}...")
                             except Exception:
-                                logger.exception("Failed to finalize question card")
-                        return answer
+                                logger.exception("Failed to finalize reporter")
+                        # 后台线程执行
+                        self._dispatch_sync_delegation(
+                            chat_id, agent_name, task_text,
+                            message_id, sender_open_id,
+                        )
+                        return None
+                    else:
+                        answer = self._run_subtask(agent_name, task_text, on_step, chat_id=chat_id, sender_open_id=sender_open_id)
 
                     # 将结果注入 evoclaw 的 dialog 作为上下文
                     if session.initialized and session.agent:
@@ -405,36 +447,7 @@ class TaskDispatcher:
 
                     if reporter:
                         try:
-                            # 确认类 agent：finalize 时添加确认/取消按钮
-                            if agent_name in _CONFIRM_SUBTASK_AGENTS:
-                                session_key = f"{chat_id}:{agent_name}"
-                                # 截断 answer 嵌入按钮 value，回调时用于保留原始卡片内容
-                                _answer_for_button = answer[:2000] if answer else ""
-                                actions = [
-                                    {
-                                        "text": "✅ 确认生成",
-                                        "type": "primary",
-                                        "value": {
-                                            "action": "confirm_agent_build",
-                                            "session_key": session_key,
-                                            "agent_name": agent_name,
-                                            "original_answer": _answer_for_button,
-                                        },
-                                    },
-                                    {
-                                        "text": "❌ 取消",
-                                        "type": "danger",
-                                        "value": {
-                                            "action": "cancel_agent_build",
-                                            "session_key": session_key,
-                                            "agent_name": agent_name,
-                                            "original_answer": _answer_for_button,
-                                        },
-                                    },
-                                ]
-                                reporter.finalize("completed", answer, actions=actions)
-                            else:
-                                reporter.finalize("completed", answer)
+                            reporter.finalize("completed", answer)
                             return None  # 卡片已包含回答
                         except Exception:
                             logger.exception("Failed to finalize step reporter")
@@ -644,86 +657,11 @@ class TaskDispatcher:
                         )
 
                         if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
-                            # === 同步委派（agent_builder 等）：保留现有流程 ===
-                            subtask_reporter = None
-                            subtask_on_step = None
-                            if self._step_reporter_factory:
-                                try:
-                                    subtask_reporter = self._step_reporter_factory(
-                                        chat_id, message_id, sender_open_id
-                                    )
-                                    subtask_reporter.send_initial_card(
-                                        f"[{delegated_agent}] {delegated_task[:200]}"
-                                    )
-                                    subtask_on_step = subtask_reporter.on_step
-                                except Exception:
-                                    logger.exception("Failed to create subtask reporter")
-
-                            answer, sub_trajectory = self._run_session_subtask(
+                            # === 同步委派（agent_builder 等）：后台线程执行，避免阻塞 evoclaw lock ===
+                            self._dispatch_sync_delegation(
                                 chat_id, delegated_agent, delegated_task,
-                                subtask_on_step, sender_open_id,
+                                message_id, sender_open_id,
                             )
-
-                            # 检查 waiting_for_input（agent 在向用户提问）
-                            if sub_trajectory and sub_trajectory.status == "waiting_for_input":
-                                if subtask_reporter:
-                                    try:
-                                        sub_session_key = f"{chat_id}:{delegated_agent}"
-                                        sub_session = self._session_manager.get(sub_session_key)
-                                        self._finalize_subtask_with_question(
-                                            subtask_reporter, sub_trajectory, sub_session_key,
-                                            delegated_agent, sub_session,
-                                        )
-                                        return None
-                                    except Exception:
-                                        logger.exception("Failed to finalize question card")
-                                return None
-
-                            if session.initialized and session.agent:
-                                summary = (
-                                    f"[子任务结果 - {delegated_agent}]\n"
-                                    f"用户请求: {delegated_task}\n"
-                                    f"结果: {answer}"
-                                )
-                                session.agent.add_user_message(summary)
-                            if subtask_reporter:
-                                try:
-                                    if delegated_agent in _CONFIRM_SUBTASK_AGENTS:
-                                        session_key = f"{chat_id}:{delegated_agent}"
-                                        _answer_for_button = answer[:2000] if answer else ""
-                                        actions = [
-                                            {
-                                                "text": "✅ 确认生成",
-                                                "type": "primary",
-                                                "value": {
-                                                    "action": "confirm_agent_build",
-                                                    "session_key": session_key,
-                                                    "agent_name": delegated_agent,
-                                                    "original_answer": _answer_for_button,
-                                                },
-                                            },
-                                            {
-                                                "text": "❌ 取消",
-                                                "type": "danger",
-                                                "value": {
-                                                    "action": "cancel_agent_build",
-                                                    "session_key": session_key,
-                                                    "agent_name": delegated_agent,
-                                                    "original_answer": _answer_for_button,
-                                                },
-                                            },
-                                        ]
-                                        subtask_reporter.finalize(
-                                            "completed", answer, actions=actions
-                                        )
-                                        sub_session = self._session_manager.get(session_key)
-                                        if sub_session:
-                                            sub_session.last_card_message_id = subtask_reporter.card_message_id
-                                    else:
-                                        subtask_reporter.finalize("completed", answer)
-                                    return None
-                                except Exception:
-                                    logger.exception("Failed to finalize subtask reporter")
                         else:
                             # === 后台委派：非同步 agent 在后台线程运行 ===
                             bg_task = self._bg_task_registry.create(
@@ -779,7 +717,7 @@ class TaskDispatcher:
         from evomaster.utils.types import TaskInstance
 
         logger.info("Running subtask with agent=%s", agent_name)
-        playground = self._create_playground(agent_name, sender_open_id)
+        playground = self._create_playground(agent_name, sender_open_id, chat_id=chat_id)
         # 注册当前线程到 playground（用于日志过滤）
         playground.register_thread()
         try:
@@ -806,6 +744,13 @@ class TaskDispatcher:
                 playground.cleanup()
             except Exception:
                 logger.exception("Subtask cleanup failed")
+            # 释放容器回池（非会话级子任务不走 session_manager 清理）
+            pool_info = getattr(playground, '_pool_container_info', None)
+            if pool_info and self._container_pool:
+                try:
+                    self._container_pool.release(pool_info.container_id)
+                except Exception:
+                    logger.exception("Failed to release subtask container")
 
     def _inject_feishu_tools(self, playground) -> None:
         """将飞书特有工具注入 playground 的所有 agent。"""
@@ -832,20 +777,22 @@ class TaskDispatcher:
         task_text: str,
         on_step: Optional[Callable] = None,
         sender_open_id: Optional[str] = None,
+        session_key: str | None = None,
     ) -> tuple[str, Any]:
         """运行会话级子任务：支持多轮对话的独立 agent 会话。
 
-        使用 {chat_id}:{agent_name} 作为会话 key，支持 continue_run()。
+        Args:
+            session_key: 自定义会话 key。不传时 fallback 到 {chat_id}:{agent_name}。
 
         Returns:
             (answer_text, trajectory) 元组。trajectory 可能为 None（异常时）。
         """
         from evomaster.utils.types import TaskInstance
 
-        session_key = f"{chat_id}:{agent_name}"
+        session_key = session_key or f"{chat_id}:{agent_name}"
         session = self._session_manager.get_or_create(
             session_key,
-            playground_factory=lambda: self._create_playground(agent_name, sender_open_id),
+            playground_factory=lambda: self._create_playground(agent_name, sender_open_id, chat_id=chat_id),
         )
 
         # 会话级子任务也串行处理
@@ -968,6 +915,126 @@ class TaskDispatcher:
                 task_registry=self._bg_task_registry, chat_id=chat_id
             )
             agent.tools.register(check_tool)
+
+    def _dispatch_sync_delegation(
+        self,
+        chat_id: str,
+        delegated_agent: str,
+        delegated_task: str,
+        message_id: str,
+        sender_open_id: str | None = None,
+    ) -> None:
+        """后台线程执行同步委派（如 agent_builder planner），避免阻塞 evoclaw lock。"""
+        task_id = uuid.uuid4().hex[:8]
+        unique_session_key = f"{chat_id}:{delegated_agent}:{task_id}"
+
+        def _run():
+            subtask_reporter = None
+            subtask_on_step = None
+            if self._step_reporter_factory:
+                try:
+                    subtask_reporter = self._step_reporter_factory(
+                        chat_id, message_id, sender_open_id
+                    )
+                    subtask_reporter.send_initial_card(
+                        f"[{delegated_agent}] {delegated_task[:200]}"
+                    )
+                    subtask_on_step = subtask_reporter.on_step
+                except Exception:
+                    logger.exception("Failed to create subtask reporter")
+
+            try:
+                answer, sub_trajectory = self._run_session_subtask(
+                    chat_id, delegated_agent, delegated_task,
+                    subtask_on_step, sender_open_id,
+                    session_key=unique_session_key,
+                )
+
+                # waiting_for_input: 显示提问卡片
+                if sub_trajectory and sub_trajectory.status == "waiting_for_input":
+                    if subtask_reporter:
+                        try:
+                            sub_session = self._session_manager.get(unique_session_key)
+                            self._finalize_subtask_with_question(
+                                subtask_reporter, sub_trajectory, unique_session_key,
+                                delegated_agent, sub_session,
+                            )
+                        except Exception:
+                            logger.exception("Failed to finalize question card")
+                    return
+
+                # 注入结果到 evoclaw（短暂持锁）
+                evoclaw_session = self._session_manager.get(chat_id)
+                if evoclaw_session and evoclaw_session.initialized and evoclaw_session.agent:
+                    acquired = evoclaw_session.lock.acquire(timeout=30)
+                    if acquired:
+                        try:
+                            evoclaw_session.agent.add_user_message(
+                                f"[子任务结果 - {delegated_agent}]\n"
+                                f"用户请求: {delegated_task}\n"
+                                f"结果: {answer}"
+                            )
+                        finally:
+                            evoclaw_session.lock.release()
+
+                # Finalize reporter：确认/取消按钮
+                if subtask_reporter:
+                    try:
+                        if delegated_agent in _CONFIRM_SUBTASK_AGENTS:
+                            _answer_for_button = answer[:2000] if answer else ""
+                            actions = [
+                                {
+                                    "text": "✅ 确认生成",
+                                    "type": "primary",
+                                    "value": {
+                                        "action": "confirm_agent_build",
+                                        "session_key": unique_session_key,
+                                        "agent_name": delegated_agent,
+                                        "original_answer": _answer_for_button,
+                                    },
+                                },
+                                {
+                                    "text": "❌ 取消",
+                                    "type": "danger",
+                                    "value": {
+                                        "action": "cancel_agent_build",
+                                        "session_key": unique_session_key,
+                                        "agent_name": delegated_agent,
+                                        "original_answer": _answer_for_button,
+                                    },
+                                },
+                            ]
+                            subtask_reporter.finalize(
+                                "completed", answer, actions=actions
+                            )
+                            sub_session = self._session_manager.get(unique_session_key)
+                            if sub_session:
+                                sub_session.last_card_message_id = subtask_reporter.card_message_id
+                        else:
+                            subtask_reporter.finalize("completed", answer)
+                    except Exception:
+                        logger.exception("Failed to finalize subtask reporter")
+
+            except Exception:
+                logger.exception(
+                    "Sync delegation failed: key=%s", unique_session_key
+                )
+                if subtask_reporter:
+                    try:
+                        subtask_reporter.finalize("failed")
+                    except Exception:
+                        pass
+
+        thread = threading.Thread(
+            target=_run,
+            name=f"sync-deleg-{unique_session_key}",
+            daemon=True,
+        )
+        thread.start()
+        logger.info(
+            "Sync delegation dispatched: key=%s, thread=%s",
+            unique_session_key, thread.name,
+        )
 
     def _dispatch_background_subtask(
         self,
@@ -1877,4 +1944,6 @@ class TaskDispatcher:
         logger.info("Shutting down task dispatcher...")
         self._session_manager.shutdown()
         self._executor.shutdown(wait=wait)
+        if self._container_pool is not None:
+            self._container_pool.shutdown()
         logger.info("Task dispatcher shut down")

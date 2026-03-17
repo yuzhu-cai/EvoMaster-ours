@@ -219,16 +219,20 @@ class BasePlayground:
                     docker_config = session_config['docker']
                     container_workspace = docker_config.get('working_dir', '/workspace')
 
-                    # 更新 volumes 挂载
-                    if 'volumes' not in docker_config:
-                        docker_config['volumes'] = {}
-                    docker_config['volumes'][workspace_path_str] = container_workspace
-
-                    # 更新 workspace_path
-                    docker_config['workspace_path'] = container_workspace
-                    docker_config['working_dir'] = container_workspace
-
-                    self.logger.debug(f"Updated Docker volume: {workspace_path_str} -> {container_workspace}")
+                    # 容器池模式：不修改 volumes（容器已有共享挂载），只更新路径
+                    if docker_config.get('use_existing_container'):
+                        docker_config['workspace_path'] = container_workspace
+                        self.logger.debug(
+                            f"Pool container mode: workspace_path={container_workspace}"
+                        )
+                    else:
+                        # 原有逻辑：挂载 workspace 目录
+                        if 'volumes' not in docker_config:
+                            docker_config['volumes'] = {}
+                        docker_config['volumes'][workspace_path_str] = container_workspace
+                        docker_config['workspace_path'] = container_workspace
+                        docker_config['working_dir'] = container_workspace
+                        self.logger.debug(f"Updated Docker volume: {workspace_path_str} -> {container_workspace}")
 
             # 对于 Pydantic 模型（如果已加载）
             elif hasattr(session_config, 'local') and hasattr(session_config.local, 'workspace_path'):
