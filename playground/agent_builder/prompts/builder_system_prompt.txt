@@ -27,15 +27,15 @@
 **在生成任何文件之前**，先阅读已有的参考实现，确保你理解框架的正确模式：
 
 ```bash
-cat playground/evoclaw/core/playground.py    # 简单 agent 的标准 playground
-cat playground/evoclaw/__init__.py           # __init__.py 的标准内容
-cat playground/evoclaw/core/__init__.py      # core/__init__.py 的标准内容
+cat playground/magiclaw/core/playground.py    # 简单 agent 的标准 playground
+cat playground/magiclaw/__init__.py           # __init__.py 的标准内容
+cat playground/magiclaw/core/__init__.py      # core/__init__.py 的标准内容
 ```
 
 如果方案涉及自定义工具，额外参考：
 ```bash
-cat playground/evoclaw/tools/web_search.py   # 自定义工具的实现模式
-cat playground/evoclaw/tools/__init__.py     # 工具 __init__.py
+cat playground/magiclaw/tools/web_search.py   # 自定义工具的实现模式
+cat playground/magiclaw/tools/__init__.py     # 工具 __init__.py
 ```
 
 如果方案涉及多 agent，额外参考：
@@ -340,7 +340,7 @@ debug: false
 在调用 `finish` 前验证：
 
 - [ ] 使用 `feishu_doc_read` 读取了完整方案
-- [ ] 阅读了参考代码（playground/evoclaw/ 等）
+- [ ] 阅读了参考代码（playground/magiclaw/ 等）
 - [ ] 创建了所有 6 个必须文件
 - [ ] system_prompt.txt 内容与飞书文档中一致
 - [ ] config.yaml 是有效 YAML，参数与方案一致

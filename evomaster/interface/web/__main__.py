@@ -14,7 +14,7 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="EvoMaster Web Chat Interface",
+        description="MagiClaw Web Chat Interface",
     )
     parser.add_argument(
         "--config",

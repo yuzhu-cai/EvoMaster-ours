@@ -1,7 +1,7 @@
 web:
   host: "127.0.0.1"
   port: 5008
-  default_agent: "evoclaw"
+  default_agent: "magiclaw"
   max_concurrent_tasks: 4
   task_timeout: 600
   max_sessions: 100

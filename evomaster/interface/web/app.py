@@ -1,7 +1,7 @@
-"""EvoMaster Web Chat Interface
+"""MagiClaw Web Chat Interface
 
 Flask + SocketIO server that provides a web-based chat interface
-for interacting with EvoMaster agents.
+for interacting with MagiClaw agents.
 """
 from __future__ import annotations
 
@@ -264,7 +264,7 @@ class WebApp:
     def start(self):
         """Start the web server (blocking)."""
         logger.info(
-            "Starting EvoMaster Web Chat on %s:%s",
+            "Starting MagiClaw Web Chat on %s:%s",
             self._config.host,
             self._config.port,
         )
@@ -279,7 +279,7 @@ class WebApp:
 
     def stop(self):
         """Shutdown the server and cleanup."""
-        logger.info("Stopping EvoMaster Web Chat...")
+        logger.info("Stopping MagiClaw Web Chat...")
         self._dispatcher.shutdown(wait=False)
         if self._container_pool:
             self._container_pool.shutdown()

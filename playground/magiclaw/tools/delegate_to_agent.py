@@ -1,6 +1,6 @@
-"""EvoClaw 委派工具
+"""MagiClaw 委派工具
 
-允许 evoclaw 将任务委派给专业 Agent（如 agent_builder）。
+允许 magiclaw 将任务委派给专业 Agent（如 agent_builder）。
 支持动态 agent 列表，由 dispatcher 在运行时注入。
 """
 

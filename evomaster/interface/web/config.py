@@ -1,6 +1,6 @@
 """Web interface configuration model and loader.
 
-Load web interface config from a YAML file, reusing EvoMaster's _substitute_env pattern.
+Load web interface config from a YAML file, reusing MagiClaw's _substitute_env pattern.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ class WebAppConfig(BaseModel):
     host: str = Field(default="127.0.0.1", description="Host to bind the web server to")
     port: int = Field(default=5001, description="Port to bind the web server to")
     default_agent: str = Field(
-        default="evoclaw",
+        default="magiclaw",
         description="Default playground agent name",
     )
     default_config_path: Optional[str] = Field(

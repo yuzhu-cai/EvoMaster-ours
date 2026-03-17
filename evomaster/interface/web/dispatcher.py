@@ -51,7 +51,7 @@ class WebTaskDispatcher:
         self,
         project_root: Path,
         socketio,
-        default_agent: str = "evoclaw",
+        default_agent: str = "magiclaw",
         default_config_path: str | None = None,
         max_workers: int = 4,
         task_timeout: int = 600,
@@ -500,7 +500,7 @@ class WebTaskDispatcher:
                         first = [questions[0]]
                         question_text = self._format_questions(first)
                         option_actions = self._build_question_actions(
-                            first, session_id, "evoclaw",
+                            first, session_id, "magiclaw",
                             question_text=question_text,
                         )
                         options = self._build_question_options(first)
@@ -509,7 +509,7 @@ class WebTaskDispatcher:
                             actions=option_actions,
                             options=options,
                             session_key=session_id,
-                            agent_name="evoclaw",
+                            agent_name="magiclaw",
                         )
                         session.pending_questions = questions[1:]
                         session.collected_answers = []
@@ -1127,7 +1127,7 @@ class WebTaskDispatcher:
         message_id: str,
         room: str,
     ) -> None:
-        """Run evoclaw review of a completed background task (holds session lock)."""
+        """Run magiclaw review of a completed background task (holds session lock)."""
         from evomaster.interface.web.step_reporter import WebStepReporter
 
         if not session.initialized or not session.agent:
@@ -1222,7 +1222,7 @@ class WebTaskDispatcher:
         """Inject memory tools (search/save/forget)."""
         if memory_manager is None:
             return
-        from playground.evoclaw.tools.memory_tools import (
+        from playground.magiclaw.tools.memory_tools import (
             MemorySearchTool,
             MemorySaveTool,
             MemoryForgetTool,
@@ -1254,7 +1254,7 @@ class WebTaskDispatcher:
         if check_tool and hasattr(check_tool, "set_context"):
             check_tool.set_context(self._bg_task_registry, session_id)
         else:
-            from playground.evoclaw.tools.check_background_tasks import (
+            from playground.magiclaw.tools.check_background_tasks import (
                 CheckBackgroundTasksTool,
             )
 

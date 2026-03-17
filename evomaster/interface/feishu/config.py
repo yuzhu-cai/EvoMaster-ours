@@ -35,7 +35,7 @@ class FeishuBotConfig(BaseModel):
         description="连接模式: websocket 或 webhook",
     )
     default_agent: str = Field(
-        default="evoclaw",
+        default="magiclaw",
         description="默认使用的 playground agent 名称",
     )
     default_config_path: Optional[str] = Field(
