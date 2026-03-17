@@ -8,24 +8,24 @@ from evomaster.core.exp import BaseExp, extract_agent_response
 from evomaster.utils.types import TaskInstance
 
 
-class FrontierScienceExp(BaseExp):
+class SolveExp(BaseExp):
     """Single-agent experiment that returns a task-level result."""
 
     @property
     def exp_name(self) -> str:
-        return "FrontierScience"
+        return "Solve"
 
     def run(
         self,
         task_description: str,
         task_id: str = "exp_001",
-        task_type: str = "frontier_science",
+        task_type: str = "solve",
         input_data: dict[str, Any] | None = None,
         images: list[str] | None = None,
     ) -> dict[str, Any]:
         image_list = images or []
         self.logger.info(
-            "FrontierScienceExp started (task_id=%s, task_type=%s, text_len=%d, image_count=%d)",
+            "SolveExp started (task_id=%s, task_type=%s, text_len=%d, image_count=%d)",
             task_id,
             task_type,
             len(task_description),
@@ -47,7 +47,7 @@ class FrontierScienceExp(BaseExp):
             final_answer = (extract_agent_response(trajectory) or "").strip()
 
             self.logger.info(
-                "FrontierScienceExp completed (task_id=%s, status=%s, steps=%d)",
+                "SolveExp completed (task_id=%s, status=%s, steps=%d)",
                 task_id,
                 status,
                 steps,
@@ -70,7 +70,7 @@ class FrontierScienceExp(BaseExp):
             return result
         except Exception as exc:
             self.logger.error(
-                "FrontierScienceExp failed (task_id=%s): %s",
+                "SolveExp failed (task_id=%s): %s",
                 task_id,
                 exc,
                 exc_info=True,

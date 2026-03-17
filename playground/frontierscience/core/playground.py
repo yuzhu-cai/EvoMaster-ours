@@ -1,5 +1,5 @@
 """FrontierScience playground implementation."""
-
+# 经过solveexp之后的答案保存在solution.md，经过reflectexp之后的答案保存在solution_refined.md
 from __future__ import annotations
 
 import logging
@@ -9,7 +9,8 @@ from typing import Any
 
 from evomaster.core import BasePlayground, register_playground
 
-from .exp import FrontierScienceExp
+from .solve_exp import SolveExp
+from .reflect_exp import ReflectExp
 from ..tools import build_frontier_tools
 
 
@@ -22,7 +23,7 @@ class FrontierSciencePlayground(BasePlayground):
             config_dir = Path(__file__).resolve().parents[3] / "configs" / "frontierscience"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.agents.declare("general_agent")
+        self.agents.declare("solve_agent", "reflection_agent")
         self._frontier_tool_names: list[str] = []
 
     def setup(self) -> None:
@@ -76,13 +77,22 @@ class FrontierSciencePlayground(BasePlayground):
                 agent.enabled_tool_names,
             )
 
-    def _create_exp(self):
-        agent = self.agents.get("general_agent") or self.agent
-        if agent is None:
-            raise RuntimeError("No available agent for FrontierScienceExp.")
-        exp = FrontierScienceExp(agent, self.config)
-        if self.run_dir:
-            exp.set_run_dir(self.run_dir)
+    def _create_exp(self, name:str):
+        if name=="solve_exp":
+            agent = self.agents.get("solve_agent") 
+            if agent is None:
+                raise RuntimeError("No available agent for SolveExp.")
+            exp = SolveExp(agent, self.config)
+            if self.run_dir:
+                exp.set_run_dir(self.run_dir)
+        elif name == "reflect_exp":
+            agent = self.agents.get("reflect_agent")
+            if agent is None:
+                raise RuntimeError("No available agent for ReflectExp.")
+            exp = ReflectExp(agent, self.config)
+            if self.run_dir:
+                exp.set_run_dir(self.run_dir)
+        
         return exp
 
     def _extract_task_meta(self, task_description: str) -> tuple[str, dict[str, str]]:
@@ -125,29 +135,59 @@ class FrontierSciencePlayground(BasePlayground):
             self.setup()
             self._setup_trajectory_file(output_file)
 
-            exp = self._create_exp()
+            # Stage 1: FrontierScienceExp
             image_count = len(images or [])
             self.logger.info(
-                "Running FrontierScienceExp (task_id=%s, task_type=%s, image_count=%d)",
+                "Stage 1: Running FrontierScienceExp (task_id=%s, task_type=%s, image_count=%d)",
                 runtime_task_id,
                 runtime_task_type,
                 image_count,
             )
-            result = exp.run(
+            solve_exp = self._create_exp("solve_exp")
+            solve_result = solve_exp.run(
                 task_description=cleaned_description,
                 task_id=runtime_task_id,
                 task_type=runtime_task_type,
                 input_data=task_input_data,
                 images=images,
             )
+            initial_answer = solve_result.get("final_answer", "")
             self.logger.info(
-                "FrontierScienceExp finished (task_id=%s, task_type=%s, status=%s, steps=%s)",
+                "Stage 1: SolveExp finished (task_id=%s, status=%s, steps=%s)",
                 runtime_task_id,
-                runtime_task_type,
-                result.get("status"),
-                result.get("steps"),
+                solve_result.get("status"),
+                solve_result.get("steps"),
             )
-            return result
+
+            # Stage 2: ReflectExp
+            self.logger.info(
+                "Stage 2: Running ReflectExp (task_id=%s)",
+                runtime_task_id,
+            )
+            reflect_exp = self._create_exp("reflect_exp")
+            reflect_result = reflect_exp.run(
+                task_description=cleaned_description,
+                task_id=runtime_task_id,
+                initial_answer=initial_answer,
+            )
+            self.logger.info(
+                "Stage 2: ReflectExp finished (task_id=%s, status=%s, steps=%s)",
+                runtime_task_id,
+                reflect_result.get("status"),
+                reflect_result.get("steps"),
+            )
+
+            # Merge results
+            return {
+                "task_id": runtime_task_id,
+                "task_type": runtime_task_type,
+                "status": reflect_result.get("status"),
+                "steps": reflect_result.get("steps"),
+                "initial_answer": initial_answer,
+                "refined_answer": reflect_result.get("refined_answer"),
+                "solve_trajectory": solve_result.get("trajectory"),
+                "reflect_trajectory": reflect_result.get("trajectory"),
+            }
         except Exception as exc:
             self.logger.error(
                 "Minimal FrontierScience playground failed (task_id=%s): %s",

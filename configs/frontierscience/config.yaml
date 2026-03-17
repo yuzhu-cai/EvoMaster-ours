@@ -15,7 +15,7 @@ llm:
   default: "openai"
 
 agents:
-  general:
+  solve:
     llm: "openai"
     max_turns: 800
     tools:
@@ -29,7 +29,23 @@ agents:
       preserve_recent_turns: 5
 
     system_prompt_file: "prompts/system_prompt.txt"
-    user_prompt_file: "prompts/user_prompt.txt"
+    user_prompt_file: "prompts/solve_user_prompt.txt"
+
+  reflect:
+    llm: "openai"
+    max_turns: 800
+    tools:
+      builtin: ["*"]
+      mcp: ""
+
+    context:
+      max_tokens: 200000
+      truncation_strategy: "summary"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+
+    system_prompt_file: "prompts/reflect_system_prompt.txt"
+    user_prompt_file: "prompts/reflect_user_prompt.txt"
 
 mcp:
   config_file: "mcp_config.json"
