@@ -1,6 +1,6 @@
 """后台任务查询工具
 
-允许 evoclaw 查询后台子智能体任务的状态和进度。
+允许 magiclaw 查询后台子智能体任务的状态和进度。
 """
 
 from __future__ import annotations

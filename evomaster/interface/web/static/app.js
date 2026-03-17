@@ -1,5 +1,5 @@
 /**
- * EvoMaster Web Chat — Client Application
+ * MagiClaw Web Chat — Client Application
  *
  * SocketIO-based chat client with markdown rendering, progress tracking,
  * question handling, and background task updates.
@@ -255,7 +255,7 @@
     });
 
     socket.on("welcome", function (data) {
-      addSystemMessage(data.message || "Connected to EvoMaster.");
+      addSystemMessage(data.message || "Connected to MagiClaw.");
     });
 
     socket.on("session_info", function (data) {

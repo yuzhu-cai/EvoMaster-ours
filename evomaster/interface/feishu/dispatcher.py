@@ -116,7 +116,7 @@ class TaskDispatcher:
     def __init__(
         self,
         project_root: Path,
-        default_agent: str = "evoclaw",
+        default_agent: str = "magiclaw",
         default_config_path: Optional[str] = None,
         max_workers: int = 4,
         task_timeout: int = 600,
@@ -386,7 +386,7 @@ class TaskDispatcher:
         """在后台线程中执行任务，复用会话上下文。
 
         如果 agent_name 与默认 agent 不同，采用子任务模式：
-        独立运行指定 agent，结果注入 evoclaw 上下文。
+        独立运行指定 agent，结果注入 magiclaw 上下文。
         """
         from evomaster.utils.types import TaskInstance
 
@@ -419,7 +419,7 @@ class TaskDispatcher:
             try:
                 # 子任务模式：/agent 指定了非默认 agent
                 if agent_name != self._default_agent:
-                    # 会话级子任务（如 agent_builder）：后台线程执行，避免阻塞 evoclaw lock
+                    # 会话级子任务（如 agent_builder）：后台线程执行，避免阻塞 magiclaw lock
                     if agent_name in _CONFIRM_SUBTASK_AGENTS:
                         # Finalize 当前 reporter（显示"正在启动..."）
                         if reporter:
@@ -436,7 +436,7 @@ class TaskDispatcher:
                     else:
                         answer = self._run_subtask(agent_name, task_text, on_step, chat_id=chat_id, sender_open_id=sender_open_id)
 
-                    # 将结果注入 evoclaw 的 dialog 作为上下文
+                    # 将结果注入 magiclaw 的 dialog 作为上下文
                     if session.initialized and session.agent:
                         summary = (
                             f"[子任务结果 - {agent_name}]\n"
@@ -533,7 +533,7 @@ class TaskDispatcher:
                             logger.exception("Failed to finalize step reporter")
                     return answer
 
-                # 正常 evoclaw 流程
+                # 正常 magiclaw 流程
                 # 获取记忆系统（如果 playground 已初始化）
                 memory_manager = getattr(session.playground, "_memory_manager", None)
                 memory_config = getattr(session.playground, "_memory_config", {})
@@ -610,7 +610,7 @@ class TaskDispatcher:
                     self._memory_auto_capture(memory_manager, memory_config, user_id, task_text)
 
                 # === ask_user 检测 ===
-                # evoclaw 调用了 ask_user，逐个展示问题卡片
+                # magiclaw 调用了 ask_user，逐个展示问题卡片
                 if trajectory and trajectory.status == "waiting_for_input":
                     if reporter:
                         try:
@@ -620,7 +620,7 @@ class TaskDispatcher:
                                 first = [questions[0]]
                                 question_text = self._format_questions_for_card(first)
                                 option_actions = self._build_question_actions(
-                                    first, chat_id, "evoclaw",
+                                    first, chat_id, "magiclaw",
                                     question_text=question_text,
                                 )
                                 reporter.finalize_as_question(question_text, actions=option_actions)
@@ -629,16 +629,16 @@ class TaskDispatcher:
                                 session.collected_answers = []
                             return None
                         except Exception:
-                            logger.exception("Failed to finalize evoclaw question card")
+                            logger.exception("Failed to finalize magiclaw question card")
                     return _extract_final_answer(
                         {"trajectory": trajectory, "status": trajectory.status}
                     )
 
                 # === 委派检测 ===
-                # evoclaw 可能通过 delegate_to_agent 工具触发了委派
+                # magiclaw 可能通过 delegate_to_agent 工具触发了委派
                 delegations = self._check_all_delegations(session)
                 if delegations:
-                    # 先 finalize evoclaw 的卡片（显示委派消息）
+                    # 先 finalize magiclaw 的卡片（显示委派消息）
                     chat_answer = _extract_final_answer(
                         {"trajectory": trajectory, "status": trajectory.status}
                     )
@@ -657,7 +657,7 @@ class TaskDispatcher:
                         )
 
                         if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
-                            # === 同步委派（agent_builder 等）：后台线程执行，避免阻塞 evoclaw lock ===
+                            # === 同步委派（agent_builder 等）：后台线程执行，避免阻塞 magiclaw lock ===
                             self._dispatch_sync_delegation(
                                 chat_id, delegated_agent, delegated_task,
                                 message_id, sender_open_id,
@@ -882,7 +882,7 @@ class TaskDispatcher:
         """注入记忆工具到 agent（memory_search / memory_save / memory_forget）。"""
         if memory_manager is None:
             return
-        from playground.evoclaw.tools.memory_tools import (
+        from playground.magiclaw.tools.memory_tools import (
             MemorySearchTool, MemorySaveTool, MemoryForgetTool,
         )
         for tool_cls in (MemorySearchTool, MemorySaveTool, MemoryForgetTool):
@@ -910,7 +910,7 @@ class TaskDispatcher:
         if check_tool and hasattr(check_tool, "set_context"):
             check_tool.set_context(self._bg_task_registry, chat_id)
         else:
-            from playground.evoclaw.tools.check_background_tasks import CheckBackgroundTasksTool
+            from playground.magiclaw.tools.check_background_tasks import CheckBackgroundTasksTool
             check_tool = CheckBackgroundTasksTool(
                 task_registry=self._bg_task_registry, chat_id=chat_id
             )
@@ -924,7 +924,7 @@ class TaskDispatcher:
         message_id: str,
         sender_open_id: str | None = None,
     ) -> None:
-        """后台线程执行同步委派（如 agent_builder planner），避免阻塞 evoclaw lock。"""
+        """后台线程执行同步委派（如 agent_builder planner），避免阻塞 magiclaw lock。"""
         task_id = uuid.uuid4().hex[:8]
         unique_session_key = f"{chat_id}:{delegated_agent}:{task_id}"
 
@@ -963,19 +963,19 @@ class TaskDispatcher:
                             logger.exception("Failed to finalize question card")
                     return
 
-                # 注入结果到 evoclaw（短暂持锁）
-                evoclaw_session = self._session_manager.get(chat_id)
-                if evoclaw_session and evoclaw_session.initialized and evoclaw_session.agent:
-                    acquired = evoclaw_session.lock.acquire(timeout=30)
+                # 注入结果到 magiclaw（短暂持锁）
+                magiclaw_session = self._session_manager.get(chat_id)
+                if magiclaw_session and magiclaw_session.initialized and magiclaw_session.agent:
+                    acquired = magiclaw_session.lock.acquire(timeout=30)
                     if acquired:
                         try:
-                            evoclaw_session.agent.add_user_message(
+                            magiclaw_session.agent.add_user_message(
                                 f"[子任务结果 - {delegated_agent}]\n"
                                 f"用户请求: {delegated_task}\n"
                                 f"结果: {answer}"
                             )
                         finally:
-                            evoclaw_session.lock.release()
+                            magiclaw_session.lock.release()
 
                 # Finalize reporter：确认/取消按钮
                 if subtask_reporter:
@@ -1158,7 +1158,7 @@ class TaskDispatcher:
             finally:
                 session.lock.release()
         else:
-            # evoclaw 正在处理用户消息，排队等待
+            # magiclaw 正在处理用户消息，排队等待
             logger.info(
                 "Session busy, queueing review: task_id=%s", bg_task.task_id
             )
@@ -1172,7 +1172,7 @@ class TaskDispatcher:
         message_id: str,
         sender_open_id: Optional[str] = None,
     ) -> None:
-        """持有 session lock 时调用：evoclaw 审阅后台任务结果并汇报。"""
+        """持有 session lock 时调用：magiclaw 审阅后台任务结果并汇报。"""
         if not session.initialized or not session.agent:
             logger.warning("Cannot review: session not initialized for chat_id=%s", chat_id)
             return
@@ -1579,7 +1579,7 @@ class TaskDispatcher:
                         except Exception:
                             logger.exception("Failed to finalize step reporter (answer_question)")
 
-                    # 将结果注入 evoclaw 上下文
+                    # 将结果注入 magiclaw 上下文
                     chat_session = self._session_manager.get(chat_id)
                     if chat_session and chat_session.initialized and chat_session.agent:
                         summary = (
@@ -1591,7 +1591,7 @@ class TaskDispatcher:
                     return None
 
                 # === confirm 路径：Phase 2 builder 完成后的处理 ===
-                # 将结果注入 evoclaw 上下文
+                # 将结果注入 magiclaw 上下文
                 chat_session = self._session_manager.get(chat_id)
                 if chat_session and chat_session.initialized and chat_session.agent:
                     summary = (
@@ -1613,7 +1613,7 @@ class TaskDispatcher:
                     phase1_content, "green",
                 )
 
-                # Phase 2 完成，清理子任务会话，后续消息重新走 evoclaw
+                # Phase 2 完成，清理子任务会话，后续消息重新走 magiclaw
                 self._session_manager.remove(session_key)
 
                 return None
@@ -1662,7 +1662,7 @@ class TaskDispatcher:
 
     @staticmethod
     def _check_delegation(session) -> dict[str, str] | None:
-        """检查 evoclaw 是否通过 delegate_to_agent 触发了委派。
+        """检查 magiclaw 是否通过 delegate_to_agent 触发了委派。
 
         扫描 trajectory 最近几步的 ToolMessage，查找 delegated=True 标记。
         """
@@ -1684,7 +1684,7 @@ class TaskDispatcher:
 
     @staticmethod
     def _check_all_delegations(session) -> list[dict[str, str]]:
-        """检查 evoclaw 最近几步中所有的 delegate_to_agent 调用。
+        """检查 magiclaw 最近几步中所有的 delegate_to_agent 调用。
 
         支持一次 LLM 回复中触发多个委派（并行委派）。
         """

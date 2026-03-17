@@ -1,7 +1,7 @@
 """后台子智能体任务管理
 
 提供 BackgroundTask 数据类和线程安全的 BackgroundTaskRegistry，
-用于跟踪 evoclaw 委派给子智能体的后台任务。
+用于跟踪 magiclaw 委派给子智能体的后台任务。
 """
 
 from __future__ import annotations
