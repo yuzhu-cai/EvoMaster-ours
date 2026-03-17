@@ -84,6 +84,9 @@ class ContainerPool:
             self._shared_mount_host,
         )
 
+        # 清理上次进程遗留的同前缀容器，避免名字冲突
+        self._cleanup_stale_containers()
+
         for _ in range(self._config.initial_size):
             try:
                 info = self._create_container()
@@ -233,6 +236,40 @@ class ContainerPool:
             "max_size": self._config.max_size,
         }
 
+    def _cleanup_stale_containers(self) -> None:
+        """清理上次进程遗留的同前缀容器，避免启动时名字冲突"""
+        prefix = self._config.container_name_prefix
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "-a", "--filter", f"name=^{prefix}-",
+                 "--format", "{{.Names}}"],
+                capture_output=True, text=True, timeout=30,
+            )
+        except Exception:
+            logger.exception("Failed to list stale containers")
+            return
+
+        if result.returncode != 0:
+            logger.warning("Failed to list stale containers: %s", result.stderr.strip())
+            return
+
+        stale = [n.strip() for n in result.stdout.strip().splitlines() if n.strip()]
+        if not stale:
+            return
+
+        logger.info(
+            "Found %d stale container(s) from previous run: %s", len(stale), stale
+        )
+        for name in stale:
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", name],
+                    capture_output=True, text=True, timeout=30,
+                )
+                logger.info("Removed stale container: %s", name)
+            except Exception:
+                logger.exception("Failed to remove stale container: %s", name)
+
     def _create_container(self) -> ContainerInfo:
         """创建一个新的池化容器（调用者需持有 lock 或在 start() 中调用）"""
         self._counter += 1
@@ -259,9 +296,26 @@ class ContainerPool:
 
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            raise RuntimeError(
-                f"Failed to create container {name}: {result.stderr.strip()}"
-            )
+            if "Conflict" in result.stderr:
+                # 名字冲突：强制删除旧容器后重试
+                logger.warning(
+                    "Container name conflict for %s, removing stale container and retrying",
+                    name,
+                )
+                subprocess.run(
+                    ["docker", "rm", "-f", name],
+                    capture_output=True, text=True, timeout=30,
+                )
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                if result.returncode != 0:
+                    raise RuntimeError(
+                        f"Failed to create container {name} after conflict retry: "
+                        f"{result.stderr.strip()}"
+                    )
+            else:
+                raise RuntimeError(
+                    f"Failed to create container {name}: {result.stderr.strip()}"
+                )
 
         container_id = result.stdout.strip()[:12]
 
