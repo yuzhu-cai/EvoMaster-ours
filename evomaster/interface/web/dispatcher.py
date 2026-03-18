@@ -413,6 +413,10 @@ class WebTaskDispatcher:
                     return None
 
                 # -- Normal default-agent flow --
+                # Wrap on_step with delegation interception (immediate dispatch)
+                on_step = self._make_on_step_with_delegation(
+                    on_step, session, session_id, message_id, room
+                )
                 memory_manager = getattr(session.playground, "_memory_manager", None)
                 memory_config = getattr(session.playground, "_memory_config", {})
                 user_id = session_id or "unknown"
@@ -516,38 +520,45 @@ class WebTaskDispatcher:
                         return None
 
                 # -- Delegation detection --
-                delegations = self._check_all_delegations(session)
-                if delegations:
+                # Safety net: catch delegations the on_step interceptor may have missed
+                safety_delegations = self._check_all_delegations(session)
+                for delegation in safety_delegations:
+                    delegated_agent = delegation["agent_name"]
+                    delegated_task = delegation["task"]
+                    key = (delegated_agent, delegated_task)
+                    session.dispatched_delegation_keys.add(key)
+                    logger.info(
+                        "Safety-net delegation detected: agent=%s, task=%s",
+                        delegated_agent,
+                        delegated_task[:100],
+                    )
+                    if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
+                        self._dispatch_sync_delegation(
+                            session, session_id, message_id,
+                            delegated_agent, delegated_task, room,
+                        )
+                    else:
+                        bg_task = self._bg_task_registry.create(
+                            session_id, delegated_agent, delegated_task
+                        )
+                        self._dispatch_background_subtask(
+                            session_id, bg_task, message_id, room
+                        )
+
+                # Check if any delegations happened this turn (on_step + safety net)
+                had_delegations = bool(session.dispatched_delegation_keys)
+
+                if had_delegations:
                     chat_answer = _extract_final_answer(
                         {"trajectory": trajectory, "status": trajectory.status}
                     )
                     reporter.finalize("completed", chat_answer)
 
-                    for delegation in delegations:
-                        delegated_agent = delegation["agent_name"]
-                        delegated_task = delegation["task"]
-                        logger.info(
-                            "Delegation detected: agent=%s, task=%s",
-                            delegated_agent,
-                            delegated_task[:100],
-                        )
-
-                        if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
-                            self._dispatch_sync_delegation(
-                                session, session_id, message_id,
-                                delegated_agent, delegated_task, room,
-                            )
-                        else:
-                            bg_task = self._bg_task_registry.create(
-                                session_id, delegated_agent, delegated_task
-                            )
-                            self._dispatch_background_subtask(
-                                session_id, bg_task, message_id, room
-                            )
-
                     self._process_pending_reviews(
                         session, session_id, message_id, room
                     )
+                    # Reset tracking set for next user message
+                    session.dispatched_delegation_keys.clear()
                     return None
 
                 # Normal completion
@@ -954,6 +965,73 @@ class WebTaskDispatcher:
         else:
             sub_reporter.finalize("completed", answer)
 
+    def _dispatch_delegation_from_step(
+        self, step_record, session, session_id, message_id, room,
+    ) -> int:
+        """Scan a single step's tool_responses and immediately dispatch delegations.
+
+        Called from the on_step callback — fires after each agent step, before
+        the next step begins.  Returns the number of delegations dispatched.
+        """
+        count = 0
+        for resp in step_record.tool_responses:
+            if getattr(resp, "name", "") != "delegate_to_agent":
+                continue
+            info = (getattr(resp, "meta", None) or {}).get("info", {})
+            if not info.get("delegated"):
+                continue
+
+            agent_name = info["agent_name"]
+            task = info["task"]
+            key = (agent_name, task)
+
+            if key in session.dispatched_delegation_keys:
+                continue
+            session.dispatched_delegation_keys.add(key)
+
+            logger.info(
+                "Immediate delegation dispatch: agent=%s, task=%s",
+                agent_name, task[:100],
+            )
+
+            if agent_name in _SYNCHRONOUS_DELEGATION_AGENTS:
+                self._dispatch_sync_delegation(
+                    session, session_id, message_id,
+                    agent_name, task, room,
+                )
+            else:
+                bg_task = self._bg_task_registry.create(
+                    session_id, agent_name, task
+                )
+                self._dispatch_background_subtask(
+                    session_id, bg_task, message_id, room
+                )
+            count += 1
+        return count
+
+    def _make_on_step_with_delegation(
+        self, base_on_step, session, session_id, message_id, room,
+    ):
+        """Wrap an on_step callback to inject delegation interception logic.
+
+        The returned wrapper first invokes the original on_step (e.g. the
+        WebStepReporter callback), then scans for delegation markers and
+        dispatches them immediately.
+        """
+        def wrapped_on_step(step_record, step_number, max_steps):
+            if base_on_step:
+                try:
+                    base_on_step(step_record, step_number, max_steps)
+                except Exception:
+                    pass
+            try:
+                self._dispatch_delegation_from_step(
+                    step_record, session, session_id, message_id, room
+                )
+            except Exception:
+                logger.exception("Delegation interceptor failed in on_step")
+        return wrapped_on_step
+
     def _dispatch_background_subtask(
         self,
         session_id: str,
@@ -1161,6 +1239,11 @@ class WebTaskDispatcher:
         )
         review_on_step = review_reporter.on_step
 
+        # Wrap review_on_step with delegation interception (pipeline mode)
+        review_on_step = self._make_on_step_with_delegation(
+            review_on_step, session, session_id, message_id, room
+        )
+
         try:
             session.playground.register_thread()
             trajectory = session.agent.continue_run(
@@ -1171,6 +1254,28 @@ class WebTaskDispatcher:
             )
             review_reporter.finalize("completed", answer)
             logger.info("Review completed for task by %s", agent_name)
+
+            # Pipeline mode: review may trigger new delegations (e.g. report_writer)
+            review_safety = self._check_all_delegations(session)
+            for delegation in review_safety:
+                d_agent = delegation["agent_name"]
+                d_task = delegation["task"]
+                key = (d_agent, d_task)
+                session.dispatched_delegation_keys.add(key)
+                logger.info("Safety-net delegation in review: agent=%s", d_agent)
+                if d_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
+                    self._dispatch_sync_delegation(
+                        session, session_id, message_id,
+                        d_agent, d_task, room,
+                    )
+                else:
+                    bg_task = self._bg_task_registry.create(
+                        session_id, d_agent, d_task
+                    )
+                    self._dispatch_background_subtask(
+                        session_id, bg_task, message_id, room
+                    )
+
         except Exception:
             logger.exception("Review failed for task by %s", agent_name)
             review_reporter.finalize("failed")
@@ -1434,21 +1539,30 @@ class WebTaskDispatcher:
     def _check_all_delegations(
         session: PlaygroundSession,
     ) -> list[dict[str, str]]:
-        """Scan recent trajectory steps for delegate_to_agent tool responses."""
+        """Scan all trajectory steps for undispatched delegate_to_agent calls.
+
+        Acts as a safety net: the on_step interceptor should have dispatched
+        most delegations already.  This method catches any that were missed
+        (e.g. due to on_step exceptions).  Scans all steps and skips those
+        already present in ``session.dispatched_delegation_keys``.
+        """
         if not session.initialized or not session.agent:
             return []
         traj = session.agent.trajectory
         if not traj or not traj.steps:
             return []
+
+        dispatched = session.dispatched_delegation_keys
         delegations: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
-        for step in reversed(traj.steps[-3:]):
+
+        for step in reversed(traj.steps):
             for resp in step.tool_responses:
                 if getattr(resp, "name", "") == "delegate_to_agent":
                     info = (getattr(resp, "meta", None) or {}).get("info", {})
                     if info.get("delegated"):
                         key = (info["agent_name"], info["task"])
-                        if key not in seen:
+                        if key not in seen and key not in dispatched:
                             seen.add(key)
                             delegations.append(
                                 {

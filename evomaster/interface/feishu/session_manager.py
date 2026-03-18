@@ -32,6 +32,7 @@ class PlaygroundSession:
     collected_answers: list[str] = field(default_factory=list)    # 逐个提问：已收集的答案
     pending_reviews: list[dict] = field(default_factory=list)     # 后台任务完成后待审阅队列
     # 每项: {"task_id", "agent_name", "task_description", "result", "status"}
+    dispatched_delegation_keys: set = field(default_factory=set)  # (agent_name, task) 已即时 dispatch 的委派，防止重复
 
 
 class ChatSessionManager:
