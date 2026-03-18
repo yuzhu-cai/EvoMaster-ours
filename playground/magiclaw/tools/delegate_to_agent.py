@@ -95,6 +95,6 @@ class DelegateToAgentTool(BaseTool):
         self.logger.info("Delegation requested: agent=%s, task=%s", agent_name, task[:100])
 
         return (
-            f"委派已接受。任务将由 '{agent_name}' 在后台处理。用户可继续与你对话，你可以用 check_background_tasks 查看进度。",
+            f"委派已接受。任务将由 '{agent_name}' 在后台处理。任务完成后系统会自动通知你审阅结果，请勿轮询 check_background_tasks，直接告知用户任务已启动即可结束本轮对话。",
             {"delegated": True, "agent_name": agent_name, "task": task},
         )
