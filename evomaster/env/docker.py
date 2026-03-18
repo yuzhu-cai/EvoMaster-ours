@@ -430,14 +430,15 @@ class DockerEnv(BaseEnv):
             result = subprocess.run(
                 cmd,
                 capture_output=True,
-                text=True,
                 timeout=timeout,
             )
+            stdout = result.stdout.decode("utf-8", errors="replace")
+            stderr = result.stderr.decode("utf-8", errors="replace")
             return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
+                "stdout": stdout,
+                "stderr": stderr,
                 "exit_code": result.returncode,
-                "output": result.stdout + result.stderr,
+                "output": stdout + stderr,
             }
         except subprocess.TimeoutExpired:
             return {
