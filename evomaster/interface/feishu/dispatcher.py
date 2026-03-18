@@ -534,6 +534,10 @@ class TaskDispatcher:
                     return answer
 
                 # 正常 magiclaw 流程
+                # 包装 on_step：注入委派拦截逻辑（即时 dispatch）
+                on_step = self._make_on_step_with_delegation(
+                    on_step, session, chat_id, message_id, sender_open_id
+                )
                 # 获取记忆系统（如果 playground 已初始化）
                 memory_manager = getattr(session.playground, "_memory_manager", None)
                 memory_config = getattr(session.playground, "_memory_config", {})
@@ -635,10 +639,35 @@ class TaskDispatcher:
                     )
 
                 # === 委派检测 ===
-                # magiclaw 可能通过 delegate_to_agent 工具触发了委派
-                delegations = self._check_all_delegations(session)
-                if delegations:
-                    # 先 finalize magiclaw 的卡片（显示委派消息）
+                # Safety net: 捕获 on_step 拦截器可能遗漏的委派（如 on_step 异常时）
+                safety_delegations = self._check_all_delegations(session)
+                for delegation in safety_delegations:
+                    delegated_agent = delegation["agent_name"]
+                    delegated_task = delegation["task"]
+                    key = (delegated_agent, delegated_task)
+                    session.dispatched_delegation_keys.add(key)
+                    logger.info(
+                        "Safety-net delegation detected: agent=%s, task=%s",
+                        delegated_agent, delegated_task[:100],
+                    )
+                    if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
+                        self._dispatch_sync_delegation(
+                            chat_id, delegated_agent, delegated_task,
+                            message_id, sender_open_id,
+                        )
+                    else:
+                        bg_task = self._bg_task_registry.create(
+                            chat_id, delegated_agent, delegated_task
+                        )
+                        self._dispatch_background_subtask(
+                            chat_id, bg_task, message_id, sender_open_id
+                        )
+
+                # 判断本轮是否有委派（包括 on_step 已 dispatch 的 + safety net）
+                had_delegations = bool(session.dispatched_delegation_keys)
+
+                if had_delegations:
+                    # finalize magiclaw 卡片（显示委派消息）
                     chat_answer = _extract_final_answer(
                         {"trajectory": trajectory, "status": trajectory.status}
                     )
@@ -648,31 +677,10 @@ class TaskDispatcher:
                         except Exception:
                             logger.exception("Failed to finalize chat reporter")
 
-                    for delegation in delegations:
-                        delegated_agent = delegation["agent_name"]
-                        delegated_task = delegation["task"]
-                        logger.info(
-                            "Delegation detected: agent=%s, task=%s",
-                            delegated_agent, delegated_task[:100],
-                        )
-
-                        if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
-                            # === 同步委派（agent_builder 等）：后台线程执行，避免阻塞 magiclaw lock ===
-                            self._dispatch_sync_delegation(
-                                chat_id, delegated_agent, delegated_task,
-                                message_id, sender_open_id,
-                            )
-                        else:
-                            # === 后台委派：非同步 agent 在后台线程运行 ===
-                            bg_task = self._bg_task_registry.create(
-                                chat_id, delegated_agent, delegated_task
-                            )
-                            self._dispatch_background_subtask(
-                                chat_id, bg_task, message_id, sender_open_id
-                            )
-
                     # 处理待审阅的后台任务（在仍持有 lock 时）
                     self._process_pending_reviews(session, chat_id, message_id, sender_open_id)
+                    # 重置追踪集合（为下一轮用户消息做准备）
+                    session.dispatched_delegation_keys.clear()
                     return None
 
                 # 无委派：正常返回
@@ -915,6 +923,72 @@ class TaskDispatcher:
                 task_registry=self._bg_task_registry, chat_id=chat_id
             )
             agent.tools.register(check_tool)
+
+    def _dispatch_delegation_from_step(
+        self, step_record, session, chat_id, message_id, sender_open_id
+    ) -> int:
+        """扫描单个 step 的 tool_responses，立即 dispatch 发现的委派。
+
+        在 on_step 回调中调用——agent.run() 每一步之后、下一步之前触发。
+        Returns: 本次 dispatch 的委派数量。
+        """
+        count = 0
+        for resp in step_record.tool_responses:
+            if getattr(resp, "name", "") != "delegate_to_agent":
+                continue
+            info = (getattr(resp, "meta", None) or {}).get("info", {})
+            if not info.get("delegated"):
+                continue
+
+            agent_name = info["agent_name"]
+            task = info["task"]
+            key = (agent_name, task)
+
+            # 去重：已 dispatch 过就跳过
+            if key in session.dispatched_delegation_keys:
+                continue
+            session.dispatched_delegation_keys.add(key)
+
+            logger.info(
+                "Immediate delegation dispatch: agent=%s, task=%s",
+                agent_name, task[:100],
+            )
+
+            if agent_name in _SYNCHRONOUS_DELEGATION_AGENTS:
+                self._dispatch_sync_delegation(
+                    chat_id, agent_name, task, message_id, sender_open_id
+                )
+            else:
+                bg_task = self._bg_task_registry.create(chat_id, agent_name, task)
+                self._dispatch_background_subtask(
+                    chat_id, bg_task, message_id, sender_open_id
+                )
+            count += 1
+        return count
+
+    def _make_on_step_with_delegation(
+        self, base_on_step, session, chat_id, message_id, sender_open_id
+    ):
+        """包装 on_step 回调，注入委派拦截逻辑。
+
+        返回的 wrapped_on_step 会先执行原始 on_step（如 reporter.on_step），
+        然后扫描当前 step 的 tool_responses 发现委派标记就立即 dispatch。
+        """
+        def wrapped_on_step(step_record, step_number, max_steps):
+            # 1. 先执行原始 on_step（如 reporter.on_step，更新飞书卡片）
+            if base_on_step:
+                try:
+                    base_on_step(step_record, step_number, max_steps)
+                except Exception:
+                    pass
+            # 2. 拦截委派
+            try:
+                self._dispatch_delegation_from_step(
+                    step_record, session, chat_id, message_id, sender_open_id
+                )
+            except Exception:
+                logger.exception("Delegation interceptor failed in on_step")
+        return wrapped_on_step
 
     def _dispatch_sync_delegation(
         self,
@@ -1207,6 +1281,11 @@ class TaskDispatcher:
             except Exception:
                 logger.exception("Failed to create review reporter")
 
+        # 包装 review_on_step：注入委派拦截（pipeline 模式：search → review → report_writer）
+        review_on_step = self._make_on_step_with_delegation(
+            review_on_step, session, chat_id, message_id, sender_open_id
+        )
+
         try:
             # 注册当前线程到 playground（可能是后台线程）
             session.playground.register_thread()
@@ -1225,6 +1304,25 @@ class TaskDispatcher:
                     logger.exception("Failed to finalize review reporter")
 
             logger.info("Review completed for task by %s", agent_name)
+
+            # Pipeline 模式：review 中可能产生新委派（如 search → report_writer）
+            # on_step 拦截器已 dispatch 大部分，此处为 safety net
+            review_safety = self._check_all_delegations(session)
+            for delegation in review_safety:
+                d_agent = delegation["agent_name"]
+                d_task = delegation["task"]
+                key = (d_agent, d_task)
+                session.dispatched_delegation_keys.add(key)
+                logger.info("Safety-net delegation in review: agent=%s", d_agent)
+                if d_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
+                    self._dispatch_sync_delegation(
+                        chat_id, d_agent, d_task, message_id, sender_open_id
+                    )
+                else:
+                    bg_task = self._bg_task_registry.create(chat_id, d_agent, d_task)
+                    self._dispatch_background_subtask(
+                        chat_id, bg_task, message_id, sender_open_id
+                    )
 
         except Exception:
             logger.exception("Review failed for task by %s", agent_name)
@@ -1684,24 +1782,29 @@ class TaskDispatcher:
 
     @staticmethod
     def _check_all_delegations(session) -> list[dict[str, str]]:
-        """检查 magiclaw 最近几步中所有的 delegate_to_agent 调用。
+        """检查 trajectory 中所有未 dispatch 的 delegate_to_agent 调用。
 
-        支持一次 LLM 回复中触发多个委派（并行委派）。
+        作为 safety net：on_step 拦截器应已 dispatch 大部分委派，
+        此方法捕获任何遗漏（如 on_step 异常）。
+        全量扫描所有 steps，跳过已通过 on_step 即时 dispatch 的委派。
         """
         if not session.initialized or not session.agent:
             return []
         traj = session.agent.trajectory
         if not traj or not traj.steps:
             return []
+
+        dispatched = session.dispatched_delegation_keys
         delegations = []
         seen = set()
-        for step in reversed(traj.steps[-3:]):
+
+        for step in reversed(traj.steps):
             for resp in step.tool_responses:
                 if getattr(resp, "name", "") == "delegate_to_agent":
                     info = (getattr(resp, "meta", None) or {}).get("info", {})
                     if info.get("delegated"):
                         key = (info["agent_name"], info["task"])
-                        if key not in seen:
+                        if key not in seen and key not in dispatched:
                             seen.add(key)
                             delegations.append({
                                 "agent_name": info["agent_name"],
