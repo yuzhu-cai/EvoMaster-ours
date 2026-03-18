@@ -21,7 +21,7 @@ from .dedup import MessageDedup
 from .dispatcher import TaskDispatcher
 from .messaging.document import FeishuDocumentWriter
 from .event_handler import parse_event
-from .messaging.sender import send_card_message, send_text_message, patch_card_message
+from .messaging.sender import send_card_message, send_text_message
 from .step_reporter import FeishuStepReporter
 
 logger = logging.getLogger(__name__)
@@ -89,17 +89,29 @@ def _patch_ws_client_for_card_actions() -> None:
             if pl is None:
                 return
 
-        # ACK-first: 立即发送 {"code": 200} 响应，避免飞书 CARD 回调超时 (200340)
-        resp = Response(code=http.HTTPStatus.OK)
+        # Process-then-ACK: 先处理回调获取卡片更新，再通过 ACK 直接更新卡片
+        # （对齐 SDK EVENT 处理模式，避免空 ACK 导致飞书恢复按钮状态）
+        import base64
+        import time as _time
         from lark_oapi.core.json import JSON
-        frame.payload = JSON.marshal(resp).encode(UTF_8)
-        await self._write_message(frame.SerializeToString())
+        from lark_oapi.ws.const import HEADER_BIZ_RT
 
-        # ACK 已发送，再处理回调（handler 可以安全地调用 REST API）
+        resp = Response(code=http.HTTPStatus.OK)
         try:
-            self._event_handler.do_without_validation(pl)
+            start = int(round(_time.time() * 1000))
+            result = self._event_handler.do_without_validation(pl)
+            end = int(round(_time.time() * 1000))
+            header = frame.headers.add()
+            header.key = HEADER_BIZ_RT
+            header.value = str(end - start)
+            if result is not None:
+                resp.data = base64.b64encode(JSON.marshal(result).encode(UTF_8))
         except Exception as e:
             logger.error("Handle CARD message failed: msg_id=%s, err=%s", msg_id, e)
+            resp = Response(code=http.HTTPStatus.INTERNAL_SERVER_ERROR)
+
+        frame.payload = JSON.marshal(resp).encode(UTF_8)
+        await self._write_message(frame.SerializeToString())
 
     lark.ws.Client._handle_data_frame = _patched_handle_data_frame
     logger.info("Patched lark.ws.Client._handle_data_frame to support CARD messages")
@@ -250,11 +262,26 @@ class FeishuBot:
         """处理消息撤回事件（忽略，仅注册以避免 SDK 报错）"""
         pass
 
-    def _handle_card_action(self, data: P2CardActionTrigger) -> None:
+    @staticmethod
+    def _card_update_response(title: str, content: str, template: str):
+        """构建卡片回调响应（通过 ACK 直接更新卡片，替代 REST PATCH）。"""
+        import json as _json
+        from lark_oapi.event.callback.model.p2_card_action_trigger import (
+            P2CardActionTriggerResponse, CallBackCard,
+        )
+        from .messaging.sender import _build_card_json
+
+        card_json = _build_card_json(title, content, template)
+        resp = P2CardActionTriggerResponse()
+        resp.card = CallBackCard()
+        resp.card.type = "raw"
+        resp.card.data = _json.loads(card_json)
+        return resp
+
+    def _handle_card_action(self, data: P2CardActionTrigger):
         """处理卡片按钮点击事件
 
-        返回 None 使 WebSocket 只发送 {"code": 200} ACK。
-        卡片 UI 更新通过 REST API (patch_card_message) 完成。
+        返回 P2CardActionTriggerResponse 通过 ACK 直接更新卡片（按钮立即消失）。
         """
         try:
             event = data.event
@@ -293,7 +320,6 @@ class FeishuBot:
                     original_answer=original_answer,
                 )
 
-                # 通过 REST API 原地更新卡片：保留原始内容，移除按钮，追加状态行
                 content_parts = []
                 if original_answer:
                     content_parts.append(original_answer)
@@ -301,13 +327,7 @@ class FeishuBot:
                 content_parts.append("> ⏳ 方案已确认，正在生成 Agent 文件...")
                 content = "\n\n".join(content_parts)
 
-                patch_card_message(
-                    self._client, card_message_id,
-                    title="⏳ Agent 生成中...",
-                    content=content,
-                    header_template="wathet",
-                )
-                return None
+                return self._card_update_response("⏳ Agent 生成中...", content, "wathet")
 
             elif action == "cancel_agent_build":
                 session_key = action_value.get("session_key", "")
@@ -316,7 +336,6 @@ class FeishuBot:
                     self._dispatcher._session_manager.remove(session_key)
                     logger.info("Cancelled and removed session: %s", session_key)
 
-                # 通过 REST API 原地更新卡片：保留原始内容，移除按钮，追加取消状态
                 original_answer = action_value.get("original_answer", "")
                 content_parts = []
                 if original_answer:
@@ -325,13 +344,7 @@ class FeishuBot:
                 content_parts.append("> ❌ Agent 生成已取消。")
                 content = "\n\n".join(content_parts)
 
-                patch_card_message(
-                    self._client, card_message_id,
-                    title="❌ 已取消",
-                    content=content,
-                    header_template="red",
-                )
-                return None
+                return self._card_update_response("❌ 已取消", content, "red")
 
             elif action == "answer_question":
                 session_key = action_value.get("session_key", "")
@@ -349,7 +362,6 @@ class FeishuBot:
                         action_type="answer_question",
                     )
 
-                # 通过 REST API 即时更新卡片：移除按钮，显示已选择的选项
                 original_question = action_value.get("original_question", "")
                 parts = []
                 if original_question:
@@ -359,13 +371,7 @@ class FeishuBot:
                 parts.append("\n> 正在继续处理...")
                 content = "\n\n".join(parts)
 
-                patch_card_message(
-                    self._client, card_message_id,
-                    title="💬 已回复",
-                    content=content,
-                    header_template="wathet",
-                )
-                return None
+                return self._card_update_response("💬 已回复", content, "wathet")
 
             else:
                 logger.warning("Unknown card action: %s", action)

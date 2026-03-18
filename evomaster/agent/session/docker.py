@@ -96,6 +96,37 @@ class DockerSession(BaseSession):
         self._is_open = False
         self.logger.info("Session closed")
 
+    def _try_recover_from_timeout(self, interrupt_timeout: float = 5.0) -> bool:
+        """尝试从超时状态恢复。
+
+        1. 重新检查 PS1 — 上一条命令可能已经在超时后自然完成了
+        2. 如果仍未完成，发送 C-c 中断，等待 PS1
+        3. 成功恢复返回 True，否则返回 False
+        """
+        # Step 1: re-poll — 命令可能已经结束了
+        logs = self._env.get_tmux_logs()
+        matches = list(PS1_PATTERN.finditer(logs))
+        if len(matches) > self._last_ps1_count:
+            self._last_ps1_count = len(matches)
+            self._prev_command_status = "completed"
+            return True
+
+        # Step 2: 发送 C-c 中断
+        self._env.tmux_send_keys("C-c", enter=False)
+
+        # Step 3: 等待 PS1 出现（最多 interrupt_timeout 秒）
+        start = time.time()
+        while time.time() - start < interrupt_timeout:
+            time.sleep(0.5)
+            logs = self._env.get_tmux_logs()
+            matches = list(PS1_PATTERN.finditer(logs))
+            if len(matches) > self._last_ps1_count:
+                self._last_ps1_count = len(matches)
+                self._prev_command_status = "completed"
+                return True
+
+        return False
+
     def exec_bash(
         self,
         command: str,
@@ -138,11 +169,14 @@ class DockerSession(BaseSession):
         else:
             # 正常命令执行
             if self._prev_command_status != "completed" and command != "":
-                return {
-                    "stdout": f"[Previous command is still running. Use is_input=true to interact.]",
-                    "stderr": "",
-                    "exit_code": 1,
-                }
+                # 尝试自动恢复：先看命令是否已完成，否则发送 C-c 中断
+                recovered = self._try_recover_from_timeout()
+                if not recovered:
+                    return {
+                        "stdout": f"[Previous command is still running. Use is_input=true to interact.]",
+                        "stderr": "",
+                        "exit_code": 1,
+                    }
             
             if command != "":
                 self._env.tmux_send_keys(command, enter=True)

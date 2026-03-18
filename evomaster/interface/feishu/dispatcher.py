@@ -1536,7 +1536,7 @@ class TaskDispatcher:
             parts.append("---")
             parts.append(_status_line[action_type])
             _patch_card(
-                self._client, card_message_id,
+                self._feishu_client, card_message_id,
                 title=_titles[action_type],
                 content="\n\n".join(parts),
                 header_template=_templates[action_type],
