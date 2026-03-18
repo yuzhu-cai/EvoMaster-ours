@@ -33,6 +33,8 @@ from lark_oapi.api.docx.v1 import (
     UpdateTextElementsRequest,
 )
 from lark_oapi.api.drive.v1 import (
+    BaseMember,
+    CreatePermissionMemberRequest,
     Owner,
     PatchPermissionPublicRequest,
     PermissionPublic,
@@ -124,15 +126,15 @@ class FeishuDocumentWriter:
             logger.exception("Exception creating document")
             return None
 
-    def set_public_readable(self, document_id: str) -> bool:
-        """设置文档链接可读权限"""
+    def set_public_editable(self, document_id: str) -> bool:
+        """设置文档链接可编辑权限（互联网任何人可编辑）"""
         request = (
             PatchPermissionPublicRequest.builder()
             .token(document_id)
             .type("docx")
             .request_body(
                 PermissionPublicRequest.builder()
-                .link_share_entity("anyone_readable")
+                .link_share_entity("anyone_editable")
                 .external_access(True)
                 .build()
             )
@@ -160,6 +162,7 @@ class FeishuDocumentWriter:
         """将文档所有权转移给指定用户
 
         转移后用户可以自行管理（编辑、删除）该文档。
+        若转移失败（如外部用户），自动降级为添加 full_access 协作者。
 
         Args:
             document_id: 文档 ID
@@ -183,16 +186,61 @@ class FeishuDocumentWriter:
             response = self._client.drive.v1.permission_member.transfer_owner(request)
             if not response.success():
                 logger.warning(
-                    "Failed to transfer doc ownership: code=%s, msg=%s",
+                    "Failed to transfer doc ownership (code=%s, msg=%s), "
+                    "falling back to add_collaborator",
                     response.code, response.msg,
                 )
-                return False
+                return self.add_collaborator(document_id, user_open_id)
             logger.info(
                 "Transferred doc %s ownership to %s", document_id, user_open_id
             )
             return True
         except Exception:
-            logger.exception("Exception transferring document ownership")
+            logger.exception("Exception transferring document ownership, trying add_collaborator")
+            return self.add_collaborator(document_id, user_open_id)
+
+    def add_collaborator(
+        self, document_id: str, user_open_id: str, perm: str = "full_access"
+    ) -> bool:
+        """添加用户为文档协作者
+
+        适用于外部用户（无法 transfer_ownership 时的降级方案）。
+
+        Args:
+            document_id: 文档 ID
+            user_open_id: 目标用户的 open_id
+            perm: 权限级别 ("view" / "edit" / "full_access")
+        """
+        request = (
+            CreatePermissionMemberRequest.builder()
+            .token(document_id)
+            .type("docx")
+            .need_notification(False)
+            .request_body(
+                BaseMember.builder()
+                .member_type("openid")
+                .member_id(user_open_id)
+                .perm(perm)
+                .build()
+            )
+            .build()
+        )
+
+        try:
+            response = self._client.drive.v1.permission_member.create(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to add collaborator: code=%s, msg=%s",
+                    response.code, response.msg,
+                )
+                return False
+            logger.info(
+                "Added %s as %s collaborator on doc %s",
+                user_open_id, perm, document_id,
+            )
+            return True
+        except Exception:
+            logger.exception("Exception adding collaborator to document")
             return False
 
     def append_blocks(self, document_id: str, blocks: list[Block]) -> bool:

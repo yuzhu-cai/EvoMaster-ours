@@ -404,7 +404,7 @@ class FeishuStepReporter:
                 return
 
             self._document_id = doc_id
-            self._doc_writer.set_public_readable(doc_id)
+            self._doc_writer.set_public_editable(doc_id)
             self._document_url = self._doc_writer.get_document_url(doc_id)
 
             # 转移文档所有权给发送消息的用户

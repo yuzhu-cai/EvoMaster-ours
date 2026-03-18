@@ -173,7 +173,7 @@ class FeishuDocWriteTool(BaseTool):
             return "Failed to create document.", {"error": "create_failed"}
 
         # 设置公开可读
-        self._writer.set_public_readable(doc_id)
+        self._writer.set_public_editable(doc_id)
 
         # 转移所有权给发送者
         if self._sender_open_id:
