@@ -50,6 +50,7 @@ agents:
     finish_on_text_response: true
     tools:
       builtin: ["*"]
+      mcp: "mcp_config.json"
       google_search: "google_search"   # 自定义工具：google_search 或 ai_search
       ai_search: "ai_search"   # 自定义工具：google_search 或 ai_search
       web_fetch: "web_fetch"  # 网页抓取工具（可选）
@@ -60,6 +61,9 @@ agents:
       memory_search: "memory_search"
       memory_save: "memory_save"
       memory_forget: "memory_forget"
+
+    skills:
+      - "bohrium-oss"
       
     context:
       max_tokens: 128000

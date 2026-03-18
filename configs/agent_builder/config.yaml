@@ -84,12 +84,6 @@ agents:
     system_prompt_file: "prompts/builder_system_prompt.txt"
     user_prompt_file: "prompts/builder_user_prompt.txt"
 
-# ============================================
-# MCP 配置
-# ============================================
-mcp:
-  config_file: "mcp_config.json"
-  enabled: False
 
 # ============================================
 # Session 配置
@@ -121,26 +115,6 @@ session:
     auto_remove: false
     timeout: 300
 
-# ============================================
-# Env 配置
-# ============================================
-env:
-  cluster:
-    debug_pool:
-      type: "cpu"
-      max_concurrent: 1
-    train_pool:
-      type: "cpu"
-      max_concurrent: 1
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
 
 # ============================================
 # LLM 输出显示配置
@@ -157,12 +131,4 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: null
   console: true
-  log_path: "./logs/evomaster.log"
 
-# ============================================
-# 其他配置
-# ============================================
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false
