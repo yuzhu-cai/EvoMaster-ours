@@ -507,7 +507,7 @@ def patch_card_message(
             )
             return False
 
-        logger.debug("Card message patched: %s", message_id)
+        logger.info("Card message patched: %s", message_id)
         return True
 
     except Exception:

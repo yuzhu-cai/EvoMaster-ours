@@ -13,6 +13,7 @@ import logging
 import shutil
 import subprocess
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, Optional
@@ -35,7 +36,7 @@ class ContainerPoolConfig(BaseModel):
     network_mode: str = Field(default="host", description="网络模式")
     env_vars: dict[str, str] = Field(default_factory=dict, description="环境变量")
     container_name_prefix: str = Field(default="evopool", description="容器名前缀")
-    cleanup_workspace: bool = Field(default=True, description="释放时是否清理 workspace")
+    cleanup_workspace: bool = Field(default=False, description="释放时是否清理 workspace（注意：workspace_host_path 是用户目录，包含所有 agent 的 run 目录）")
 
 
 @dataclass
@@ -60,7 +61,7 @@ class ContainerPool:
         self._config = config
         self._shared_mount_host = shared_mount_host
         self._containers: list[ContainerInfo] = []
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._counter = 0  # 容器编号计数器
         self._started = False
 
@@ -87,12 +88,17 @@ class ContainerPool:
         # 清理上次进程遗留的同前缀容器，避免名字冲突
         self._cleanup_stale_containers()
 
-        for _ in range(self._config.initial_size):
-            try:
-                info = self._create_container()
-                self._containers.append(info)
-            except Exception:
-                logger.exception("Failed to pre-create container")
+        # 并行创建容器，大幅缩短启动时间
+        n = self._config.initial_size
+        workers = min(n, 16)  # 限制并发数，避免打满 Docker daemon
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(self._create_container): i for i in range(n)}
+            for future in as_completed(futures):
+                try:
+                    info = future.result()
+                    self._containers.append(info)
+                except Exception:
+                    logger.exception("Failed to pre-create container")
 
         self._started = True
         logger.info(
@@ -271,9 +277,10 @@ class ContainerPool:
                 logger.exception("Failed to remove stale container: %s", name)
 
     def _create_container(self) -> ContainerInfo:
-        """创建一个新的池化容器（调用者需持有 lock 或在 start() 中调用）"""
-        self._counter += 1
-        name = f"{self._config.container_name_prefix}-{self._counter}"
+        """创建一个新的池化容器（线程安全）"""
+        with self._lock:
+            self._counter += 1
+            name = f"{self._config.container_name_prefix}-{self._counter}"
 
         cmd = [
             "docker", "run", "-d",

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,12 @@ class FeishuStepReporter:
         self._task_text: str = ""
         self._start_time: float = 0.0
         self._step_count: int = 0
+        self._max_steps: int = 0
+
+        # 心跳
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_interval: float = 15.0
 
         # 飞书文档（完整轨迹）
         self._doc_writer = document_writer
@@ -102,12 +109,53 @@ class FeishuStepReporter:
             return True
         return False
 
+    def start_heartbeat(self, interval: float = 15.0) -> None:
+        """启动心跳线程，定期更新卡片的 elapsed 时间。"""
+        if self._heartbeat_thread is not None:
+            return
+        self._heartbeat_interval = interval
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop, daemon=True, name="card-heartbeat"
+        )
+        self._heartbeat_thread.start()
+
+    def stop_heartbeat(self) -> None:
+        """停止心跳线程。"""
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread is not None:
+            self._heartbeat_thread.join(timeout=3)
+            self._heartbeat_thread = None
+
+    def _heartbeat_loop(self) -> None:
+        """心跳循环：每 interval 秒 patch 一次卡片更新 elapsed。"""
+        while not self._heartbeat_stop.wait(self._heartbeat_interval):
+            if self._card_message_id is None:
+                continue
+            try:
+                content = self._build_progress_content(
+                    self._step_count, self._max_steps or 0, running=True
+                )
+                step_info = (
+                    f"Step {self._step_count}/{self._max_steps}"
+                    if self._step_count > 0
+                    else "..."
+                )
+                self._patch(
+                    title=f"🤖 Agent 执行中... ({step_info})",
+                    content=content,
+                    template="wathet",
+                )
+            except Exception:
+                logger.debug("Heartbeat patch failed", exc_info=True)
+
     def on_step(self, step_record: Any, step_number: int, max_steps: int) -> None:
         """每步回调：更新卡片进度 + 向文档写入完整内容。"""
         if self._card_message_id is None:
             return
 
         self._step_count = step_number
+        self._max_steps = max_steps
 
         # 检查 TODO 完成标记（通过 think 工具的 PROGRESS 标记）
         self._check_todo_progress(step_record)
@@ -137,6 +185,8 @@ class FeishuStepReporter:
             final_answer: 最终回答文本
             actions: 可选按钮列表，格式同 build_card_with_actions
         """
+        self.stop_heartbeat()
+
         if self._card_message_id is None:
             return
 

@@ -752,13 +752,11 @@ class TaskDispatcher:
                 playground.cleanup()
             except Exception:
                 logger.exception("Subtask cleanup failed")
-            # 释放容器回池（非会话级子任务不走 session_manager 清理）
-            pool_info = getattr(playground, '_pool_container_info', None)
-            if pool_info and self._container_pool:
-                try:
-                    self._container_pool.release(pool_info.container_id)
-                except Exception:
-                    logger.exception("Failed to release subtask container")
+            # 注意：不释放容器回池。
+            # 容器按用户分配，在 bot 生命周期内持久存在，
+            # 由 ContainerPool.shutdown() 统一释放。
+            # 此处释放会导致: (1) rmtree 删除整个用户目录，
+            # (2) pkill 杀死同容器内其他仍在运行的 agent 进程。
 
     def _inject_feishu_tools(self, playground) -> None:
         """将飞书特有工具注入 playground 的所有 agent。"""
@@ -1136,6 +1134,7 @@ class TaskDispatcher:
                     bg_reporter.send_initial_card(
                         f"🔄 [{bg_task.agent_name}] {bg_task.task_description[:200]}"
                     )
+                    bg_reporter.start_heartbeat(interval=15)
                 except Exception:
                     logger.exception("Failed to create background reporter")
 
@@ -1154,7 +1153,10 @@ class TaskDispatcher:
                     try:
                         bg_reporter.on_step(step_record, step_number, max_steps)
                     except Exception:
-                        pass
+                        logger.warning(
+                            "bg_reporter.on_step failed for task_id=%s",
+                            bg_task.task_id, exc_info=True,
+                        )
 
             try:
                 answer = self._run_subtask(
@@ -1165,6 +1167,7 @@ class TaskDispatcher:
 
                 if bg_reporter:
                     try:
+                        bg_reporter.stop_heartbeat()
                         bg_reporter.finalize("completed", answer)
                     except Exception:
                         logger.exception("Failed to finalize background reporter")
@@ -1177,6 +1180,7 @@ class TaskDispatcher:
                 )
                 if bg_reporter:
                     try:
+                        bg_reporter.stop_heartbeat()
                         bg_reporter.finalize("failed")
                     except Exception:
                         pass
@@ -1513,6 +1517,31 @@ class TaskDispatcher:
         Args:
             action_type: "confirm" = Phase 2 builder run, "answer_question" = continue planner
         """
+        # 立即移除 Phase 1 卡片上的按钮（此处在线程池中运行，callback 已完成，
+        # 避免在 WebSocket callback 中 REST patch 与 ACK 竞态）
+        if card_message_id and action_type in ("confirm", "cancel"):
+            from .messaging.sender import patch_card_message as _patch_card
+            _status_line = {
+                "confirm": "> ⏳ 方案已确认，正在生成 Agent 文件...",
+                "cancel": "> ❌ Agent 生成已取消。",
+            }
+            _titles = {
+                "confirm": "⏳ Agent 生成中...",
+                "cancel": "❌ 已取消",
+            }
+            _templates = {"confirm": "wathet", "cancel": "red"}
+            parts = []
+            if original_answer:
+                parts.append(original_answer)
+            parts.append("---")
+            parts.append(_status_line[action_type])
+            _patch_card(
+                self._client, card_message_id,
+                title=_titles[action_type],
+                content="\n\n".join(parts),
+                header_template=_templates[action_type],
+            )
+
         session = self._session_manager.get(session_key)
         if session is None or not session.initialized:
             logger.warning(
