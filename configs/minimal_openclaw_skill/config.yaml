@@ -69,26 +69,6 @@ agents:
     system_prompt_file: "prompts/system_prompt.txt"
     user_prompt_file: "prompts/user_prompt.txt"
 
-# ============================================
-# MCP 配置
-# ============================================
-mcp:
-  config_file: "mcp_config.json"
-  enabled: False
-
-
-
-# ============================================
-# Memory 配置（跨会话持久化记忆）
-# ============================================
-memory:
-  enabled: true
-  db_path: "./data/memory/memories.db"
-  auto_capture: true          # 自动从对话中提取记忆（规则匹配）
-  auto_recall: true           # 自动在对话开始时注入相关记忆
-  recall_limit: 5             # 自动召回的最大记忆数
-  max_memories_per_user: 500  # 每用户最大记忆数
-  capture_with_llm: false     # 是否用 LLM 做更精准的记忆提取
 
 # ============================================
 # Session 配置
@@ -117,26 +97,6 @@ session:
     auto_remove: false
     timeout: 300
 
-# ============================================
-# Env 配置
-# ============================================
-env:
-  cluster:
-    debug_pool:
-      type: "cpu"
-      max_concurrent: 1
-    train_pool:
-      type: "cpu"
-      max_concurrent: 1
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
 
 # ============================================
 # LLM 输出显示配置
@@ -153,12 +113,3 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: null
   console: true
-  log_path: "./logs/evomaster.log"
-
-# ============================================
-# 其他配置
-# ============================================
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false

@@ -53,7 +53,7 @@ Complexity shouldn't be a barrier to innovation. EvoMaster is designed for porta
 Don't start from scratch. EvoMaster grants you immediate access to state-of-the-art scientific agents and allows you to apply their architectures to new domains.
 
 * **Out-of-the-box Access:** Quickly deploy agents from the **[SciMaster](https://scimaster.bohrium.com/chat/)** series.
-* **Domain Adaptation:** Easily retarget successful SciMaster series agents from to other scientific fields such as Biology, Material Science, etc.
+* **Domain Adaptation:** Easily retarget successful SciMaster series agents to other scientific fields such as Biology, Material Science, etc.
 
 ---
 
@@ -69,7 +69,7 @@ EvoMaster is the engine behind the cutting-edge **SciMaster** family of agents. 
 | **PhysMaster** | Physics Research & Reasoning | [ArXiv:2512.19799](https://arxiv.org/abs/2512.19799) |
 | **Browse-Master**| Web Search Agent | [ArXiv:2508.09129](https://arxiv.org/abs/2508.09129)|
 
-(More SciMaster Series Agents comming soon...)
+(More SciMaster Series Agents coming soon...)
 
 ---
 
@@ -133,12 +133,12 @@ EvoMaster/
 | `minimal_skill_task` | RAG-based Analyze→Search→Summarize | [README](./playground/minimal_skill_task/README.md) |
 | `x_master` | 4-phase parallel workflow | [README](./playground/x_master/README.md) |
 | `ML-Master 2.0` |  Complex agentic science multi-agent framework for Autonomous Machine Learning| [README](./playground/ml_master_2/README.md) |
-| `browse_master` | Web Search Agent | [README](./playground/browse_master/README_CN.md) |
+| `browse_master` | Web Search Agent | [README](./playground/browse_master/README.md) |
 
 ## 🚀 Quick Start
 
 ### Use your API key
-Open the config file at `configs/[playground name]` and fill in the corresponding blank. For example, if you want to run minimal_multi_agent with Deepseek-V3.2, open `configs/minimal_multi_agent/deepseek-v3.2-example.yaml` and modify:
+Open the config file at `configs/[playground name]` and fill in the corresponding blanks. For example, if you want to run `minimal_multi_agent` with Deepseek-V3.2, open `configs/minimal_multi_agent/deepseek-v3.2-example.yaml` and modify:
 ```bash
   local_sglang:
     provider: "deepseek"
@@ -146,7 +146,7 @@ Open the config file at `configs/[playground name]` and fill in the correspondin
     api_key: "dummy"
     base_url: "http://192.168.2.110:18889/v1"
 ```
-You can also use the `openai` config if your API supports OpenAI's format. Remember to modify the llm configuration of the following Agent at the same time
+You can also use the `openai` config if your API supports OpenAI's format. Remember to update the subsequent Agent's LLM configuration accordingly.
 
 ### Using Environment Variables (.env)
 
@@ -212,6 +212,14 @@ python run.py --agent minimal --config configs/minimal/deepseek-v3.2-example.yam
 ```bash
 python run.py --agent minimal --config configs/minimal/deepseek-v3.2-example.yaml --task "Describe what you see in these images" --images /path/to/image1.png /path/to/image2.jpg
 ```
+
+### Single Agent with TypeScript-format skill
+```bash
+python run.py --agent minimal_openclaw_skill --config configs/minimal_openclaw_skill/config.yaml --task "Summarize the content of this Feishu document <your-feishu-doc-url>"
+```
+
+### Bohrium Platform Scientific Computing Tools
+Please refer to [minimal_bohrium README](./playground/minimal_bohrium/README.md)
 
 ### Multi-Agent System
 ```bash
@@ -284,7 +292,7 @@ Create a venv and run with uv: `uv venv && source .venv/Scripts/activate` (Windo
 
 ## 🤝 Citation
 
-If you use EvoMaster or the SciMaster series agents in your research, please feel free to give us a star and citatiton (BibTeX will be updated upon the release of the paper).
+If you use EvoMaster or the SciMaster series agents in your research, please feel free to give us a star and citation (BibTeX will be updated upon the release of the paper).
 
 
 ## 📬 Contact

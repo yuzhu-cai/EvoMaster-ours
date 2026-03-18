@@ -119,15 +119,7 @@ agents:
     system_prompt_file: "prompts/metric/system_prompt.txt"
     user_prompt_file: "prompts/metric/user_prompt.txt"
 
-# ============================================
-# MCP Configuration
-# ============================================
-mcp:
-  # MCP configuration file path (relative to config_dir or absolute path)
-  config_file: "mcp_config.json"
 
-  # Whether to enable MCP (optional, default true)
-  enabled: False
 
 # ============================================
 # Session Configuration
@@ -204,38 +196,6 @@ session:
     timeout: 300
 
 # ============================================
-# Environment Configuration
-# ============================================
-env:
-  # Cluster configuration (local minimal mode)
-  cluster:
-    debug_pool:
-      type: "cpu"
-      max_concurrent: 1
-    train_pool:
-      type: "cpu"
-      max_concurrent: 1
-
-  # Docker environment defaults (local mode)
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
-
-  # Job scheduler configuration
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
-
-# ============================================
-# System Prompt Configuration
-# ============================================
-# Load system prompt from file for easier maintenance and version control
-system_prompt_file: "prompts/system_prompt.txt"
-
-# ============================================
 # LLM Output Display Configuration
 # ============================================
 llm_output:
@@ -254,9 +214,7 @@ logging:
   file: null
   console: true
 
-  # Path to save log file after run completion
-  # If null, no log file is persisted
-  log_path: "./logs/evomaster.log"
+
 
 # ============================================
 # ml_master Specific Configuration
@@ -271,10 +229,4 @@ mlebench:
   grade_output: "mlebench_grade.json"
   grade_overwrite: true
 
-# ============================================
-# Other Configuration
-# ============================================
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false
+

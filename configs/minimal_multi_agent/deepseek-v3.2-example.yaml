@@ -81,13 +81,6 @@ agents:
     user_prompt_file: "prompts/coding_user_prompt.txt"
 
 # ============================================
-# MCP 配置（高级选项，per-agent MCP 通过 tools.mcp 启用）
-# ============================================
-# mcp:
-#   path_adaptor: "calculation"
-#   calculation_servers: ["server1"]
-
-# ============================================
 # Session 配置
 # ============================================
 session:
@@ -165,37 +158,8 @@ session:
     # 超时时间（秒）在需要长时间执行的任务中，需要适当延长超时时间。
     timeout: 300
 
-# ============================================
-# Env 配置（环境管理）
-# ============================================
-env:
-  # 集群配置（本地模式，最小化）
-  cluster:
-    debug_pool:
-      type: "cpu"
-      max_concurrent: 1
-    train_pool:
-      type: "cpu"
-      max_concurrent: 1
 
-  # Docker 配置（本地模式）
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
 
-  # 作业调度配置
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
-
-# ============================================
-# 系统提示词配置
-# ============================================
-# 从文件加载 system prompt（方便维护和版本控制）
-system_prompt_file: "prompts/system_prompt.txt"
 
 # ============================================
 # LLM 输出显示配置
@@ -215,16 +179,4 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: null
   console: true
-  
-  # 日志文件保存路径（程序运行完成后保存）
-  # 如果为 null，则不保存日志文件
-  # 如果设置了路径，程序运行完成后会将日志保存到该路径
-  log_path: "./logs/evomaster.log"
 
-# ============================================
-# 其他配置
-# ============================================
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false

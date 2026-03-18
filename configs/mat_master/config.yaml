@@ -158,34 +158,6 @@ session:
     timeout: 300
 
 # ============================================
-# Env 配置
-# ============================================
-env:
-  cluster:
-    debug_pool:
-      type: "cpu"
-      max_concurrent: 1
-    train_pool:
-      type: "cpu"
-      max_concurrent: 1
-
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
-
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
-
-# ============================================
-# 系统提示词配置（顶层）
-# ============================================
-system_prompt_file: "prompts/system_prompt.txt"
-
-# ============================================
 # LLM 输出与日志
 # ============================================
 llm_output:
@@ -197,9 +169,6 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: null
   console: true
-  log_path: "./logs/evomaster.log"
 
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false
+
+

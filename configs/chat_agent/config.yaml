@@ -75,13 +75,6 @@ agents:
     user_prompt_file: "prompts/user_prompt.txt"
 
 # ============================================
-# MCP 配置
-# ============================================
-mcp:
-  config_file: "mcp_config.json"
-  enabled: False
-
-# ============================================
 # AI Search 配置（Perplexity 风格综合搜索）
 # ============================================
 ai_search:
@@ -142,27 +135,6 @@ session:
     timeout: 300
 
 # ============================================
-# Env 配置
-# ============================================
-env:
-  cluster:
-    debug_pool:
-      type: "cpu"
-      max_concurrent: 1
-    train_pool:
-      type: "cpu"
-      max_concurrent: 1
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
-
-# ============================================
 # LLM 输出显示配置
 # ============================================
 llm_output:
@@ -177,12 +149,5 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: null
   console: true
-  log_path: "./logs/evomaster.log"
 
-# ============================================
-# 其他配置
-# ============================================
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false
+

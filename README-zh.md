@@ -221,6 +221,9 @@ python run.py --agent minimal --config configs/minimal/deepseek-v3.2-example.yam
 python run.py --agent minimal_openclaw_skill --config configs/minimal_openclaw_skill/config.yaml --task "总结这个飞书文档的内容 <你的飞书文档网址>"
 ```
 
+### 玻尔（Bohrium）平台科学计算工具
+请参考[minimal_bohrium README](./playground/minimal_bohrium/README_CN.md)
+
 ### 多智能体系统
 ```bash
 python run.py --agent minimal_multi_agent --config configs/minimal_multi_agent/deepseek-v3.2-example.yaml --task "Write a Python program that implements the following features: Read a text file (create a sample file if it doesn't exist). Count the occurrences of each word in the file. Sort the results by frequency in descending order. Save the results to a new file named word_count.txt. Output the top 10 most common words to the terminal."
