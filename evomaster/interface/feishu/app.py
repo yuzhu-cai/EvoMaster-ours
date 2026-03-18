@@ -13,12 +13,7 @@ from typing import Optional
 
 import lark_oapi as lark
 from lark_oapi.api.im.v1 import P2ImMessageReceiveV1, P2ImMessageMessageReadV1, P2ImMessageRecalledV1
-from lark_oapi.event.callback.model.p2_card_action_trigger import (
-    P2CardActionTrigger,
-    P2CardActionTriggerResponse,
-    CallBackCard,
-    CallBackToast,
-)
+from lark_oapi.event.callback.model.p2_card_action_trigger import P2CardActionTrigger
 
 from .messaging.client import create_feishu_client
 from .config import FeishuBotConfig
@@ -26,7 +21,7 @@ from .dedup import MessageDedup
 from .dispatcher import TaskDispatcher
 from .messaging.document import FeishuDocumentWriter
 from .event_handler import parse_event
-from .messaging.sender import send_card_message, send_text_message
+from .messaging.sender import send_card_message, send_text_message, patch_card_message
 from .step_reporter import FeishuStepReporter
 
 logger = logging.getLogger(__name__)
@@ -50,14 +45,12 @@ def _patch_ws_client_for_card_actions() -> None:
 
     async def _patched_handle_data_frame(self, frame):
         from lark_oapi.ws.const import (
-            HEADER_MESSAGE_ID, HEADER_TRACE_ID,
-            HEADER_SUM, HEADER_SEQ, HEADER_TYPE, HEADER_BIZ_RT,
+            HEADER_MESSAGE_ID,
+            HEADER_SUM, HEADER_SEQ, HEADER_TYPE,
         )
         from lark_oapi.core.const import UTF_8
         from lark_oapi.ws.model import Response
-        import base64
         import http
-        import time as _time
 
         hs = frame.headers  # protobuf RepeatedCompositeFieldContainer
         type_ = None
@@ -96,23 +89,17 @@ def _patch_ws_client_for_card_actions() -> None:
             if pl is None:
                 return
 
+        # ACK-first: 立即发送 {"code": 200} 响应，避免飞书 CARD 回调超时 (200340)
         resp = Response(code=http.HTTPStatus.OK)
-        try:
-            start = int(round(_time.time() * 1000))
-            result = self._event_handler.do_without_validation(pl)
-            end = int(round(_time.time() * 1000))
-            header = hs.add()
-            header.key = HEADER_BIZ_RT
-            header.value = str(end - start)
-            if result is not None:
-                from lark_oapi.core.json import JSON
-                resp.data = base64.b64encode(JSON.marshal(result).encode(UTF_8))
-        except Exception as e:
-            logger.error("Handle CARD message failed: msg_id=%s, err=%s", msg_id, e)
-            resp = Response(code=http.HTTPStatus.INTERNAL_SERVER_ERROR)
-
         from lark_oapi.core.json import JSON
         frame.payload = JSON.marshal(resp).encode(UTF_8)
+        await self._write_message(frame.SerializeToString())
+
+        # ACK 已发送，再处理回调（handler 可以安全地调用 REST API）
+        try:
+            self._event_handler.do_without_validation(pl)
+        except Exception as e:
+            logger.error("Handle CARD message failed: msg_id=%s, err=%s", msg_id, e)
 
     lark.ws.Client._handle_data_frame = _patched_handle_data_frame
     logger.info("Patched lark.ws.Client._handle_data_frame to support CARD messages")
@@ -263,10 +250,12 @@ class FeishuBot:
         """处理消息撤回事件（忽略，仅注册以避免 SDK 报错）"""
         pass
 
-    def _handle_card_action(self, data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
-        """处理卡片按钮点击事件"""
-        resp = P2CardActionTriggerResponse()
+    def _handle_card_action(self, data: P2CardActionTrigger) -> None:
+        """处理卡片按钮点击事件
 
+        返回 None 使 WebSocket 只发送 {"code": 200} ACK。
+        卡片 UI 更新通过 REST API (patch_card_message) 完成。
+        """
         try:
             event = data.event
             action_value = event.action.value or {}
@@ -286,11 +275,11 @@ class FeishuBot:
 
                 if not session_key or not agent_name:
                     logger.warning("Missing session_key or agent_name in card action")
-                    toast = CallBackToast()
-                    toast.type = "error"
-                    toast.content = "参数缺失，请重新发起 /agent agent_builder 命令"
-                    resp.toast = toast
-                    return resp
+                    send_text_message(
+                        self._client, chat_id,
+                        "参数缺失，请重新发起 /agent agent_builder 命令",
+                    )
+                    return None
 
                 original_answer = action_value.get("original_answer", "")
 
@@ -304,9 +293,7 @@ class FeishuBot:
                     original_answer=original_answer,
                 )
 
-                # 通过回调响应原地更新卡片：保留原始内容，移除按钮，追加状态行
-                import json
-                from .messaging.sender import _build_card_json
+                # 通过 REST API 原地更新卡片：保留原始内容，移除按钮，追加状态行
                 content_parts = []
                 if original_answer:
                     content_parts.append(original_answer)
@@ -314,33 +301,22 @@ class FeishuBot:
                 content_parts.append("> ⏳ 方案已确认，正在生成 Agent 文件...")
                 content = "\n\n".join(content_parts)
 
-                card_dict = json.loads(_build_card_json(
+                patch_card_message(
+                    self._client, card_message_id,
                     title="⏳ Agent 生成中...",
                     content=content,
                     header_template="wathet",
-                ))
-                card = CallBackCard()
-                card.type = "raw"
-                card.data = card_dict
-                resp.card = card
-
-                toast = CallBackToast()
-                toast.type = "info"
-                toast.content = "正在生成 Agent..."
-                resp.toast = toast
-                return resp
+                )
+                return None
 
             elif action == "cancel_agent_build":
                 session_key = action_value.get("session_key", "")
-                agent_name = action_value.get("agent_name", "")
 
                 if session_key:
                     self._dispatcher._session_manager.remove(session_key)
                     logger.info("Cancelled and removed session: %s", session_key)
 
-                # 通过回调响应原地更新卡片：保留原始内容，移除按钮，追加取消状态
-                import json
-                from .messaging.sender import _build_card_json
+                # 通过 REST API 原地更新卡片：保留原始内容，移除按钮，追加取消状态
                 original_answer = action_value.get("original_answer", "")
                 content_parts = []
                 if original_answer:
@@ -349,21 +325,13 @@ class FeishuBot:
                 content_parts.append("> ❌ Agent 生成已取消。")
                 content = "\n\n".join(content_parts)
 
-                card_dict = json.loads(_build_card_json(
+                patch_card_message(
+                    self._client, card_message_id,
                     title="❌ 已取消",
                     content=content,
                     header_template="red",
-                ))
-                card = CallBackCard()
-                card.type = "raw"
-                card.data = card_dict
-                resp.card = card
-
-                toast = CallBackToast()
-                toast.type = "info"
-                toast.content = "已取消"
-                resp.toast = toast
-                return resp
+                )
+                return None
 
             elif action == "answer_question":
                 session_key = action_value.get("session_key", "")
@@ -381,10 +349,7 @@ class FeishuBot:
                         action_type="answer_question",
                     )
 
-                # 即时更新卡片：移除按钮，显示已选择的选项（保留原始问题）
-                import json
-                from .messaging.sender import _build_card_json
-
+                # 通过 REST API 即时更新卡片：移除按钮，显示已选择的选项
                 original_question = action_value.get("original_question", "")
                 parts = []
                 if original_question:
@@ -394,37 +359,29 @@ class FeishuBot:
                 parts.append("\n> 正在继续处理...")
                 content = "\n\n".join(parts)
 
-                card_dict = json.loads(_build_card_json(
+                patch_card_message(
+                    self._client, card_message_id,
                     title="💬 已回复",
                     content=content,
                     header_template="wathet",
-                ))
-                card = CallBackCard()
-                card.type = "raw"
-                card.data = card_dict
-                resp.card = card
-
-                toast = CallBackToast()
-                toast.type = "info"
-                toast.content = f"已选择: {answer_text}"
-                resp.toast = toast
-                return resp
+                )
+                return None
 
             else:
                 logger.warning("Unknown card action: %s", action)
-                toast = CallBackToast()
-                toast.type = "warning"
-                toast.content = f"未知操作: {action}"
-                resp.toast = toast
-                return resp
+                send_text_message(
+                    self._client, chat_id,
+                    f"未知操作: {action}",
+                )
+                return None
 
         except Exception:
             logger.exception("Error handling card action")
-            toast = CallBackToast()
-            toast.type = "error"
-            toast.content = "处理按钮操作时出错"
-            resp.toast = toast
-            return resp
+            send_text_message(
+                self._client, chat_id,
+                "处理按钮操作时出错，请重试。",
+            )
+            return None
 
     def _parse_command(self, text: str) -> tuple[Optional[str], str]:
         """解析命令前缀
