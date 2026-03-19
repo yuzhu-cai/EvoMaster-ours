@@ -9,10 +9,16 @@ Playground is where developers build their own research agents. Each playground 
 | Playground | Type | Description | Docs |
 |---|---|---|---|
 | `minimal` | Single Agent | Minimal example, only inherits `BasePlayground`, ideal for learning the framework | [README](./minimal/README.md) |
+| `minimal_bohrium` | Single Agent | Bohrium platform scientific computing integration | [README](./minimal_bohrium/README.md) |
 | `minimal_multi_agent` | Multi-Agent | Planning + Coding dual-agent collaboration, demonstrates multi-agent workflow | [README](./minimal_multi_agent/README.md) |
+| `minimal_multi_agent_parallel` | Multi-Agent | Parallel multi-agent experiments using ThreadPoolExecutor | [README](./minimal_multi_agent_parallel/README.md) |
+| `minimal_openclaw_skill` | Single Agent + Skills | TypeScript-based OpenClaw skill integration via Node.js bridge | [README](./minimal_openclaw_skill/README.md) |
 | `minimal_kaggle` | Multi-Agent | Kaggle competition automation with 6 role agents (draft/debug/improve/research/knowledge/metric) | [README](./minimal_kaggle/README.md) |
 | `minimal_skill_task` | Single Agent + Skills | RAG-based Analyze → Plan → Search → Summarize workflow | [README](./minimal_skill_task/README.md) |
+| `ml_master` | Multi-Agent | ML-Master 1.0 with tree-search and adaptive memory for autonomous ML | [README](./ml_master/README.md) |
+| `ml_master_2` | Multi-Agent | ML-Master 2.0 with hierarchical cognitive caching for ultra-long-horizon ML | [README](./ml_master_2/README.md) |
 | `x_master` | Multi-Phase Parallel | Four-phase iterative workflow: Solve → Critique → Rewrite → Select, with MCP tool support | [README](./x_master/README.md) |
+| `browse_master` | Multi-Agent | Planner + Executor web search agent with MCP tools | [README](./browse_master/README.md) |
 
 ## Quick Start: Create Your Playground
 

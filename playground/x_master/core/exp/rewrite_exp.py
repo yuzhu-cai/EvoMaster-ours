@@ -12,23 +12,24 @@ from .utils import strip_think_and_exec, extract_agent_response
 
 
 class RewriteExp(BaseExp):
-    """X-Master中Rewrite实验类实现
+    """Rewrite experiment implementation for X-Master.
 
-    实现Rewrite阶段工作流：汇总前一模块的所有答案，重写相同数量的答案
+    Implements the Rewriting stage workflow: aggregate all solutions from the previous stage
+    and rewrite the same number of solutions.
     """
 
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the name of the experiment stage."""
         return "Rewriting"
 
     def __init__(self, rewriter_agent,  config, index=0):
-        """初始化RewriteExp实验类
+        """Initialize the RewriteExp experiment class.
 
         Args:
-            rewriter_agent: Rewriter Agent 实例
-            config: EvoMasterConfig 实例
-            index: x-master需要并行多个exp, 因此需要为每个相同的exp定义一个编号
+            rewriter_agent: Rewriter Agent instance
+            config: EvoMasterConfig instance
+            index: index assigned when running multiple identical experiments in parallel
         """
         super().__init__(rewriter_agent, config)
         self.rewriter = rewriter_agent
@@ -40,16 +41,17 @@ class RewriteExp(BaseExp):
         
 
     def run(self, task_description:str,task_id:str = "exp_001",solutions:List[str]=None) -> dict:
-        """运行rewriter实验
+        """Run the rewriter experiment.
 
-        工作流: 一个Rewriter Agent对前一个模块的所有答案进行汇总并重写
+        Workflow: a Rewriter Agent aggregates all solutions from the previous module and rewrites them.
 
         Args:
-            task_description: 任务描述
-            task_id: 任务 ID
-            solutions: 接收到来自前一个模块的所有答案
+            task_description: the task description
+            task_id: the task identifier
+            solutions: list of solutions received from the previous module
+
         Returns:
-            执行结果字典
+            A dictionary containing the execution results.
         """
         results = {
             'task_id':task_id,
@@ -85,7 +87,7 @@ class RewriteExp(BaseExp):
                 s_solutions = self._format_solutions_prompt(solutions)
 
                 try:
-                    # 设置当前exp信息，用于trajectory记录
+                    # set current experiment info for trajectory recording
                     self.rewriter._prompt_format_kwargs.update({
                         's_solutions':s_solutions
                     })
@@ -121,20 +123,18 @@ class RewriteExp(BaseExp):
         return results
 
     def _format_solutions_prompt(self, solutions:List[str]) -> str:
-        """格式化解决方案列表为prompt
+        """Format a list of solutions into a prompt string.
 
         Args:
-            solutions: 方案列表
-        Reture:
-            返回的方案prompt:
-            格式：
+            solutions: list of solution strings
+        Returns:
+            A prompt string for the rewriter in the format:
             ## Student 1's Solution
             {solution_1}
             ## Student 2's Solution
             {solution_2}
             ## Student 3's Solution
             {solution_3}
-            ...
             ...
         """
 
@@ -143,7 +143,7 @@ class RewriteExp(BaseExp):
 
         prompt_lines = []
         for i, solution in enumerate(solutions,1):
-            # 使用 strip_think_and_exec 清理每个 solution
+            # clean each solution using strip_think_and_exec
             clean_solution = strip_think_and_exec(solution)
             if not clean_solution:
                 clean_solution = "empty solution"
@@ -155,10 +155,10 @@ class RewriteExp(BaseExp):
 
 
     def save_results(self, output_file: str):
-        """保存实验结果
+        """Save experiment results.
 
         Args:
-            output_file: 输出文件路径
+            output_file: output file path
         """
         import json
         from pathlib import Path

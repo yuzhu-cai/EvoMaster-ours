@@ -39,7 +39,7 @@ async def fetch_web_api(session, url: str):
         return await resp.json()
 
 
-# 示例主函数
+# Example main function
 async def main():
     async with aiohttp.ClientSession() as session:
         # result = await web_search_api(session, "what is google")

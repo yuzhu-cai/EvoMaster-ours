@@ -1,55 +1,62 @@
-# EvoMaster Agent 模块
+# EvoMaster Agent Module
 
-## 概述
+## Overview
 
-Agent 模块是 EvoMaster 的智能体核心，负责任务执行、工具调用、对话管理和轨迹记录。
+The Agent module is EvoMaster's intelligent agent core, responsible for task execution, tool calling, dialog management, and trajectory recording.
 
-## 架构设计
+## Architecture
 
-### 文件结构
+### File Structure
 
 ```
 agent/
-├── agent.py          # Agent 基类和标准实现
-├── types.py          # 类型定义（Message, Dialog, Trajectory）
-├── context.py        # 上下文管理（截断、压缩）
-├── session/          # 环境会话（与 Env 交互）
-│   ├── base.py       # Session 抽象接口
-│   └── docker.py     # Docker 隔离环境实现
-└── tools/            # 工具系统
-    ├── base.py       # Tool 基类和注册中心
-    ├── bash.py       # Bash 命令执行
-    ├── editor.py     # 文件编辑工具
-    ├── think.py      # 思考工具
-    └── finish.py     # 任务完成信号
+├── agent.py          # Agent base class and standard implementation
+├── context.py        # Context management (truncation, compression)
+├── session/          # Environment sessions (interaction with Env)
+│   ├── base.py       # Session abstract interface
+│   ├── local.py      # Local session implementation
+│   └── docker.py     # Docker isolated environment implementation
+└── tools/            # Tool system
+    ├── base.py       # Tool base class and registry
+    ├── builtin/      # Built-in tools
+    │   ├── bash.py   # Bash command execution
+    │   ├── editor.py # File editing tool
+    │   ├── think.py  # Thinking tool
+    │   └── finish.py # Task completion signal
+    ├── mcp/          # MCP tool integration
+    │   ├── mcp.py
+    │   ├── mcp_connection.py
+    │   └── mcp_manager.py
+    ├── skill.py      # Skill tool
+    └── openclaw_bridge.py  # OpenClaw TypeScript bridge
 ```
 
-### 整体架构图
+### Architecture Diagram
 
 ```mermaid
 graph TB
-    subgraph "Agent 核心"
-        Agent[Agent<br/>智能体]
-        Context[ContextManager<br/>上下文管理]
-        Dialog[Dialog<br/>对话管理]
+    subgraph "Agent Core"
+        Agent[Agent<br/>Intelligent Agent]
+        Context[ContextManager<br/>Context Management]
+        Dialog[Dialog<br/>Dialog Management]
     end
 
-    subgraph "外部接口"
-        LLM[BaseLLM<br/>语言模型]
-        Session[BaseSession<br/>执行环境]
-        Tools[ToolRegistry<br/>工具注册表]
+    subgraph "External Interfaces"
+        LLM[BaseLLM<br/>Language Model]
+        Session[BaseSession<br/>Execution Environment]
+        Tools[ToolRegistry<br/>Tool Registry]
     end
 
-    subgraph "执行环境"
-        Docker[DockerSession<br/>Docker容器]
-        Local[LocalSession<br/>本地环境]
+    subgraph "Execution Environments"
+        Docker[DockerSession<br/>Docker Container]
+        Local[LocalSession<br/>Local Environment]
     end
 
-    subgraph "工具集"
-        Bash[BashTool<br/>命令执行]
-        Editor[EditorTool<br/>文件编辑]
-        Think[ThinkTool<br/>思考]
-        Finish[FinishTool<br/>完成]
+    subgraph "Tool Set"
+        Bash[BashTool<br/>Command Execution]
+        Editor[EditorTool<br/>File Editing]
+        Think[ThinkTool<br/>Thinking]
+        Finish[FinishTool<br/>Completion]
     end
 
     Agent --> LLM
@@ -58,8 +65,8 @@ graph TB
     Agent --> Context
     Agent --> Dialog
 
-    Session -.实现.-> Docker
-    Session -.实现.-> Local
+    Session -.implements.-> Docker
+    Session -.implements.-> Local
 
     Tools --> Bash
     Tools --> Editor
@@ -75,11 +82,11 @@ graph TB
     style Tools fill:#e8f5e9
 ```
 
-### 执行流程图
+### Execution Flow
 
 ```mermaid
 sequenceDiagram
-    participant User as 用户
+    participant User as User
     participant Agent as Agent
     participant Context as ContextManager
     participant LLM as BaseLLM
@@ -88,35 +95,35 @@ sequenceDiagram
 
     User->>Agent: run(task)
 
-    Agent->>Agent: 初始化 Dialog 和 Trajectory
+    Agent->>Agent: Initialize Dialog and Trajectory
 
-    loop 每个执行步骤 (max_turns)
-        Agent->>Context: 准备上下文（可能截断）
-        Context-->>Agent: 返回截断后的 Dialog
+    loop Each execution step (max_turns)
+        Agent->>Context: Prepare context (may truncate)
+        Context-->>Agent: Return truncated Dialog
 
         Agent->>LLM: query(dialog)
-        LLM-->>Agent: AssistantMessage (含工具调用)
+        LLM-->>Agent: AssistantMessage (with tool calls)
 
-        alt 有工具调用
-            loop 每个工具调用
+        alt Has tool calls
+            loop Each tool call
                 Agent->>Tools: get_tool(name)
-                Tools-->>Agent: Tool 实例
+                Tools-->>Agent: Tool instance
 
                 Agent->>Tools: tool.execute(session, args)
-                Tools->>Session: 执行具体操作
-                Session-->>Tools: 执行结果
+                Tools->>Session: Execute operation
+                Session-->>Tools: Execution result
                 Tools-->>Agent: (observation, info)
 
-                Agent->>Agent: 创建 ToolMessage
+                Agent->>Agent: Create ToolMessage
             end
-        else 无工具调用
-            Agent->>Agent: 提示继续工作
+        else No tool calls
+            Agent->>Agent: Prompt to continue
         end
 
-        Agent->>Agent: 更新 Dialog 和 Trajectory
+        Agent->>Agent: Update Dialog and Trajectory
 
-        alt 调用了 finish 工具
-            Agent->>Agent: 标记完成
+        alt Called finish tool
+            Agent->>Agent: Mark as completed
             Agent-->>User: Trajectory (completed)
         end
     end
@@ -124,23 +131,23 @@ sequenceDiagram
     Agent-->>User: Trajectory (completed/failed)
 ```
 
-### 数据流图
+### Data Flow
 
 ```mermaid
 graph LR
-    subgraph "输入"
-        Task[TaskInstance<br/>任务定义]
+    subgraph "Input"
+        Task[TaskInstance<br/>Task Definition]
     end
 
-    subgraph "Agent 处理"
-        A1[创建 Dialog]
-        A2[LLM 推理]
-        A3[工具调用]
-        A4[记录轨迹]
+    subgraph "Agent Processing"
+        A1[Create Dialog]
+        A2[LLM Reasoning]
+        A3[Tool Calling]
+        A4[Record Trajectory]
     end
 
-    subgraph "输出"
-        Traj[Trajectory<br/>执行轨迹]
+    subgraph "Output"
+        Traj[Trajectory<br/>Execution Trace]
     end
 
     Task --> A1
@@ -159,30 +166,30 @@ graph LR
     style A4 fill:#d1c4e9
 ```
 
-## 核心组件
+## Core Components
 
-### 1. Agent 类
+### 1. Agent Class
 
-**BaseAgent**：抽象基类，定义 Agent 的核心执行流程
-- 对话管理（Dialog）
-- 轨迹记录（Trajectory）
-- 工具调用执行
-- 上下文管理
+**BaseAgent**: Abstract base class defining the core execution flow:
+- Dialog management
+- Trajectory recording
+- Tool call execution
+- Context management
 
-**Agent**：标准实现，可配置系统提示词
-- 继承 BaseAgent
-- 支持自定义 system_prompt
-- 开箱即用的实现
+**Agent**: Standard implementation with configurable system prompts:
+- Inherits from BaseAgent
+- Supports custom `system_prompt`
+- Ready to use out of the box
 
-#### 初始化参数
+#### Initialization Parameters
 
 ```python
 Agent(
-    llm: BaseLLM,              # LLM 实例（必需）
-    session: BaseSession,      # 环境会话（必需）
-    tools: ToolRegistry,       # 工具注册表（必需）
-    system_prompt: str = None, # 自定义系统提示词（可选）
-    config: AgentConfig = None # Agent 配置（可选）
+    llm: BaseLLM,              # LLM instance (required)
+    session: BaseSession,      # Environment session (required)
+    tools: ToolRegistry,       # Tool registry (required)
+    system_prompt: str = None, # Custom system prompt (optional)
+    config: AgentConfig = None # Agent configuration (optional)
 )
 ```
 
@@ -190,130 +197,130 @@ Agent(
 
 ```python
 AgentConfig(
-    max_turns: int = 100,                    # 最大执行轮数
-    context_config: ContextConfig = None     # 上下文管理配置
+    max_turns: int = 100,                    # Maximum execution turns
+    context_config: ContextConfig = None     # Context management config
 )
 ```
 
-### 2. 类型系统 (types.py)
+### 2. Type System (utils/types.py)
 
-#### Message 类型
-- **SystemMessage**: 系统提示词
-- **UserMessage**: 用户输入
-- **AssistantMessage**: 助手响应（可包含工具调用）
-- **ToolMessage**: 工具执行结果
+#### Message Types
+- **SystemMessage**: System prompt
+- **UserMessage**: User input
+- **AssistantMessage**: Assistant response (may include tool calls)
+- **ToolMessage**: Tool execution result
 
 #### Dialog
-对话管理器，维护消息列表和工具规格
+Dialog manager maintaining a message list and tool specifications:
 ```python
 dialog = Dialog(
-    messages=[...],      # 消息列表
-    tools=[...]          # 工具规格列表
+    messages=[...],      # Message list
+    tools=[...]          # Tool specification list
 )
 ```
 
 #### Trajectory
-执行轨迹，记录 Agent 的完整执行过程
+Execution trajectory recording the complete agent execution:
 ```python
 trajectory = Trajectory(
-    task_id: str,        # 任务 ID
-    status: str,         # 状态：running/completed/failed
-    dialogs: list,       # 对话列表
-    steps: list,         # 步骤记录
+    task_id: str,        # Task ID
+    status: str,         # Status: running/completed/failed
+    dialogs: list,       # Dialog list
+    steps: list,         # Step records
 )
 ```
 
 #### TaskInstance
-任务定义
+Task definition:
 ```python
 task = TaskInstance(
-    task_id: str,            # 任务 ID
-    task_type: str,          # 任务类型
-    description: str,        # 任务描述
-    input_data: str = "",    # 额外输入数据
+    task_id: str,            # Task ID
+    task_type: str,          # Task type
+    description: str,        # Task description
+    input_data: str = "",    # Additional input data
 )
 ```
 
 ### 3. Session (session/)
 
-Session 是 Agent 与执行环境的接口，负责：
-- 执行 bash 命令
-- 文件操作（上传、下载）
-- 环境隔离
+Session is the interface between Agent and execution environment, responsible for:
+- Executing bash commands
+- File operations (upload, download)
+- Environment isolation
 
 #### BaseSession
-抽象接口，定义标准方法：
+Abstract interface defining standard methods:
 - `execute_bash(command: str) -> tuple[str, int]`
 - `upload_file(local_path: str, remote_path: str)`
 - `download_file(remote_path: str, local_path: str)`
 
 #### DockerSession
-基于 Docker 的隔离环境实现
+Docker-based isolated environment implementation:
 ```python
 session = DockerSession(DockerSessionConfig(
-    image="python:3.11-slim",      # Docker 镜像
-    working_dir="/workspace",      # 工作目录
-    memory_limit="4g",             # 内存限制
-    cpu_limit=2.0,                 # CPU 限制
+    image="python:3.11-slim",      # Docker image
+    working_dir="/workspace",      # Working directory
+    memory_limit="4g",             # Memory limit
+    cpu_limit=2.0,                 # CPU limit
 ))
 ```
 
 ### 4. Tools (tools/)
 
-工具系统采用注册机制，支持动态添加工具。
+The tool system uses a registration mechanism supporting dynamic tool addition.
 
 #### BaseTool
-所有工具的基类
+Base class for all tools:
 ```python
 class MyTool(BaseTool):
     name = "my_tool"
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict]:
-        # 执行逻辑
+        # Execution logic
         return observation, info
 ```
 
-#### 内置工具
-- **BashTool** (`execute_bash`): 执行 bash 命令
-- **EditorTool** (`str_replace_editor`): 文件查看和编辑
-- **ThinkTool** (`think`): 思考工具（不影响环境）
-- **FinishTool** (`finish`): 任务完成信号
+#### Built-in Tools
+- **BashTool** (`execute_bash`): Execute bash commands
+- **EditorTool** (`str_replace_editor`): File viewing and editing
+- **ThinkTool** (`think`): Thinking tool (does not affect environment)
+- **FinishTool** (`finish`): Task completion signal
 
 #### ToolRegistry
-工具注册中心
+Tool registration center:
 ```python
-# 创建默认工具集
+# Create default tool set
 tools = create_default_registry()
 
-# 注册自定义工具
+# Register custom tool
 tools.register(MyTool())
 
-# 获取工具
+# Get tool
 tool = tools.get_tool("my_tool")
 ```
 
 ### 5. Context Manager (context.py)
 
-管理对话上下文，防止超出 LLM 的 token 限制。
+Manages dialog context to prevent exceeding LLM token limits.
 
 #### ContextConfig
 ```python
 ContextConfig(
-    max_tokens: int = 128000,                    # 最大 token 数
-    truncation_strategy: str = "latest_half",    # 截断策略
-    token_counter: TokenCounter = None           # Token 计数器
+    max_tokens: int = 128000,                    # Maximum token count
+    truncation_strategy: str = "latest_half",    # Truncation strategy
+    token_counter: TokenCounter = None           # Token counter
 )
 ```
 
-#### 截断策略
-- **NONE**: 不截断
-- **LATEST_HALF**: 保留最新的一半消息
-- **SLIDING_WINDOW**: 滑动窗口
-- **SUMMARY**: 摘要压缩（待实现）
+#### Truncation Strategies
+- **NONE**: No truncation
+- **LATEST_HALF**: Keep the latest half of messages
+- **SLIDING_WINDOW**: Sliding window
+- **SUMMARY**: Summary compression (to be implemented)
 
-## 使用方法
+## Usage
 
-### 基础使用
+### Basic Usage
 
 ```python
 from evomaster import (
@@ -326,41 +333,41 @@ from evomaster import (
     TaskInstance,
 )
 
-# 1. 创建 LLM
+# 1. Create LLM
 llm = create_llm(LLMConfig(
     provider="openai",
     model="gpt-4",
 ))
 
-# 2. 创建 Session
+# 2. Create Session
 session = DockerSession(DockerSessionConfig(
     image="python:3.11-slim",
 ))
 
-# 3. 创建 Agent
+# 3. Create Agent
 agent = Agent(
     llm=llm,
     session=session,
     tools=create_default_registry(),
 )
 
-# 4. 定义任务
+# 4. Define task
 task = TaskInstance(
     task_id="task-001",
     task_type="coding",
     description="Write a Python function to calculate factorial",
 )
 
-# 5. 执行任务
+# 5. Execute task
 with session:
     trajectory = agent.run(task)
 
-# 6. 查看结果
+# 6. View results
 print(f"Status: {trajectory.status}")
 print(f"Steps: {len(trajectory.steps)}")
 ```
 
-### 自定义系统提示词
+### Custom System Prompt
 
 ```python
 custom_prompt = """You are an expert Python programmer.
@@ -372,39 +379,36 @@ agent = Agent(
     llm=llm,
     session=session,
     tools=create_default_registry(),
-    system_prompt=custom_prompt,  # 自定义提示词
+    system_prompt=custom_prompt,
 )
 ```
 
-### 自定义 Agent
+### Custom Agent
 
-如果需要更多控制，可以继承 BaseAgent：
+For more control, inherit from BaseAgent:
 
 ```python
 from evomaster.agent import BaseAgent, AgentConfig
 
 class MyAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
-        # 自定义系统提示词逻辑
         return "My custom system prompt"
 
     def _get_user_prompt(self, task: TaskInstance) -> str:
-        # 自定义用户提示词逻辑
         return f"Task: {task.description}"
 
     def _step(self) -> bool:
-        # 可以覆盖单步执行逻辑
         should_finish = super()._step()
-        # 添加自定义逻辑
+        # Add custom logic
         return should_finish
 ```
 
-### 自定义工具
+### Custom Tool
 
 ```python
 from evomaster.agent.tools import BaseTool, BaseToolParams
 
-# 1. 定义参数类
+# 1. Define parameter class
 class MyToolParams(BaseToolParams):
     name = "my_tool"
     """My custom tool description"""
@@ -412,57 +416,56 @@ class MyToolParams(BaseToolParams):
     param1: str
     param2: int = 0
 
-# 2. 实现工具
+# 2. Implement tool
 class MyTool(BaseTool):
     name = "my_tool"
     params_class = MyToolParams
 
     def execute(self, session, args_json):
         params = self.parse_params(args_json)
-        # 执行逻辑
         result = f"Processed {params.param1} with {params.param2}"
         return result, {"success": True}
 
-# 3. 注册工具
+# 3. Register tool
 tools = create_default_registry()
 tools.register(MyTool())
 
-# 4. 使用
+# 4. Use
 agent = Agent(llm=llm, session=session, tools=tools)
 ```
 
-## 执行流程
+## Execution Flow
 
-Agent 的执行流程如下：
+The Agent execution flow is as follows:
 
 ```
-1. 初始化 (run)
-   ├── 创建 Trajectory
-   ├── 创建初始 Dialog (system + user message)
-   └── 设置工具规格
+1. Initialization (run)
+   ├── Create Trajectory
+   ├── Create initial Dialog (system + user message)
+   └── Set tool specifications
 
-2. 循环执行 (_step)
-   ├── 准备上下文（可能截断）
-   ├── 查询 LLM
-   ├── 获取 AssistantMessage
-   │   ├── 如果无工具调用 → 提示继续
-   │   └── 如果有工具调用 → 逐个执行
-   ├── 执行工具
-   │   ├── 获取工具实例
-   │   ├── 调用 tool.execute(session, args)
-   │   └── 生成 ToolMessage
-   ├── 更新 Dialog
-   ├── 记录 StepRecord
-   └── 检查是否完成（finish 工具）
+2. Loop execution (_step)
+   ├── Prepare context (may truncate)
+   ├── Query LLM
+   ├── Get AssistantMessage
+   │   ├── If no tool calls → prompt to continue
+   │   └── If has tool calls → execute each one
+   ├── Execute tools
+   │   ├── Get tool instance
+   │   ├── Call tool.execute(session, args)
+   │   └── Generate ToolMessage
+   ├── Update Dialog
+   ├── Record StepRecord
+   └── Check if completed (finish tool)
 
-3. 结束
-   ├── 标记状态 (completed/failed)
-   └── 返回 Trajectory
+3. End
+   ├── Mark status (completed/failed)
+   └── Return Trajectory
 ```
 
-## 配置建议
+## Configuration Recommendations
 
-### 开发环境
+### Development Environment
 ```python
 agent = Agent(
     llm=create_llm(LLMConfig(
@@ -476,19 +479,19 @@ agent = Agent(
     )),
     tools=create_default_registry(),
     config=AgentConfig(
-        max_turns=50,  # 较少的轮数用于快速调试
+        max_turns=50,  # Fewer turns for quick debugging
     ),
 )
 ```
 
-### 生产环境
+### Production Environment
 ```python
 agent = Agent(
     llm=create_llm(LLMConfig(
         provider="anthropic",
         model="claude-3-5-sonnet-20241022",
         temperature=0.5,
-        max_retries=5,  # 更多重试
+        max_retries=5,
     )),
     session=DockerSession(DockerSessionConfig(
         image="my-custom-image:latest",
@@ -506,58 +509,56 @@ agent = Agent(
 )
 ```
 
-## 扩展点
+## Extension Points
 
-### 1. 自定义 Session
-实现 `BaseSession` 接口以支持新的执行环境：
-- 远程服务器
+### 1. Custom Session
+Implement the `BaseSession` interface to support new execution environments:
+- Remote server
 - Kubernetes Pod
-- 本地进程
+- Local process
 - ...
 
-### 2. 自定义 Tool
-实现 `BaseTool` 接口以添加新功能：
-- 数据库查询
-- API 调用
-- 文件系统操作
+### 2. Custom Tool
+Implement the `BaseTool` interface to add new capabilities:
+- Database queries
+- API calls
+- File system operations
 - ...
 
-### 3. 自定义 Context 策略
-实现 `ContextManager` 的新截断策略：
-- 基于重要性的保留
-- 摘要压缩
-- 向量检索
+### 3. Custom Context Strategy
+Implement new truncation strategies for `ContextManager`:
+- Importance-based retention
+- Summary compression
+- Vector retrieval
 - ...
 
-### 4. 自定义 Agent 逻辑
-继承 `BaseAgent` 以实现特定领域的 Agent：
-- 科研实验 Agent
-- 代码重构 Agent
-- 数据分析 Agent
+### 4. Custom Agent Logic
+Inherit from `BaseAgent` to implement domain-specific agents:
+- Scientific experiment Agent
+- Code refactoring Agent
+- Data analysis Agent
 - ...
 
-## 注意事项
+## Important Notes
 
-1. **Session 管理**: 始终使用 `with session:` 确保资源正确释放
-2. **Token 限制**: 注意配置 `ContextConfig.max_tokens` 避免超出 LLM 限制
-3. **工具安全**: BashTool 可执行任意命令，生产环境需要安全控制
-4. **错误处理**: Agent 执行失败会抛出异常，需要适当捕获
-5. **日志记录**: Agent 使用 Python logging，可通过配置查看详细日志
+1. **Session Management**: Always use `with session:` to ensure proper resource cleanup
+2. **Token Limits**: Configure `ContextConfig.max_tokens` appropriately to avoid exceeding LLM limits
+3. **Tool Safety**: BashTool can execute arbitrary commands; production environments need security controls
+4. **Error Handling**: Agent execution failures raise exceptions that should be caught appropriately
+5. **Logging**: Agent uses Python logging; configure it to view detailed logs
 
-## 下一步开发
+## Development Status
 
-根据 CLAUDE.md 设计，待实现功能：
-1. ✅ 基础 Agent 实现
-2. ✅ LLM 接口封装
-3. ✅ 配置系统
-4. ⏳ MCP 调用方式
-5. ⏳ Skill 系统集成
-6. ⏳ 高级上下文管理（摘要压缩、长期记忆）
-7. ⏳ Env 集群管理
+Based on the project design, the following features are tracked:
+1. Basic Agent implementation -- done
+2. LLM interface abstraction -- done
+3. Configuration system -- done
+4. MCP tool integration -- done
+5. Skill system integration -- done
+6. Advanced context management (summary compression, long-term memory) -- planned
+7. Env cluster management -- planned
 
-## 参考
+## References
 
-- **完整示例**: `examples/llm_example.py`
-- **LLM 文档**: `evomaster/utils/README.md`
-- **快速开始**: `QUICKSTART.md`
-- **项目设计**: `CLAUDE.md`
+- **LLM Documentation**: `evomaster/utils/README.md`
+- **Project Design**: `CLAUDE.md`

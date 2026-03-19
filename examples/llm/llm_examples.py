@@ -1,6 +1,6 @@
-"""LLM 使用示例
+"""LLM usage examples
 
-包含多种 LLM 使用场景的示例代码。
+Contains example code for various LLM usage scenarios.
 """
 
 from pathlib import Path
@@ -18,29 +18,29 @@ from evomaster.utils.llm import LLMConfig, create_llm
 
 
 def load_config():
-    """加载配置"""
+    """Load configuration."""
     config_path = Path(__file__).parent / "config.yaml"
     with open(config_path) as f:
         return yaml.safe_load(f)
 
 
 def example_simple_chat():
-    """示例 1: 简单对话"""
+    """Example 1: Simple conversation"""
     print("\n" + "=" * 60)
-    print("示例 1: 简单对话")
+    print("Example 1: Simple Conversation")
     print("=" * 60)
 
-    # 加载配置
+    # Load configuration
     config = load_config()
     llm_name = config["llm"]["default"]
     llm_config = LLMConfig(**config["llm"][llm_name])
 
-    # 创建 LLM
+    # Create LLM
     llm = create_llm(llm_config)
-    print(f"使用 LLM: {llm_config.model}")
+    print(f"Using LLM: {llm_config.model}")
     print(f"Base URL: {llm_config.base_url}")
 
-    # 创建对话
+    # Create conversation
     dialog = Dialog(
         messages=[
             SystemMessage(content="你是一个友好的助手。"),
@@ -48,95 +48,95 @@ def example_simple_chat():
         ]
     )
 
-    # 调用 LLM
-    print("\n发送请求中...")
+    # Call LLM
+    print("\nSending request...")
     response = llm.query(dialog)
 
-    print(f"\n助手回复:\n{response.content}")
+    print(f"\nAssistant reply:\n{response.content}")
 
-    # 查看元数据
+    # View metadata
     if response.meta:
-        print(f"\n元数据:")
-        print(f"  模型: {response.meta.get('model', 'N/A')}")
+        print(f"\nMetadata:")
+        print(f"  Model: {response.meta.get('model', 'N/A')}")
         if "usage" in response.meta:
             usage = response.meta["usage"]
-            print(f"  输入 tokens: {usage.get('prompt_tokens', 'N/A')}")
-            print(f"  输出 tokens: {usage.get('completion_tokens', 'N/A')}")
-            print(f"  总计 tokens: {usage.get('total_tokens', 'N/A')}")
+            print(f"  Input tokens: {usage.get('prompt_tokens', 'N/A')}")
+            print(f"  Output tokens: {usage.get('completion_tokens', 'N/A')}")
+            print(f"  Total tokens: {usage.get('total_tokens', 'N/A')}")
 
 
 def example_multi_turn_chat():
-    """示例 2: 多轮对话"""
+    """Example 2: Multi-turn conversation"""
     print("\n" + "=" * 60)
-    print("示例 2: 多轮对话")
+    print("Example 2: Multi-turn Conversation")
     print("=" * 60)
 
-    # 加载配置
+    # Load configuration
     config = load_config()
     llm_name = config["llm"]["default"]
     llm_config = LLMConfig(**config["llm"][llm_name])
 
-    # 创建 LLM
+    # Create LLM
     llm = create_llm(llm_config)
-    print(f"使用 LLM: {llm_config.model}")
+    print(f"Using LLM: {llm_config.model}")
 
-    # 初始化对话
+    # Initialize conversation
     dialog = Dialog(
         messages=[
             SystemMessage(content="你是一个数学助手，擅长解答数学问题。"),
         ]
     )
 
-    # 第一轮对话
-    print("\n第一轮对话:")
+    # First turn
+    print("\nFirst turn:")
     user_msg_1 = "请帮我计算 15 的平方根，保留两位小数。"
-    print(f"  用户: {user_msg_1}")
+    print(f"  User: {user_msg_1}")
 
     dialog.add_message(UserMessage(content=user_msg_1))
     response_1 = llm.query(dialog)
     dialog.add_message(response_1)
 
-    print(f"  助手: {response_1.content}")
+    print(f"  Assistant: {response_1.content}")
 
-    # 第二轮对话（依赖前面的上下文）
-    print("\n第二轮对话:")
+    # Second turn (depends on previous context)
+    print("\nSecond turn:")
     user_msg_2 = "那这个数字的 3 次方是多少？"
-    print(f"  用户: {user_msg_2}")
+    print(f"  User: {user_msg_2}")
 
     dialog.add_message(UserMessage(content=user_msg_2))
     response_2 = llm.query(dialog)
     dialog.add_message(response_2)
 
-    print(f"  助手: {response_2.content}")
+    print(f"  Assistant: {response_2.content}")
 
-    # 第三轮对话
-    print("\n第三轮对话:")
+    # Third turn
+    print("\nThird turn:")
     user_msg_3 = "总结一下我们刚才的计算过程。"
-    print(f"  用户: {user_msg_3}")
+    print(f"  User: {user_msg_3}")
 
     dialog.add_message(UserMessage(content=user_msg_3))
     response_3 = llm.query(dialog)
     dialog.add_message(response_3)
 
-    print(f"  助手: {response_3.content}")
+    print(f"  Assistant: {response_3.content}")
 
 
 def example_tool_calling():
-    """示例 3: 工具调用"""
+    """Example 3: Tool calling"""
     print("\n" + "=" * 60)
-    print("示例 3: 工具调用")
+    print("Example 3: Tool Calling")
     print("=" * 60)
 
-    # 加载配置
+    # Load configuration
     config = load_config()
     llm_name = config["llm"]["default"]
     llm_config = LLMConfig(**config["llm"][llm_name])
 
-    # 创建 LLM
+    # Create LLM
     llm = create_llm(llm_config)
-    print(f"使用 LLM: {llm_config.model}")
+    print(f"Using LLM: {llm_config.model}")
 
-    # 定义工具
+    # Define tools
     tools = [
         ToolSpec(
             type="function",
@@ -179,7 +179,7 @@ def example_tool_calling():
         ),
     ]
 
-    # 创建对话
+    # Create conversation
     dialog = Dialog(
         messages=[
             SystemMessage(content="你是一个助手，可以使用工具来帮助用户。"),
@@ -188,21 +188,21 @@ def example_tool_calling():
         tools=tools,
     )
 
-    # 调用 LLM
-    print("\n发送请求中...")
+    # Call LLM
+    print("\nSending request...")
     response = llm.query(dialog)
 
-    print(f"\n助手回复: {response.content if response.content else '(无文本回复)'}")
+    print(f"\nAssistant reply: {response.content if response.content else '(no text reply)'}")
 
-    # 检查工具调用
+    # Check tool calls
     if response.tool_calls:
-        print(f"\n工具调用:")
+        print(f"\nTool calls:")
         for tool_call in response.tool_calls:
-            print(f"  工具: {tool_call.function.name}")
-            print(f"  参数: {tool_call.function.arguments}")
+            print(f"  Tool: {tool_call.function.name}")
+            print(f"  Arguments: {tool_call.function.arguments}")
 
-        # 模拟工具执行结果
-        print("\n模拟工具执行结果:")
+        # Simulate tool execution result
+        print("\nSimulated tool execution result:")
         tool_result = {
             "location": "北京",
             "temperature": 15,
@@ -213,31 +213,31 @@ def example_tool_calling():
 
 
 def example_different_models():
-    """示例 4: 使用不同的模型"""
+    """Example 4: Using different models"""
     print("\n" + "=" * 60)
-    print("示例 4: 使用不同的模型")
+    print("Example 4: Using Different Models")
     print("=" * 60)
 
-    # 加载配置
+    # Load configuration
     config = load_config()
 
-    # 测试问题
+    # Test question
     question = "用一句话解释什么是机器学习。"
 
-    # 遍历所有配置的模型
+    # Iterate over all configured models
     for model_name, model_config in config["llm"].items():
         if model_name == "default":
             continue
 
-        print(f"\n使用模型: {model_name}")
+        print(f"\nUsing model: {model_name}")
         print("-" * 40)
 
         try:
-            # 创建 LLM 配置
+            # Create LLM configuration
             llm_config = LLMConfig(**model_config)
             llm = create_llm(llm_config)
 
-            # 创建对话
+            # Create conversation
             dialog = Dialog(
                 messages=[
                     SystemMessage(content="你是一个简洁的助手。"),
@@ -245,30 +245,30 @@ def example_different_models():
                 ]
             )
 
-            # 查询
+            # Query
             response = llm.query(dialog)
-            print(f"回复: {response.content}")
+            print(f"Reply: {response.content}")
 
         except Exception as e:
-            print(f"错误: {e}")
+            print(f"Error: {e}")
 
 
 def example_streaming():
-    """示例 5: 流式输出 (如果支持)"""
+    """Example 5: Streaming output (if supported)"""
     print("\n" + "=" * 60)
-    print("示例 5: 流式输出")
+    print("Example 5: Streaming Output")
     print("=" * 60)
 
-    # 加载配置
+    # Load configuration
     config = load_config()
     llm_name = config["llm"]["default"]
     llm_config = LLMConfig(**config["llm"][llm_name])
 
-    # 创建 LLM
+    # Create LLM
     llm = create_llm(llm_config)
-    print(f"使用 LLM: {llm_config.model}")
+    print(f"Using LLM: {llm_config.model}")
 
-    # 创建对话
+    # Create conversation
     dialog = Dialog(
         messages=[
             SystemMessage(content="你是一个助手。"),
@@ -276,29 +276,29 @@ def example_streaming():
         ]
     )
 
-    print("\n生成中...")
+    print("\nGenerating...")
     print("-" * 40)
 
-    # 检查是否支持流式输出
+    # Check if streaming output is supported
     if hasattr(llm, "stream"):
-        # 流式输出
+        # Streaming output
         for chunk in llm.stream(dialog):
             if chunk.content:
                 print(chunk.content, end="", flush=True)
         print()
     else:
-        # 普通输出
+        # Normal output
         response = llm.query(dialog)
         print(response.content)
 
 
 def main():
-    """运行所有示例"""
+    """Run all examples."""
     print("\n" + "=" * 60)
-    print("LLM 使用示例")
+    print("LLM Usage Examples")
     print("=" * 60)
 
-    # 运行各个示例
+    # Run each example
     example_simple_chat()
     example_multi_turn_chat()
     example_tool_calling()
@@ -306,7 +306,7 @@ def main():
     example_streaming()
 
     print("\n" + "=" * 60)
-    print("所有示例运行完成")
+    print("All examples completed")
     print("=" * 60)
 
 

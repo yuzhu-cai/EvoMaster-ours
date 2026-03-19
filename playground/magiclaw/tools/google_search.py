@@ -1,6 +1,6 @@
-"""Chat Agent Google Search 工具
+"""Chat Agent Google Search Tool
 
-通过 Serper API 进行 Google 搜索，返回原始搜索结果列表（标题、链接、摘要）。
+Performs Google searches via the Serper API, returning raw search result lists (title, link, snippet).
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ class GoogleSearchToolParams(BaseToolParams):
 
 
 class GoogleSearchTool(BaseTool):
-    """Google 搜索工具（Serper API）"""
+    """Google Search Tool (Serper API)."""
 
     name: ClassVar[str] = "google_search"
     params_class: ClassVar[type[BaseToolParams]] = GoogleSearchToolParams
@@ -48,7 +48,7 @@ class GoogleSearchTool(BaseTool):
         super().__init__()
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """执行 Google 搜索"""
+        """Execute Google search."""
         api_key = os.environ.get("SERPER_KEY_ID")
         if not api_key:
             return (
@@ -75,7 +75,7 @@ class GoogleSearchTool(BaseTool):
         return response, {"queries": queries}
 
     def _search_single(self, query: str, api_key: str) -> str:
-        """执行单个查询的 Google 搜索"""
+        """Execute a single-query Google search."""
         conn = http.client.HTTPSConnection("google.serper.dev")
 
         if self._contains_chinese(query):
@@ -141,5 +141,5 @@ class GoogleSearchTool(BaseTool):
 
     @staticmethod
     def _contains_chinese(text: str) -> bool:
-        """检测文本是否包含中文字符"""
+        """Detect whether the text contains Chinese characters."""
         return any("\u4E00" <= char <= "\u9FFF" for char in text)

@@ -127,8 +127,28 @@ class ToolRegistry:
 ### 工厂函数
 
 ```python
+def create_registry(
+    builtin_names: list[str] | None = None,
+    skill_registry: SkillRegistry | None = None,
+    openclaw_bridge: object | None = None,
+    enabled_skills: list[str] | None = None,
+) -> ToolRegistry:
+    """创建工具注册表，支持按名称筛选 builtin 工具
+
+    Args:
+        builtin_names: 需要注册的 builtin 工具名称列表。
+            - None 或 ["*"] -> 注册全部 builtin 工具
+            - [] -> 不注册任何 builtin（仅 skill / MCP）
+            - ["execute_bash", "finish"] -> 仅注册指定工具
+        skill_registry: 可选的 SkillRegistry，如果提供则注册 SkillTool
+        openclaw_bridge: 可选的 OpenclawBridge 实例，传递给 SkillTool
+        enabled_skills: 可选，配置的 skill 名称列表
+    """
+
 def create_default_registry(skill_registry: SkillRegistry | None = None) -> ToolRegistry:
     """创建默认的工具注册表，包含所有内置工具
+
+    是 create_registry(builtin_names=["*"], ...) 的便捷封装。
 
     Args:
         skill_registry: 可选的 SkillRegistry，如果提供则注册 SkillTool
@@ -372,7 +392,15 @@ class MyTool(BaseTool):
         return result, {"status": "success"}
 
 # 注册工具
-registry = create_default_registry()
+registry = create_registry()
+registry.register(MyTool())
+```
+
+也可以创建仅包含特定内置工具的注册表：
+
+```python
+# 仅注册 bash 和 finish 工具，加上自定义工具
+registry = create_registry(builtin_names=["execute_bash", "finish"])
 registry.register(MyTool())
 ```
 
@@ -393,7 +421,7 @@ await manager.add_server(
 )
 
 # 注册到 ToolRegistry
-registry = create_default_registry()
+registry = create_registry()
 manager.register_tools(registry)
 
 # 现在所有 MCP 工具都可用，名称为 github_*

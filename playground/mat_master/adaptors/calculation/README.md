@@ -1,22 +1,22 @@
-# Calculation path adaptor (bohr-agent-sdk)
+# Calculation Path Adaptor (bohr-agent-sdk)
 
-与 _tmp/MatMaster 一致：**HTTPS 存储走 Bohrium 鉴权**；**executor** 按“同步/异步”区分：同步任务传 `None`，其余传指定镜像/机型的 Bohrium executor（鉴权从 .env 注入）。
+Consistent with _tmp/MatMaster: **HTTPS storage uses Bohrium authentication**; **executor** is distinguished by "sync/async": synchronous tasks pass `None`, while the rest pass a Bohrium executor with the specified image/machine type (authentication is injected from .env).
 
-## 注入参数
+## Injected Parameters
 
-- **executor**（依配置 `mcp.calculation_executors`）：
-  - 若工具名在该服务器的 `sync_tools` 中 → 传 `None`（同步执行，跑在服务端默认环境）。
-  - 否则若该服务器配置了 `executor` 模板（镜像/机型）→ 传 Bohrium executor（鉴权由 `evomaster.env.inject_bohrium_executor` 从 .env 注入）。
-  - 未配置或无模板 → `None`。
-- **storage**：`get_bohrium_storage_config()`（来自 `evomaster.env.bohrium`），从 `.env` 的 `BOHRIUM_ACCESS_KEY`、`BOHRIUM_PROJECT_ID` 读取。
-- **输入路径**：本地/workspace 文件在配置了 OSS 时上传并替换为 https URL 再调用 MCP。
+- **executor** (per `mcp.calculation_executors` config):
+  - If the tool name is in the server's `sync_tools` list -> passes `None` (synchronous execution, running in the server's default environment).
+  - Otherwise, if the server has an `executor` template configured (image/machine type) -> passes a Bohrium executor (authentication injected by `evomaster.env.inject_bohrium_executor` from .env).
+  - No config or no template -> `None`.
+- **storage**: `get_bohrium_storage_config()` (from `evomaster.env.bohrium`), reads `BOHRIUM_ACCESS_KEY` and `BOHRIUM_PROJECT_ID` from `.env`.
+- **Input paths**: Local/workspace files are uploaded to OSS (when configured) and replaced with HTTPS URLs before calling MCP.
 
-## /workspace 映射
+## /workspace Mapping
 
-Agent 可能传入 `/workspace/Fe_bcc.cif`。本 adaptor 将 `/workspace/` 映射为当前 session 的 `workspace_path`，即 `workspace_path/Fe_bcc.cif`，再判断文件是否存在并上传 OSS。
+The Agent may pass paths like `/workspace/Fe_bcc.cif`. This adaptor maps `/workspace/` to the current session's `workspace_path`, i.e., `workspace_path/Fe_bcc.cif`, then checks whether the file exists and uploads it to OSS.
 
-## 依赖
+## Dependencies
 
-- **运行环境**：与执行 `python run.py` 的进程相同。ConfigManager 在加载配置时从**项目根目录**查找并加载 `.env`，故 OSS/Bohrium 相关变量需写在**项目根目录的 .env** 中（或在该进程的 shell 里 export）。
-- 环境变量：`OSS_ENDPOINT`、`OSS_BUCKET_NAME`、`OSS_ACCESS_KEY_ID`、`OSS_ACCESS_KEY_SECRET`（本地文件上传到 OSS 时必填）；Bohrium 鉴权见上。
-- `pip install oss2`（已列入主依赖）。
+- **Runtime environment**: Same as the process running `python run.py`. ConfigManager loads `.env` from the **project root directory** when loading configuration, so OSS/Bohrium-related variables must be set in the **project root's .env** file (or exported in the shell of that process).
+- Environment variables: `OSS_ENDPOINT`, `OSS_BUCKET_NAME`, `OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET` (required when uploading local files to OSS); Bohrium authentication as described above.
+- `pip install oss2` (already included in the main dependencies).

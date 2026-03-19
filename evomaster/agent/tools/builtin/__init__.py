@@ -1,6 +1,6 @@
-"""内置工具模块
+"""Built-in tools module.
 
-提供 EvoMaster 的内置工具。
+Provides EvoMaster's built-in tools.
 """
 
 from .bash import BashTool, BashToolParams

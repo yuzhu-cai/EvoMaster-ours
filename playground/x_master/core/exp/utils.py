@@ -1,21 +1,22 @@
-"""X-Master 实验工具函数"""
+"""Utility functions for X-Master experiments."""
 
 import json
 from typing import Any
 
 
 def strip_think_and_exec(text: str) -> str:
-    """清理文本中的 </think> 和 </execution_results> 标签及其之前的内容
+    """Remove trailing </think> and </execution_results> sections from text.
 
-    保留可见的答案部分，移除思考过程和执行结果的尾部标记。
-    这个函数用于在传递给下游 Agent（如 Critic/Rewriter/Selector）之前
-    清理上游 Agent 的输出，确保下游只看到最终答案而非中间过程。
+    Keep only the visible answer part and discard preceding internal reasoning or execution result tags.
+    This is used to clean upstream agent outputs before passing them to downstream agents
+    (e.g., Critic/Rewriter/Selector), ensuring downstream agents see the final answer and not
+    intermediate reasoning steps.
 
     Args:
-        text: 原始文本
+        text: the original text
 
     Returns:
-        清理后的文本
+        Cleaned text with only the visible answer portion.
     """
     if text is None:
         return ""
@@ -28,28 +29,28 @@ def strip_think_and_exec(text: str) -> str:
 
 
 def extract_agent_response(trajectory: Any) -> str:
-    """从轨迹中提取Agent的最终回答
+    """Extract the agent's final response from a trajectory object.
 
     Args:
-        trajectory: 执行轨迹
+        trajectory: execution trajectory object (expected to have a .dialogs list)
 
     Returns:
-        Agent的回答文本
+        The agent's response text if found, otherwise an empty string.
     """
     if not trajectory or not trajectory.dialogs:
         return ""
 
-    # 获取最后一个对话
+    # Get the last dialog
     last_dialog = trajectory.dialogs[-1]
     
-    # 查找最后一个助手消息
+    # Search for the last assistant message
     for message in reversed(last_dialog.messages):
         if hasattr(message, 'role') and message.role.value == 'assistant':
-            # 正常 assistant content
+            # Standard assistant content
             if hasattr(message, 'content') and message.content:
                 return message.content
 
-            # tool_calls 形式的最终回答
+            # Final answer might come as tool_calls
             if hasattr(message, 'tool_calls') and message.tool_calls:
                 for tool_call in message.tool_calls:
                     if not hasattr(tool_call, 'function'):
@@ -64,13 +65,13 @@ def extract_agent_response(trajectory: Any) -> str:
                     if not args:
                         continue
 
-                    # arguments 可能是 JSON 字符串
+                    # arguments might be a JSON string
                     try:
                         args_dict = json.loads(args)
                     except Exception:
                         continue
 
-                    # 优先取 message 字段
+                    # Prefer the 'message' field if present
                     if "message" in args_dict and args_dict["message"]:
                         return args_dict["message"]
             

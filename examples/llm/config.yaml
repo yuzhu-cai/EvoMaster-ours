@@ -1,6 +1,6 @@
-# LLM 配置示例
+# LLM Configuration Example
 llm:
-  # OpenAI 兼容的 LLM 配置
+  # OpenAI-compatible LLM configuration
   openai:
     provider: "openai"
     model: "gpt-5"
@@ -12,7 +12,7 @@ llm:
     max_retries: 3
     retry_delay: 1.0
 
-  # 自定义本地 vLLM（使用 Qwen 模型）
+  # Custom local vLLM (using Qwen model)
   local_vllm:
     provider: "openai"
     model: "Qwen/Qwen2.5-7B-Instruct"
@@ -24,7 +24,7 @@ llm:
     max_retries: 2
     retry_delay: 0.5
 
-  # Anthropic Claude 配置
+  # Anthropic Claude configuration
   anthropic:
     provider: "anthropic"
     model: "claude-haiku-4-5-20251001"
@@ -36,5 +36,5 @@ llm:
     max_retries: 3
     retry_delay: 1.0
 
-  # 默认使用的 LLM 配置名称
+  # Default LLM configuration name
   default: "openai"

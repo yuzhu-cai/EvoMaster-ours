@@ -1,16 +1,16 @@
-"""EvoMaster Agent Tools 模块
+"""EvoMaster Agent Tools module.
 
-提供可扩展的工具系统，支持 Agent 调用各种工具完成任务。
+Provides an extensible tool system that supports Agents in calling various tools to complete tasks.
 
-目录结构：
-- base.py: 工具基类和注册中心
-- builtin/: 内置工具（Bash, Editor, Think, Finish）
-- mcp/: MCP 协议工具支持
+Directory structure:
+- base.py: Tool base class and registry
+- builtin/: Built-in tools (Bash, Editor, Think, Finish)
+- mcp/: MCP protocol tool support
 """
 
 from .base import BaseTool, ToolRegistry, ToolError, create_default_registry, create_registry
 
-# 内置工具
+# Built-in tools
 from .builtin import (
     BashTool,
     BashToolParams,
@@ -22,7 +22,7 @@ from .builtin import (
     FinishToolParams,
 )
 
-# MCP 工具
+# MCP tools
 from .mcp import (
     MCPTool,
     MCPToolManager,

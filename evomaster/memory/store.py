@@ -1,7 +1,7 @@
-"""SQLite + FTS5 记忆存储层
+"""SQLite + FTS5 memory storage layer.
 
-单个 SQLite 文件存储所有用户记忆，通过 user_id 字段隔离。
-FTS5 索引使用 jieba 分词预处理，支持中文搜索。
+A single SQLite file stores all user memories, isolated by the user_id field.
+The FTS5 index uses jieba tokenization preprocessing to support Chinese search.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from .types import MemoryEntry
 
 logger = logging.getLogger(__name__)
 
-# 静默 jieba 的初始化日志
+# Silence jieba's initialization logs
 jieba.setLogLevel(logging.WARNING)
 
 _SCHEMA_SQL = """
@@ -40,33 +40,38 @@ CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id);
 CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(user_id, category);
 """
 
-# 独立 FTS 表（不关联 content table，因为需要存 jieba 分词后的文本）
+# Standalone FTS table (not linked to a content table, because jieba-segmented text is stored)
 _FTS_SQL = """
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content);
 """
 
-# 去重相似度阈值
+# Deduplication similarity threshold
 _DEDUP_SIMILARITY = 0.90
-# 时间衰减系数：每天降低 1% 的分数权重
+# Time decay coefficient: reduces the score weight by 1% per day
 _DECAY_RATE = 0.01
 
 
 def _segment(text: str) -> str:
-    """对文本做 jieba 分词，返回空格分隔的结果。
+    """Perform jieba tokenization on text and return a space-separated result.
 
-    例: "用户喜欢吃草莓" → "用户 喜欢 吃 草莓"
+    Example: "用户喜欢吃草莓" -> "用户 喜欢 吃 草莓" (i.e. "user likes eating strawberries" -> segmented tokens)
     """
     return " ".join(jieba.cut(text))
 
 
 class MemoryStore:
-    """SQLite + FTS5 记忆存储
+    """SQLite + FTS5 memory storage.
 
-    FTS5 索引存储 jieba 分词后的文本，搜索时也对 query 做分词。
-    线程安全：通过 threading.Lock 保护所有数据库操作。
+    The FTS5 index stores jieba-segmented text; queries are also segmented before searching.
+    Thread-safe: all database operations are protected by a threading.Lock.
     """
 
     def __init__(self, db_path: str | Path):
+        """Initialize the memory store.
+
+        Args:
+            db_path: Path to the SQLite database file.
+        """
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -74,24 +79,26 @@ class MemoryStore:
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
+        """Connect to the SQLite database."""
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
     def _init_schema(self) -> None:
+        """Initialize the database schema."""
         with self._lock:
             cur = self._conn.cursor()
             cur.executescript(_SCHEMA_SQL)
 
-            # 迁移：如果存在旧的触发器驱动的 FTS 表，drop 并重建
+            # Migration: if old trigger-driven FTS table exists, drop and rebuild
             self._migrate_fts(cur)
 
             self._conn.commit()
 
     def _migrate_fts(self, cur: sqlite3.Cursor) -> None:
-        """检测并迁移旧 FTS 表（从触发器同步迁移到 jieba 手动同步）。"""
-        # 检查是否有旧触发器
+        """Detect and migrate old FTS table (from trigger-based sync to jieba manual sync)."""
+        # Check for old triggers
         old_triggers = cur.execute(
             "SELECT name FROM sqlite_master WHERE type='trigger' AND name IN "
             "('memories_ai', 'memories_ad', 'memories_au')"
@@ -100,21 +107,21 @@ class MemoryStore:
         needs_rebuild = False
 
         if old_triggers:
-            # 有旧触发器 → 需要迁移
+            # Old triggers found -- migration needed
             logger.info("Migrating FTS from trigger-based to jieba-segmented...")
             for trigger in old_triggers:
                 cur.execute(f"DROP TRIGGER IF EXISTS {trigger['name']}")
-            # Drop 旧 FTS 表并重建
+            # Drop old FTS table and rebuild
             cur.execute("DROP TABLE IF EXISTS memories_fts")
             needs_rebuild = True
 
-        # 确保 FTS 表存在
+        # Ensure FTS table exists
         try:
             cur.execute("SELECT * FROM memories_fts LIMIT 0")
         except sqlite3.OperationalError:
             needs_rebuild = True
 
-        # 检查 FTS 内容是否已经用 jieba 分词（分词后的文本包含空格）
+        # Check if FTS content is already jieba-segmented (segmented text contains spaces)
         if not needs_rebuild:
             sample = cur.execute(
                 "SELECT content FROM memories_fts LIMIT 1"
@@ -131,7 +138,7 @@ class MemoryStore:
             self._rebuild_fts_index(cur)
 
     def _rebuild_fts_index(self, cur: sqlite3.Cursor) -> None:
-        """用 jieba 分词重建全部 FTS 索引。"""
+        """Rebuild the entire FTS index using jieba segmentation."""
         cur.execute("DELETE FROM memories_fts")
         rows = cur.execute("SELECT rowid, content FROM memories").fetchall()
         for row in rows:
@@ -154,12 +161,12 @@ class MemoryStore:
         importance: float = 0.5,
         source: str = "auto",
     ) -> str | None:
-        """插入记忆。自动去重：如果已有高度相似的记忆，更新 updated_at 并返回 None。"""
+        """Insert a memory. Auto-deduplication: if a highly similar memory already exists, updates updated_at and returns None."""
         content = content.strip()
         if not content:
             return None
 
-        # 去重检查
+        # Deduplication check
         existing = self.search(user_id, content, limit=1)
         if existing:
             top = existing[0]
@@ -187,7 +194,7 @@ class MemoryStore:
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (memory_id, user_id, content, category, importance, source, now, now),
             )
-            # 手动同步 FTS 索引（用 jieba 分词后的文本）
+            # Manually sync the FTS index (with jieba-segmented text)
             rowid = self._conn.execute(
                 "SELECT rowid FROM memories WHERE id = ?", (memory_id,)
             ).fetchone()["rowid"]
@@ -205,16 +212,16 @@ class MemoryStore:
         query: str,
         limit: int = 5,
     ) -> list[MemoryEntry]:
-        """FTS5 搜索 + BM25 排分 + 时间衰减。
+        """FTS5 search + BM25 scoring + time decay.
 
-        搜索时对 query 做 jieba 分词，再构建 FTS 查询。
-        FTS5 返回空结果或报错时，回退到 LIKE 搜索。
+        The query is jieba-segmented before building the FTS query.
+        Falls back to LIKE search if FTS5 returns empty results or errors.
         """
         query = query.strip()
         if not query:
             return self.get_recent(user_id, limit)
 
-        # 用 jieba 分词构建 FTS 查询
+        # Build FTS query with jieba segmentation
         tokens = [t.strip() for t in jieba.cut(query) if t.strip()]
         if not tokens:
             return self.get_recent(user_id, limit)
@@ -236,7 +243,7 @@ class MemoryStore:
             except sqlite3.OperationalError:
                 logger.debug("FTS query failed, falling back to LIKE search")
 
-        # FTS5 无结果，回退到 LIKE
+        # FTS5 returned no results; fall back to LIKE search
         if not rows:
             return self._search_like(user_id, query, limit)
 
@@ -244,24 +251,24 @@ class MemoryStore:
         entries = []
         for row in rows:
             entry = self._row_to_entry(row)
-            # BM25 返回负值，越小越相关 → 取绝对值
+            # BM25 returns negative values; smaller means more relevant -- take absolute value
             bm25 = abs(row["rank"])
             days = (now - entry.updated_at) / 86400
             decay = 1.0 / (1.0 + days * _DECAY_RATE)
             entry.score = bm25 * decay
             entries.append(entry)
 
-        # 按 score 降序
+        # Sort by score descending
         entries.sort(key=lambda e: e.score, reverse=True)
         return entries[:limit]
 
     def _search_like(self, user_id: str, query: str, limit: int) -> list[MemoryEntry]:
-        """LIKE 回退搜索：用 jieba 分词后按关键词匹配。"""
+        """LIKE fallback search: uses jieba segmentation and keyword matching."""
         tokens = [t.strip() for t in jieba.cut(query) if t.strip()]
         if not tokens:
             return self.get_recent(user_id, limit)
 
-        # 构建 OR 条件：任一关键词命中即可
+        # Build OR conditions: any keyword match is sufficient
         conditions = " OR ".join("content LIKE ?" for _ in tokens)
         params: list = [user_id] + [f"%{t}%" for t in tokens] + [limit]
         sql = f"""
@@ -275,7 +282,7 @@ class MemoryStore:
         return [self._row_to_entry(r) for r in rows]
 
     def get_recent(self, user_id: str, limit: int = 10) -> list[MemoryEntry]:
-        """获取最近的记忆"""
+        """Get the most recent memories."""
         sql = "SELECT * FROM memories WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?"
         with self._lock:
             rows = self._conn.execute(sql, (user_id, limit)).fetchall()
@@ -284,7 +291,7 @@ class MemoryStore:
     def get_by_category(
         self, user_id: str, category: str, limit: int = 10
     ) -> list[MemoryEntry]:
-        """按类别获取记忆"""
+        """Get memories by category."""
         sql = (
             "SELECT * FROM memories WHERE user_id = ? AND category = ? "
             "ORDER BY updated_at DESC LIMIT ?"
@@ -294,9 +301,9 @@ class MemoryStore:
         return [self._row_to_entry(r) for r in rows]
 
     def delete(self, memory_id: str) -> bool:
-        """按 ID 删除"""
+        """Delete by ID."""
         with self._lock:
-            # 先删 FTS 索引
+            # Delete the FTS index first
             row = self._conn.execute(
                 "SELECT rowid FROM memories WHERE id = ?", (memory_id,)
             ).fetchone()
@@ -304,7 +311,7 @@ class MemoryStore:
                 self._conn.execute(
                     "DELETE FROM memories_fts WHERE rowid = ?", (row["rowid"],)
                 )
-            # 再删主表
+            # Then delete from the main table
             cur = self._conn.execute(
                 "DELETE FROM memories WHERE id = ?", (memory_id,)
             )
@@ -312,13 +319,13 @@ class MemoryStore:
             return cur.rowcount > 0
 
     def delete_by_query(self, user_id: str, query: str) -> int:
-        """搜索并删除匹配的记忆，返回删除数量"""
+        """Search and delete matching memories, returning the number deleted."""
         matches = self.search(user_id, query, limit=3)
         if not matches:
             return 0
         deleted = 0
         for m in matches:
-            # 只删除相似度较高的
+            # Only delete those with high similarity
             sim = SequenceMatcher(None, query.lower(), m.content.lower()).ratio()
             if sim >= 0.5:
                 if self.delete(m.id):
@@ -326,7 +333,7 @@ class MemoryStore:
         return deleted
 
     def count(self, user_id: str) -> int:
-        """用户记忆总数"""
+        """Get the total number of memories for a user."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT COUNT(*) AS cnt FROM memories WHERE user_id = ?",
@@ -335,14 +342,14 @@ class MemoryStore:
             return row["cnt"] if row else 0
 
     def enforce_limit(self, user_id: str, max_count: int) -> int:
-        """强制限制用户记忆数量，删除最旧的超出部分。返回删除数量。"""
+        """Enforce a limit on the number of user memories, deleting the oldest excess entries. Returns the number deleted."""
         current = self.count(user_id)
         if current <= max_count:
             return 0
         to_delete = current - max_count
 
         with self._lock:
-            # 找出要删除的记录的 rowid
+            # Find the rowids of the records to delete
             rows = self._conn.execute(
                 "SELECT rowid FROM memories WHERE user_id = ? ORDER BY updated_at ASC LIMIT ?",
                 (user_id, to_delete),
@@ -354,11 +361,11 @@ class MemoryStore:
             rowids = [r["rowid"] for r in rows]
             placeholders = ",".join("?" for _ in rowids)
 
-            # 先删 FTS
+            # Delete FTS first
             self._conn.execute(
                 f"DELETE FROM memories_fts WHERE rowid IN ({placeholders})", rowids
             )
-            # 再删主表
+            # Then delete from the main table
             cur = self._conn.execute(
                 f"DELETE FROM memories WHERE rowid IN ({placeholders})", rowids
             )
@@ -366,7 +373,7 @@ class MemoryStore:
             return cur.rowcount
 
     def close(self) -> None:
-        """关闭连接"""
+        """Close the database connection."""
         with self._lock:
             self._conn.close()
 
@@ -376,6 +383,7 @@ class MemoryStore:
 
     @staticmethod
     def _row_to_entry(row: sqlite3.Row) -> MemoryEntry:
+        """Convert a database row to a MemoryEntry."""
         return MemoryEntry(
             id=row["id"],
             user_id=row["user_id"],

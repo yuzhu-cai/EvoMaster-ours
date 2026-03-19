@@ -1,6 +1,6 @@
-"""多智能体实验实现
+"""Multi-Agent Experiment Implementation
 
-定义多智能体协作的实验执行逻辑。
+Defines the experiment execution logic for multi-agent collaboration.
 """
 
 import logging
@@ -11,23 +11,23 @@ from evomaster.utils.types import TaskInstance
 
 
 class MultiAgentExp(BaseExp):
-    """多智能体实验类
+    """Multi-Agent Experiment Class
 
-    实现Planning Agent和Coding Agent的协作工作流：
-    1. Planning Agent分析任务并制定计划
-    2. Coding Agent根据计划执行代码任务
+    Implements the collaborative workflow of Planning Agent and Coding Agent:
+    1. Planning Agent analyzes the task and formulates a plan
+    2. Coding Agent executes code tasks based on the plan
     """
 
     def __init__(self, planning_agent, coding_agent, config):
-        """初始化多智能体实验
+        """Initialize multi-agent experiment.
 
         Args:
-            planning_agent: Planning Agent 实例
-            coding_agent: Coding Agent 实例
-            config: EvoMasterConfig 实例
+            planning_agent: Planning Agent instance
+            coding_agent: Coding Agent instance
+            config: EvoMasterConfig instance
         """
-        # 为了兼容基类，传入第一个agent（planning_agent）
-        # 但实际使用时会使用多个agent
+        # For base class compatibility, pass the first agent (planning_agent)
+        # But multiple agents will be used in actual execution
         super().__init__(planning_agent, config)
         self.planning_agent = planning_agent
         self.coding_agent = coding_agent
@@ -35,22 +35,22 @@ class MultiAgentExp(BaseExp):
 
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the experiment phase name."""
         return "MultiAgent"
 
     def run(self, task_description: str, task_id: str = "exp_001") -> dict:
-        """运行多智能体实验
+        """Run the multi-agent experiment.
 
-        工作流：
-        1. Planning Agent分析任务并制定计划
-        2. Coding Agent根据计划执行代码任务
+        Workflow:
+        1. Planning Agent analyzes the task and formulates a plan
+        2. Coding Agent executes code tasks based on the plan
 
         Args:
-            task_description: 任务描述
-            task_id: 任务 ID
+            task_description: Task description
+            task_id: Task ID
 
         Returns:
-            执行结果字典
+            Execution result dictionary
         """
         self.logger.info("Starting multi-agent task execution")
         self.logger.info(f"Task: {task_description}")
@@ -62,12 +62,12 @@ class MultiAgentExp(BaseExp):
             'status': 'running',
         }
 
-        # 设置当前exp信息，用于trajectory记录
-        # exp_name 从类名自动推断（MultiAgentExp -> MultiAgent）
+        # Set current exp info for trajectory recording
+        # exp_name is automatically inferred from the class name (MultiAgentExp -> MultiAgent)
         BaseAgent.set_exp_info(exp_name=self.exp_name, exp_index=0)
 
         try:
-            # Step 1: Planning Agent制定计划
+            # Step 1: Planning Agent formulates the plan
             if self.planning_agent:
                 self.logger.info("=" * 60)
                 self.logger.info("Step 1: Planning Agent analyzing task...")
@@ -83,27 +83,27 @@ class MultiAgentExp(BaseExp):
                 planning_trajectory = self.planning_agent.run(planning_task)
                 results['planning_trajectory'] = planning_trajectory
 
-                # 提取Planning Agent的回答
+                # Extract Planning Agent's response
                 planning_result = self._extract_agent_response(planning_trajectory)
                 results['planning_result'] = planning_result
 
                 self.logger.info("Planning completed")
                 self.logger.info(f"Planning result: {planning_result[:200]}...")
 
-            # Step 2: Coding Agent执行任务
+            # Step 2: Coding Agent executes the task
             if self.coding_agent:
                 self.logger.info("=" * 60)
                 self.logger.info("Step 2: Coding Agent executing task...")
                 self.logger.info("=" * 60)
 
-                # 准备Coding Agent的用户提示词格式化参数
-                # 使用prompt_format_kwargs来传递planning_result
+                # Prepare user prompt formatting parameters for Coding Agent
+                # Use prompt_format_kwargs to pass planning_result
                 original_format_kwargs = self.coding_agent._prompt_format_kwargs.copy()
                 self.coding_agent._prompt_format_kwargs.update({
                     'planning_result': results.get('planning_result', '')
                 })
 
-                # 创建任务实例
+                # Create task instance
                 coding_task = TaskInstance(
                     task_id=f"{task_id}_coding",
                     task_type="coding",
@@ -113,10 +113,10 @@ class MultiAgentExp(BaseExp):
 
                 coding_trajectory = self.coding_agent.run(coding_task)
 
-                # 恢复原始格式化参数
+                # Restore original formatting parameters
                 self.coding_agent._prompt_format_kwargs = original_format_kwargs
 
-                # 提取Coding Agent的结果
+                # Extract Coding Agent's result
                 coding_result = self._extract_agent_response(coding_trajectory)
                 results['coding_result'] = coding_result
                 results['coding_trajectory'] = coding_trajectory
@@ -127,11 +127,11 @@ class MultiAgentExp(BaseExp):
             results['status'] = 'completed'
             self.logger.info("Multi-agent task execution completed")
 
-            # 保存结果到 self.results（用于 save_results）
+            # Save results to self.results (for save_results)
             result = {
                 "task_id": task_id,
                 "status": results['status'],
-                "steps": 0,  # 多agent场景下steps计算方式不同
+                "steps": 0,  # Step counting differs in multi-agent scenarios
                 "planning_trajectory": results.get('planning_trajectory'),
                 "coding_trajectory": results.get('coding_trajectory'),
                 "planning_result": results.get('planning_result'),
@@ -144,7 +144,7 @@ class MultiAgentExp(BaseExp):
             results['status'] = 'failed'
             results['error'] = str(e)
 
-            # 保存失败结果
+            # Save failed results
             result = {
                 "task_id": task_id,
                 "status": "failed",

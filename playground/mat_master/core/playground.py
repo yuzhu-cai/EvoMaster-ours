@@ -1,10 +1,10 @@
-"""Mat Master Playground 实现
+"""Mat Master Playground Implementation
 
-材料科学 / 计算材料方向的 EvoMaster agent，接入 Mat 的 MCP 工具
-（Structure Generator、Science Navigator、Document Parser、DPA Calculator）。
-使用 MatMasterAgent：支持 functions.finish 归一化、仅 task_completed==true 时结束。
-mat_master 在此复写 _setup_mcp_tools，在初始化 MCP 前设置 tool_include_only（仅注册指定工具），
-不修改基类 core/playground.py。
+Materials science / computational materials EvoMaster agent, integrating Mat's MCP tools
+(Structure Generator, Science Navigator, Document Parser, DPA Calculator).
+Uses MatMasterAgent: supports functions.finish normalization, ends only when task_completed==true.
+mat_master overrides _setup_mcp_tools here to set tool_include_only before initializing MCP
+(registers only specified tools), without modifying the base class core/playground.py.
 """
 from __future__ import annotations
 
@@ -24,20 +24,21 @@ from .agent import MatMasterAgent
 class MatMasterPlayground(BasePlayground):
     """Mat Master Playground
 
-    材料科学向的 playground，使用 Mat 的 MCP 服务（结构生成、科学导航、
-    文档解析、DPA 计算），支持 LiteLLM 与 Azure 的 LLM 配置格式。
-    使用 MatMasterAgent：异步任务未完成时不会因 partial 结束，需 task_completed=true 才结束。
+    A materials-science-oriented playground using Mat's MCP services (structure generation,
+    science navigation, document parsing, DPA calculation), supporting LiteLLM and Azure LLM configurations.
+    Uses MatMasterAgent: does not end due to partial completion when async tasks are unfinished;
+    requires task_completed=true to end.
 
-    使用方式：
-        python run.py --agent mat_master --task "材料相关任务"
+    Usage:
+        python run.py --agent mat_master --task "materials-related task"
     """
 
     def __init__(self, config_dir: Path = None, config_path: Path = None):
-        """初始化 MatMasterPlayground
+        """Initialize MatMasterPlayground.
 
         Args:
-            config_dir: 配置目录路径，默认为 configs/mat_master/
-            config_path: 配置文件完整路径（如果提供，会覆盖 config_dir）
+            config_dir: Configuration directory path, defaults to configs/mat_master/
+            config_path: Full path to config file (overrides config_dir if provided)
         """
         if config_path is None and config_dir is None:
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "mat_master"
@@ -53,7 +54,7 @@ class MatMasterPlayground(BasePlayground):
         llm_config_dict: dict | None = None,
         skill_registry=None,
     ):
-        """创建 Mat Master 专用 Agent（MatMasterAgent），其余与基类一致"""
+        """Create a Mat Master specific Agent (MatMasterAgent); otherwise same as base class."""
         from evomaster.agent import AgentConfig
         from evomaster.agent.context import ContextConfig
         from evomaster.utils import LLMConfig, create_llm
@@ -99,9 +100,9 @@ class MatMasterPlayground(BasePlayground):
         return agent
 
     def _configure_mcp_manager(self, manager: MCPToolManager, mcp_config: Dict[str, Any]) -> None:
-        """Mat Master: 配置 calculation path adaptor 和 tool_include_only"""
+        """Mat Master: configure calculation path adaptor and tool_include_only."""
 
-        # 1. 配置 calculation path adaptor
+        # 1. Configure calculation path adaptor
         if mcp_config.get("path_adaptor") == "calculation":
             from playground.mat_master.adaptors.calculation import get_calculation_path_adaptor
 
@@ -109,7 +110,7 @@ class MatMasterPlayground(BasePlayground):
             if calc_servers:
                 manager.path_adaptor_servers = set(calc_servers)
             else:
-                # 如果没有指定，要求配置中必须指定 calculation_servers
+                # If not specified, the config must specify calculation_servers
                 self.logger.warning("calculation_servers not specified in config, path adaptor may not work correctly")
                 manager.path_adaptor_servers = set()
 
@@ -117,7 +118,7 @@ class MatMasterPlayground(BasePlayground):
             self.logger.info("Calculation path adaptor enabled for servers: %s",
                             manager.path_adaptor_servers)
 
-        # 2. 配置 tool_include_only（部分选择 MCP 工具）
+        # 2. Configure tool_include_only (selectively register MCP tools)
         include_only = mcp_config.get("tool_include_only")
         if include_only and isinstance(include_only, dict):
             manager.tool_include_only = {

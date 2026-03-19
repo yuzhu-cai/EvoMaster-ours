@@ -1,6 +1,6 @@
-"""飞书文档读取工具
+"""Feishu document reading tool
 
-通过飞书 Open API 读取飞书文档 / Wiki 页面的文本内容。
+Read the text content of Feishu documents / Wiki pages via the Feishu Open API.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# URL 正则：支持 /wiki/XXX, /docx/XXX, /docs/XXX
+# URL regex: supports /wiki/XXX, /docx/XXX, /docs/XXX
 _URL_PATTERNS = [
     (re.compile(r"/wiki/([A-Za-z0-9]+)"), "wiki"),
     (re.compile(r"/docx/([A-Za-z0-9]+)"), "docx"),
@@ -27,10 +27,10 @@ _URL_PATTERNS = [
 
 
 def _parse_feishu_url(url: str) -> tuple[str, str] | None:
-    """从飞书 URL 中提取 token 和类型。
+    """Extract token and type from a Feishu URL.
 
     Returns:
-        (token, url_type) 或 None
+        (token, url_type) or None.
     """
     for pattern, url_type in _URL_PATTERNS:
         m = pattern.search(url)
@@ -54,12 +54,19 @@ class FeishuDocReadToolParams(BaseToolParams):
 
 
 class FeishuDocReadTool(BaseTool):
-    """飞书文档读取工具"""
+    """Feishu document reading tool."""
 
     name: ClassVar[str] = "feishu_doc_read"
     params_class: ClassVar[type[BaseToolParams]] = FeishuDocReadToolParams
 
     def __init__(self, app_id: str, app_secret: str, domain: str = "https://open.feishu.cn"):
+        """Initialize the Feishu document reader.
+
+        Args:
+            app_id: Feishu application App ID.
+            app_secret: Feishu application App Secret.
+            domain: Feishu API domain.
+        """
         super().__init__()
         self.app_id = app_id
         self.app_secret = app_secret
@@ -67,7 +74,7 @@ class FeishuDocReadTool(BaseTool):
         self._client = None
 
     def _get_client(self):
-        """延迟创建/获取缓存的飞书 Client"""
+        """Lazily create or retrieve the cached Feishu Client."""
         if self._client is None:
             from ..messaging.client import create_feishu_client
 
@@ -79,10 +86,10 @@ class FeishuDocReadTool(BaseTool):
         return self._client
 
     def _resolve_wiki_token(self, node_token: str) -> tuple[str, str]:
-        """将 wiki node_token 解析为 (obj_token, title)。
+        """Resolve a wiki node_token to (obj_token, title).
 
         Raises:
-            RuntimeError: API 调用失败
+            RuntimeError: On API call failure.
         """
         from lark_oapi.api.wiki.v2 import GetNodeSpaceRequest
 
@@ -99,10 +106,10 @@ class FeishuDocReadTool(BaseTool):
         return node.obj_token, node.title or ""
 
     def _read_document(self, doc_token: str) -> str:
-        """读取文档的纯文本内容。
+        """Read the plain text content of a document.
 
         Raises:
-            RuntimeError: API 调用失败
+            RuntimeError: On API call failure.
         """
         from lark_oapi.api.docx.v1 import RawContentDocumentRequest
 
@@ -118,7 +125,7 @@ class FeishuDocReadTool(BaseTool):
         return resp.data.content or ""
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """读取飞书文档内容"""
+        """Read the content of a Feishu document."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -141,21 +148,21 @@ class FeishuDocReadTool(BaseTool):
             title = ""
 
             if url_type == "wiki":
-                # Wiki: 先解析 node_token → obj_token
+                # Wiki: first resolve node_token -> obj_token
                 doc_token, title = self._resolve_wiki_token(token)
                 self.logger.info(
                     "Wiki resolved: node=%s -> doc=%s, title=%s",
                     token, doc_token, title,
                 )
             elif url_type == "docs" and token.startswith("doccn"):
-                # Legacy doc 格式暂不支持
+                # Legacy doc format not supported
                 return (
                     "Legacy doc format (doccn) is not supported. "
                     "Please convert the document to the new docx format.",
                     {"error": "legacy_doc", "token": token},
                 )
             else:
-                # docx 或非 legacy docs
+                # docx or non-legacy docs
                 doc_token = token
 
             content = self._read_document(doc_token)
@@ -163,7 +170,7 @@ class FeishuDocReadTool(BaseTool):
             if not content.strip():
                 return "The document is empty.", {"token": doc_token, "title": title}
 
-            # 组装结果
+            # Assemble result
             header = f"Document: {title}\n\n" if title else ""
             result = f"{header}{content}"
 

@@ -6,14 +6,14 @@ spec:
   containers:
   - name: main
     image: evomaster/mle:latest
-    imagePullPolicy: Never  # 必填：使用本地镜像
-    command: ["/bin/bash", "-c", "sleep infinity"] # 保持容器运行
+    imagePullPolicy: Never  # Required: use local image
+    command: ["/bin/bash", "-c", "sleep infinity"] # Keep the container running
     resources:
       requests:
-        memory: "8Gi"    # 最小内存
-        cpu: "2"         # 最小CPU核数
+        memory: "8Gi"    # Minimum memory
+        cpu: "2"         # Minimum CPU cores
       limits:
-        memory: "32Gi"   # 最大内存
-        cpu: "8"         # 最大CPU核数
-        nvidia.com/gpu: 1 # 请求 1 张卡
+        memory: "32Gi"   # Maximum memory
+        cpu: "8"         # Maximum CPU cores
+        nvidia.com/gpu: 1 # Request 1 GPU
   restartPolicy: Never

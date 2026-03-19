@@ -1,14 +1,14 @@
-"""EvoMaster Skills 模块
+"""EvoMaster Skills module.
 
-Skills 是 EvoMaster 的技能组件，包含：
-- meta_info: 技能元信息
-- full_info: 完整信息
-- scripts: 可执行脚本
+Skills is EvoMaster's skill component, containing:
+- meta_info: Skill metadata
+- full_info: Full information
+- scripts: Executable scripts
 
-技能层级：
-1. 第一层级 meta_info: 技能元信息
-2. 第二层级 full_info: 完整信息
-3. 第三层级 scripts: 可执行脚本
+Skill hierarchy:
+1. Level 1 meta_info: Skill metadata
+2. Level 2 full_info: Full information
+3. Level 3 scripts: Executable scripts
 """
 
 from .base import (
