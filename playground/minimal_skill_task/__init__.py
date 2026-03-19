@@ -1,1 +1,1 @@
-"""Minimal Skill Task - RAG 多 Agent 流程（Analyze → Plan → Search → Summarize）"""
+"""Minimal Skill Task - RAG multi-agent pipeline (Analyze → Plan → Search → Summarize)."""

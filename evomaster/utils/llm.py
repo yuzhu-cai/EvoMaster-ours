@@ -1,6 +1,6 @@
-"""EvoMaster LLM 接口封装
+"""EvoMaster LLM Interface Wrapper
 
-提供统一的 LLM 调用接口，支持多种提供商。
+Provides a unified LLM calling interface with support for multiple providers.
 """
 
 from __future__ import annotations
@@ -19,15 +19,15 @@ from evomaster.utils.types import AssistantMessage, Dialog, FunctionCall, ToolCa
 
 
 # ---------------------------------------------------------------------------
-# Context overflow detection (参考 OpenCode provider/error.ts)
+# Context overflow detection (reference: OpenCode provider/error.ts)
 # ---------------------------------------------------------------------------
 
 class ContextOverflowError(Exception):
-    """LLM API 拒绝请求：上下文超长。不可重试，需要调用者做 compact。"""
+    """LLM API rejected the request: context too long. Not retryable; caller must compact."""
     pass
 
 
-# 覆盖主流 LLM provider 的 overflow 错误消息模式（小写匹配）
+# Covers overflow error message patterns from mainstream LLM providers (lowercase matching)
 _OVERFLOW_PATTERNS = [
     "prompt is too long",                # Anthropic
     "exceeds the context window",        # OpenAI
@@ -45,26 +45,26 @@ _OVERFLOW_PATTERNS = [
 
 
 def encode_image_to_base64(image_path: str) -> str:
-    """将图片文件编码为 base64 字符串
+    """Encode an image file to a base64 string.
 
     Args:
-        image_path: 图片文件路径
+        image_path: Image file path.
 
     Returns:
-        base64 编码字符串
+        Base64 encoded string.
     """
     with open(image_path, "rb") as f:
         return base64.b64encode(f.read()).decode("utf-8")
 
 
 def get_image_media_type(image_path: str) -> str:
-    """根据文件扩展名获取图片的 MIME 类型
+    """Get the MIME type of an image based on its file extension.
 
     Args:
-        image_path: 图片文件路径
+        image_path: Image file path.
 
     Returns:
-        MIME 类型字符串
+        MIME type string.
     """
     suffix = Path(image_path).suffix.lower()
     media_types = {
@@ -76,24 +76,24 @@ def get_image_media_type(image_path: str) -> str:
 
 
 def build_multimodal_content(text: str, image_paths: list[str]) -> list[dict[str, Any]]:
-    """构建包含文本和图片的多模态内容块列表
+    """Build a list of multimodal content blocks containing text and images.
 
-    生成 OpenAI 格式的 content 块列表，兼容 OpenAI / DeepSeek / OpenRouter 等 API。
+    Generates OpenAI-format content block lists, compatible with OpenAI / DeepSeek / OpenRouter APIs.
 
     Args:
-        text: 文本内容
-        image_paths: 图片文件路径列表
+        text: Text content.
+        image_paths: List of image file paths.
 
     Returns:
-        内容块列表，例如：
+        Content block list, for example:
         [
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
-            {"type": "text", "text": "请分析这些图片"}
+            {"type": "text", "text": "Please analyze these images"}
         ]
     """
     content_blocks: list[dict[str, Any]] = []
 
-    # 先添加图片
+    # Add images first
     for img_path in image_paths:
         media_type = get_image_media_type(img_path)
         b64_data = encode_image_to_base64(img_path)
@@ -104,7 +104,7 @@ def build_multimodal_content(text: str, image_paths: list[str]) -> list[dict[str
             }
         })
 
-    # 再添加文本
+    # Then add text
     content_blocks.append({
         "type": "text",
         "text": text,
@@ -114,44 +114,48 @@ def build_multimodal_content(text: str, image_paths: list[str]) -> list[dict[str
 
 
 def truncate_content(content: str, max_length: int = 5000, head_length: int = 2500, tail_length: int = 2500) -> str:
-    """返回完整内容（不截断），用于日志记录展示全部内容
-    
+    """Return the full content (no truncation), for log display of complete content.
+
     Args:
-        content: 要显示的内容
-        max_length: 未使用，保留参数兼容性
-        head_length: 未使用，保留参数兼容性
-        tail_length: 未使用，保留参数兼容性
-    
+        content: The content to display.
+        max_length: Unused, kept for parameter compatibility.
+        head_length: Unused, kept for parameter compatibility.
+        tail_length: Unused, kept for parameter compatibility.
+
     Returns:
-        完整内容
+        The full content.
     """
     return content
 
 
 class LLMConfig(BaseModel):
-    """LLM 配置"""
-    provider: Literal["openai", "anthropic","deepseek","openrouter"] = Field(description="LLM 提供商")
-    model: str = Field(description="模型名称")
-    api_key: str = Field(description="API Key，必须在配置中提供")
+    """LLM configuration."""
+    provider: Literal["openai", "anthropic","deepseek","openrouter"] = Field(description="LLM provider")
+    model: str = Field(description="Model name")
+    api_key: str = Field(description="API Key, must be provided in config")
     base_url: str | None = Field(default=None, description="API Base URL")
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="采样温度")
-    max_tokens: int | None = Field(default=None, description="最大生成 token 数")
-    timeout: int = Field(default=300, description="请求超时时间（秒）")
-    max_retries: int = Field(default=3, description="最大重试次数")
-    retry_delay: float = Field(default=1.0, description="重试延迟（秒）")
-    use_completion_api: bool = Field(default=False, description="使用 Completion API 而非 Chat API")
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
+    max_tokens: int | None = Field(default=None, description="Maximum generation tokens")
+    timeout: int = Field(default=300, description="Request timeout in seconds")
+    max_retries: int = Field(default=3, description="Maximum retry attempts")
+    retry_delay: float = Field(default=1.0, description="Retry delay in seconds")
+    use_completion_api: bool = Field(default=False, description="Use Completion API instead of Chat API")
 
 
 class LLMResponse(BaseModel):
-    """LLM 响应"""
-    content: str | None = Field(default=None, description="生成的文本内容")
-    tool_calls: list[ToolCall] | None = Field(default=None, description="工具调用列表")
-    finish_reason: str | None = Field(default=None, description="结束原因")
-    usage: dict[str, int] = Field(default_factory=dict, description="Token 使用统计")
-    meta: dict[str, Any] = Field(default_factory=dict, description="其他元数据")
+    """LLM response."""
+    content: str | None = Field(default=None, description="Generated text content")
+    tool_calls: list[ToolCall] | None = Field(default=None, description="Tool call list")
+    finish_reason: str | None = Field(default=None, description="Finish reason")
+    usage: dict[str, int] = Field(default_factory=dict, description="Token usage statistics")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Other metadata")
 
     def to_assistant_message(self) -> AssistantMessage:
-        """转换为 AssistantMessage"""
+        """Convert to an AssistantMessage.
+
+        Returns:
+            AssistantMessage instance.
+        """
         return AssistantMessage(
             content=self.content,
             tool_calls=self.tool_calls,
@@ -164,31 +168,31 @@ class LLMResponse(BaseModel):
 
 
 class BaseLLM(ABC):
-    """LLM 基类
+    """LLM base class.
 
-    定义统一的 LLM 调用接口。
+    Defines a unified LLM calling interface.
     """
 
     def __init__(self, config: LLMConfig, output_config: dict[str, Any] | None = None):
-        """初始化 LLM
+        """Initialize the LLM.
 
         Args:
-            config: LLM 配置
-            output_config: 输出显示配置，包含：
-                - show_in_console: 是否在终端显示
-                - log_to_file: 是否记录到日志文件
+            config: LLM configuration.
+            output_config: Output display configuration, including:
+                - show_in_console: Whether to display in terminal.
+                - log_to_file: Whether to log to file.
         """
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
         self.output_config = output_config or {}
         self.show_in_console = self.output_config.get("show_in_console", False)
         self.log_to_file = self.output_config.get("log_to_file", False)
-        # 跟踪已记录的消息数量，用于避免重复记录系统消息和初始任务描述
+        # Track logged message count to avoid duplicate logging of system messages and initial task descriptions
         self._logged_message_count = 0
         self._setup()
 
     def _setup(self) -> None:
-        """初始化设置，由子类实现"""
+        """Initialization setup, implemented by subclasses."""
         pass
 
     @abstractmethod
@@ -198,15 +202,15 @@ class BaseLLM(ABC):
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """调用 LLM API（子类实现）
+        """Call the LLM API (subclass implementation).
 
         Args:
-            messages: 消息列表（API 格式）
-            tools: 工具规格列表（API 格式）
-            **kwargs: 额外参数
+            messages: Message list (API format).
+            tools: Tool specification list (API format).
+            **kwargs: Additional parameters.
 
         Returns:
-            LLM 响应
+            LLM response.
         """
         pass
 
@@ -215,40 +219,41 @@ class BaseLLM(ABC):
         dialog: Dialog,
         **kwargs: Any,
     ) -> AssistantMessage:
-        """查询 LLM
+        """Query the LLM.
 
         Args:
-            dialog: 对话对象
-            **kwargs: 额外参数（覆盖配置）
+            dialog: Dialog object.
+            **kwargs: Additional parameters (override config).
 
         Returns:
-            助手消息
+            Assistant message.
         """
-        # 转换为 API 格式
+        # Convert to API format
         messages = dialog.get_messages_for_api()
         tools = self._convert_tools(dialog.tools) if dialog.tools else None
 
-        # 记录请求（如果启用日志）
+        # Log request (if logging enabled)
         if self.log_to_file:
             self._log_request(messages, tools)
 
-        # 调用 API（带重试）
+        # Call API (with retry)
         # breakpoint()
         response = self._call_with_retry(messages, tools, **kwargs)
         # breakpoint()
-        # 记录响应（如果启用日志）
+        # Log response (if logging enabled)
         if self.log_to_file:
             self._log_response(response)
 
-        # 转换为 AssistantMessage
+        # Convert to AssistantMessage
         return response.to_assistant_message()
 
     def _log_request(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None) -> None:
-        """记录 LLM 请求到日志
+        """Log the LLM request.
 
-        优化：只记录新增的消息，避免重复记录系统消息和初始任务描述。
-        第一次请求时记录所有消息，后续请求只记录新增的消息。
-        当检测到消息数量减少时（如重置context后），重置计数器并记录所有消息。
+        Optimization: only logs new messages to avoid duplicate logging of system
+        messages and initial task descriptions. First request logs all messages;
+        subsequent requests only log new messages. When message count decreases
+        (e.g., after context reset), resets the counter and logs all messages.
         """
         self.logger.info("=" * 80)
         self.logger.info("LLM Request:")
@@ -256,65 +261,65 @@ class BaseLLM(ABC):
         if tools:
             self.logger.info(f"Tools: {[t.get('function', {}).get('name', 'unknown') for t in tools]}")
         
-        # 检测是否是新对话开始（消息数量减少，通常发生在重置context后）
+        # Check if this is the start of a new conversation (message count decreased, usually after context reset)
         if len(messages) <= self._logged_message_count:
-            # 消息数量减少，说明是新对话开始，重置计数器
+            # Message count decreased, indicating a new conversation; reset counter
             self.logger.info("New conversation detected (message count decreased), resetting log counter")
             self._logged_message_count = 0
         
-        # 计算需要记录的消息
+        # Calculate messages to log
         new_messages = messages[self._logged_message_count:]
 
         if self._logged_message_count == 0:
-            # 第一次请求，记录所有消息（包括系统消息和初始任务描述）
+            # First request, log all messages (including system messages and initial task description)
             self.logger.info("Messages:")
             for i, msg in enumerate(messages):
                 self._log_single_message(i + 1, msg)
             self._logged_message_count = len(messages)
         else:
-            # 后续请求，只记录新增的消息
+            # Subsequent requests, only log new messages
             if new_messages:
                 self.logger.info(f"New Messages (continuing from message {self._logged_message_count + 1}):")
                 for i, msg in enumerate(new_messages):
                     self._log_single_message(self._logged_message_count + i + 1, msg)
                 self._logged_message_count = len(messages)
             else:
-                # 没有新消息（可能由于上下文截断导致消息数量减少）
+                # No new messages (possibly due to context truncation reducing message count)
                 self.logger.info(f"Messages: (same as previous, total: {len(messages)})")
-                # 更新已记录的消息数量，避免后续重复
+                # Update the logged message count to avoid future duplicates
                 self._logged_message_count = len(messages)
 
         self.logger.info("=" * 80)
 
     def _log_single_message(self, index: int, msg: dict[str, Any]) -> None:
-        """记录单条消息，处理工具调用的特殊显示
+        """Log a single message, with special handling for tool call display.
 
         Args:
-            index: 消息序号
-            msg: 消息字典
+            index: Message sequence number.
+            msg: Message dictionary.
         """
         role = msg.get("role", "unknown")
         content = msg.get("content", "")
         tool_calls = msg.get("tool_calls", [])
 
-        # 如果是 assistant 消息且有工具调用
+        # If this is an assistant message with tool calls
         if role == "assistant" and tool_calls:
             if content:
-                # 有文本内容，先显示内容
+                # Has text content, display it first
                 content_display = truncate_content(content) if isinstance(content, str) else f"[Multimodal content with {len(content)} blocks]"
                 self.logger.info(f"  [{index}] {role}: {content_display}")
             else:
-                # 只有工具调用，显示占位符
+                # Only tool calls, display placeholder
                 self.logger.info(f"  [{index}] {role}: [Calling {len(tool_calls)} tool(s)]")
 
-            # 显示每个工具调用的详细信息
+            # Display details of each tool call
             for i, tc in enumerate(tool_calls):
                 if isinstance(tc, dict):
                     func = tc.get("function", {})
                     tool_name = func.get("name", "unknown")
                     tool_args = func.get("arguments", "")
 
-                    # 格式化参数（如果是 JSON 字符串，尝试解析并美化）
+                    # Format arguments (if JSON string, try to parse and pretty-print)
                     try:
                         import json
                         args_dict = json.loads(tool_args) if isinstance(tool_args, str) else tool_args
@@ -325,11 +330,11 @@ class BaseLLM(ABC):
                     self.logger.info(f"      Tool #{i+1}: {tool_name}")
                     self.logger.info(f"      Args: {args_display}")
         else:
-            # 正常消息（没有工具调用）
+            # Normal message (no tool calls)
             if isinstance(content, str):
                 content = truncate_content(content)
             elif isinstance(content, list):
-                # 多模态内容：显示摘要信息
+                # Multimodal content: display summary information
                 text_blocks = [b for b in content if b.get("type") == "text"]
                 image_blocks = [b for b in content if b.get("type") in ("image_url", "image")]
                 text_preview = text_blocks[0].get("text", "")[:200] if text_blocks else ""
@@ -337,11 +342,11 @@ class BaseLLM(ABC):
             self.logger.info(f"  [{index}] {role}: {content}")
 
     def _log_response(self, response: LLMResponse) -> None:
-        """记录 LLM 响应到日志"""
+        """Log the LLM response."""
         self.logger.info("=" * 80)
         self.logger.info("LLM Response:")
         if response.content:
-            # 截断过长的内容
+            # Truncate overly long content
             content = truncate_content(response.content)
             self.logger.info(f"Content: {content}")
         if response.tool_calls:
@@ -356,18 +361,19 @@ class BaseLLM(ABC):
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """带重试的调用
+        """Call with retry.
 
-        参考 OpenCode: context overflow 和其他不可重试的 4xx 错误不会重试，
-        而是立即抛出以便上层做 compact 恢复。
+        Reference: OpenCode — context overflow and other non-retryable 4xx errors
+        are not retried; instead they are raised immediately so the caller can
+        perform compact recovery.
 
         Args:
-            messages: 消息列表
-            tools: 工具列表
-            **kwargs: 额外参数
+            messages: Message list.
+            tools: Tool list.
+            **kwargs: Additional parameters.
 
         Returns:
-            LLM 响应
+            LLM response.
         """
         last_error = None
 
@@ -377,66 +383,66 @@ class BaseLLM(ABC):
             except Exception as e:
                 last_error = e
 
-                # Context overflow → 不重试，立即抛给上层做 compact
+                # Context overflow → do not retry; raise immediately for caller to compact
                 if self._is_context_overflow_error(e):
                     self.logger.warning("Context overflow (non-retryable): %s", e)
                     raise ContextOverflowError(str(e)) from e
 
-                # 其他 4xx（非 429 rate-limit）也不重试
+                # Other 4xx (non-429 rate-limit) are also not retried
                 status = getattr(e, "status_code", None)
                 if status and 400 <= status < 500 and status != 429:
                     self.logger.warning("Non-retryable %d error: %s", status, e)
                     raise
 
-                # 可重试错误：正常重试
+                # Retryable error: normal retry
                 self.logger.warning(
                     "LLM call failed (attempt %d/%d): %s",
                     attempt + 1, self.config.max_retries, e,
                 )
 
                 if attempt < self.config.max_retries - 1:
-                    delay = self.config.retry_delay * (2 ** attempt)  # 指数退避
+                    delay = self.config.retry_delay * (2 ** attempt)  # Exponential backoff
                     time.sleep(delay)
 
-        # 所有重试失败
+        # All retries exhausted
         raise RuntimeError(f"LLM call failed after {self.config.max_retries} attempts") from last_error
 
     @staticmethod
     def _is_context_overflow_error(error: Exception) -> bool:
-        """检查是否为上下文溢出错误
+        """Check whether the error is a context overflow error.
 
-        参考 OpenCode OVERFLOW_PATTERNS，覆盖主流 provider 的错误消息。
+        Reference: OpenCode OVERFLOW_PATTERNS, covering error messages from mainstream providers.
         """
         error_msg = str(error).lower()
         status = getattr(error, "status_code", None)
-        # HTTP 413 (Request Entity Too Large) 一定是溢出
+        # HTTP 413 (Request Entity Too Large) is always an overflow
         if status == 413:
             return True
-        # 400 BadRequest + 包含 overflow 关键词
+        # 400 BadRequest + contains overflow keywords
         if status == 400:
             return any(p in error_msg for p in _OVERFLOW_PATTERNS)
         return False
 
     def _convert_tools(self, tool_specs: list) -> list[dict[str, Any]]:
-        """转换工具规格为 API 格式
+        """Convert tool specifications to API format.
 
         Args:
-            tool_specs: ToolSpec 列表
+            tool_specs: List of ToolSpec objects.
 
         Returns:
-            API 格式的工具列表
+            List of tools in API format.
         """
         return [spec.model_dump() for spec in tool_specs]
 
 
 class OpenAILLM(BaseLLM):
-    """OpenAI LLM 实现
+    """OpenAI LLM implementation.
 
-    支持 OpenAI API 和兼容接口（如 vLLM, Ollama 等）。
+    Supports the OpenAI API and compatible interfaces (e.g., vLLM, Ollama, etc.).
     """
 
     def _setup(self) -> None:
-        """设置 OpenAI 客户端"""
+        """Set up the OpenAI client."""
         try:
             from openai import OpenAI
         except ImportError:
@@ -444,11 +450,11 @@ class OpenAILLM(BaseLLM):
                 "OpenAI package not installed. Install with: pip install openai"
             )
 
-        # API key 必须在配置中提供
+        # API key must be provided in config
         if not self.config.api_key:
             raise ValueError("OpenAI API key must be provided in config")
 
-        # 创建客户端
+        # Create the client
         client_kwargs = {"api_key": self.config.api_key}
         if self.config.base_url:
             client_kwargs["base_url"] = self.config.base_url
@@ -461,8 +467,8 @@ class OpenAILLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """调用 OpenAI API"""
-        # 构建请求参数
+        """Call the OpenAI API."""
+        # Build request parameters
         request_params = {
             "model": self.config.model,
             "messages": messages,
@@ -477,14 +483,14 @@ class OpenAILLM(BaseLLM):
             request_params["tools"] = tools
             request_params["tool_choice"] = kwargs.get("tool_choice", "auto")
 
-        # 调用 API
+        # Call the API
         response = self.client.chat.completions.create(**request_params)
 
-        # 解析响应
+        # Parse the response
         choice = response.choices[0]
         message = choice.message
 
-        # 提取工具调用
+        # Extract tool calls
         tool_calls = None
         if message.tool_calls:
             tool_calls = [
@@ -515,13 +521,13 @@ class OpenAILLM(BaseLLM):
         )
 
 class DeepSeekLLM(BaseLLM):
-    """DeepSeek LLM 实现
+    """DeepSeek LLM implementation.
 
-    支持 Chat Completion API 和 Completion API。
+    Supports both the Chat Completion API and the Completion API.
     """
 
     def _setup(self) -> None:
-        """设置 OpenAI 客户端"""
+        """Set up the OpenAI client."""
         try:
             from openai import OpenAI
         except ImportError:
@@ -529,11 +535,11 @@ class DeepSeekLLM(BaseLLM):
                 "OpenAI package not installed. Install with: pip install openai"
             )
 
-        # API key 必须在配置中提供
+        # API key must be provided in config
         if not self.config.api_key:
             raise ValueError("OpenAI API key must be provided in config")
 
-        # 创建客户端
+        # Create the client
         client_kwargs = {"api_key": self.config.api_key}
         if self.config.base_url:
             client_kwargs["base_url"] = self.config.base_url
@@ -541,9 +547,9 @@ class DeepSeekLLM(BaseLLM):
         self.client = OpenAI(**client_kwargs)
 
     def _messages_to_prompt(self, messages: list[dict[str, Any]]) -> str:
-        """将消息列表转换为单个 prompt 字符串（用于 Completion API）
+        """Convert a message list to a single prompt string (for the Completion API).
 
-        格式与 X-Master 的 r1_tool.jinja 模板一致
+        Format is consistent with the X-Master r1_tool.jinja template.
         """
         parts = []
         for msg in messages:
@@ -557,7 +563,7 @@ class DeepSeekLLM(BaseLLM):
             elif role == "assistant":
                 parts.append(content)
             elif role == "tool":
-                # 工具结果包装在 execution_results 标签中
+                # Wrap tool results in execution_results tags
                 parts.append(f"<execution_results>{content}</execution_results>")
 
         return "".join(parts)
@@ -568,7 +574,7 @@ class DeepSeekLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """调用 DeepSeek API"""
+        """Call the DeepSeek API."""
         if self.config.use_completion_api:
             return self._call_completion(messages, **kwargs)
         else:
@@ -579,7 +585,7 @@ class DeepSeekLLM(BaseLLM):
         messages: list[dict[str, Any]],
         **kwargs: Any,
     ) -> LLMResponse:
-        """调用 Completion API"""
+        """Call the Completion API."""
         prompt = self._messages_to_prompt(messages)
 
         request_params = {
@@ -592,15 +598,15 @@ class DeepSeekLLM(BaseLLM):
         if self.config.max_tokens:
             request_params["max_tokens"] = kwargs.get("max_tokens", self.config.max_tokens)
 
-        # 调用 Completion API
+        # Call the Completion API
         response = self.client.completions.create(**request_params)
 
-        # 解析响应
+        # Parse the response
         choice = response.choices[0]
 
         return LLMResponse(
             content=choice.text,
-            tool_calls=None,  # Completion API 不支持原生 tool calls
+            tool_calls=None,  # Completion API does not support native tool calls
             finish_reason=choice.finish_reason,
             usage={
                 "prompt_tokens": response.usage.prompt_tokens,
@@ -620,8 +626,8 @@ class DeepSeekLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """调用 Chat Completion API"""
-        # 构建请求参数
+        """Call the Chat Completion API."""
+        # Build request parameters
         request_params = {
             "model": self.config.model,
             "messages": messages,
@@ -637,13 +643,13 @@ class DeepSeekLLM(BaseLLM):
             request_params["max_tokens"] = kwargs.get("max_tokens", self.config.max_tokens)
 
         if tools:
-            # 清理 tools 中的 None 值（如 strict=None），某些 API 不接受 None
+            # Clean None values from tools (e.g., strict=None); some APIs do not accept None
             cleaned_tools = []
             for tool in tools:
                 cleaned_tool = tool.copy()
                 if "function" in cleaned_tool and isinstance(cleaned_tool["function"], dict):
                     cleaned_function = cleaned_tool["function"].copy()
-                    # 移除 strict=None 字段
+                    # Remove the strict=None field
                     if cleaned_function.get("strict") is None:
                         cleaned_function.pop("strict", None)
                     cleaned_tool["function"] = cleaned_function
@@ -651,14 +657,14 @@ class DeepSeekLLM(BaseLLM):
             request_params["tools"] = cleaned_tools
             request_params["tool_choice"] = kwargs.get("tool_choice", "auto")
 
-        # 调用 API
+        # Call the API
         response = self.client.chat.completions.create(**request_params)
 
-        # 解析响应
+        # Parse the response
         choice = response.choices[0]
         message = choice.message
 
-        # 提取工具调用
+        # Extract tool calls
         tool_calls = None
         if message.tool_calls:
             tool_calls = [
@@ -691,13 +697,13 @@ class DeepSeekLLM(BaseLLM):
 
 
 class AnthropicLLM(BaseLLM):
-    """Anthropic LLM 实现
+    """Anthropic LLM implementation.
 
-    支持 Claude 系列模型。
+    Supports Claude series models.
     """
 
     def _setup(self) -> None:
-        """设置 Anthropic 客户端"""
+        """Set up the Anthropic client."""
         try:
             from anthropic import Anthropic
         except ImportError:
@@ -705,28 +711,28 @@ class AnthropicLLM(BaseLLM):
                 "Anthropic package not installed. Install with: pip install anthropic"
             )
 
-        # API key 必须在配置中提供
+        # API key must be provided in config
         if not self.config.api_key:
             raise ValueError("Anthropic API key must be provided in config")
 
-        # 创建客户端
+        # Create the client
         client_kwargs = {"api_key": self.config.api_key}
         if self.config.base_url:
             client_kwargs["base_url"] = self.config.base_url
-            # 设置 auth_token 使 SDK 发送正确的 Bearer token。
+            # Set auth_token so the SDK sends the correct Bearer token.
             client_kwargs["auth_token"] = self.config.api_key
 
         self.client = Anthropic(**client_kwargs)
 
     @staticmethod
     def _convert_content_for_anthropic(content):
-        """将 OpenAI 格式的多模态内容转换为 Anthropic 格式
+        """Convert OpenAI-format multimodal content to Anthropic format.
 
-        OpenAI 格式:
+        OpenAI format:
             [{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
              {"type": "text", "text": "..."}]
 
-        Anthropic 格式:
+        Anthropic format:
             [{"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "..."}},
              {"type": "text", "text": "..."}]
         """
@@ -736,10 +742,10 @@ class AnthropicLLM(BaseLLM):
         converted = []
         for block in content:
             if block.get("type") == "image_url":
-                # 解析 data URI: "data:image/png;base64,<data>"
+                # Parse data URI: "data:image/png;base64,<data>"
                 url = block["image_url"]["url"]
                 if url.startswith("data:"):
-                    # 解析 MIME 类型和 base64 数据
+                    # Parse MIME type and base64 data
                     header, b64_data = url.split(",", 1)
                     media_type = header.split(":")[1].split(";")[0]
                     converted.append({
@@ -751,7 +757,7 @@ class AnthropicLLM(BaseLLM):
                         }
                     })
                 else:
-                    # URL 形式的图片（Anthropic 也支持）
+                    # URL-based image (also supported by Anthropic)
                     converted.append({
                         "type": "image",
                         "source": {
@@ -767,7 +773,7 @@ class AnthropicLLM(BaseLLM):
 
     @staticmethod
     def _convert_tools_for_anthropic(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """将 OpenAI 格式的 tools 转换为 Anthropic 格式。
+        """Convert OpenAI-format tools to Anthropic format.
 
         OpenAI: {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
         Anthropic: {"name": "...", "description": "...", "input_schema": {...}}
@@ -785,12 +791,12 @@ class AnthropicLLM(BaseLLM):
 
     @staticmethod
     def _convert_messages_for_anthropic(messages: list[dict[str, Any]]) -> tuple[str | None, list[dict[str, Any]]]:
-        """将 OpenAI 格式的消息列表转换为 Anthropic 格式。
+        """Convert OpenAI-format message list to Anthropic format.
 
-        转换规则：
-        - system 消息提取为独立字段
-        - assistant + tool_calls → content 包含 text + tool_use blocks
-        - role:"tool" → role:"user" + tool_result content blocks（连续的合并）
+        Conversion rules:
+        - system messages are extracted as a separate field
+        - assistant + tool_calls -> content includes text + tool_use blocks
+        - role:"tool" -> role:"user" + tool_result content blocks (consecutive ones are merged)
         """
         import json as _json
 
@@ -810,7 +816,7 @@ class AnthropicLLM(BaseLLM):
             if role == "assistant":
                 tool_calls = msg.get("tool_calls")
                 if tool_calls:
-                    # 构建 Anthropic 格式的 content blocks
+                    # Build Anthropic-format content blocks
                     content_blocks = []
                     text = msg.get("content")
                     if text and str(text).strip():
@@ -835,7 +841,7 @@ class AnthropicLLM(BaseLLM):
                 continue
 
             if role == "tool":
-                # 收集连续的 tool messages，合并为一个 user 消息
+                # Collect consecutive tool messages and merge into a single user message
                 tool_results = []
                 while i < len(messages) and messages[i].get("role") == "tool":
                     t = messages[i]
@@ -848,7 +854,7 @@ class AnthropicLLM(BaseLLM):
                 anthropic_messages.append({"role": "user", "content": tool_results})
                 continue
 
-            # user 或其他
+            # user or other
             content = msg.get("content", "")
             if isinstance(content, list):
                 content = AnthropicLLM._convert_content_for_anthropic(content)
@@ -863,11 +869,11 @@ class AnthropicLLM(BaseLLM):
         tools: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> LLMResponse:
-        """调用 Anthropic API"""
-        # 转换 OpenAI 格式消息为 Anthropic 格式
+        """Call the Anthropic API."""
+        # Convert OpenAI-format messages to Anthropic format
         system_message, user_messages = self._convert_messages_for_anthropic(messages)
 
-        # 构建请求参数
+        # Build request parameters
         request_params = {
             "model": self.config.model,
             "messages": user_messages,
@@ -883,10 +889,10 @@ class AnthropicLLM(BaseLLM):
             request_params["tools"] = self._convert_tools_for_anthropic(tools)
             request_params["tool_choice"] = kwargs.get("tool_choice", {"type": "auto"})
 
-        # 调用 API
+        # Call the API
         response = self.client.messages.create(**request_params)
 
-        # 解析响应
+        # Parse the response
         content_text = None
         tool_calls = None
 
@@ -896,7 +902,7 @@ class AnthropicLLM(BaseLLM):
             elif content.type == "tool_use":
                 if tool_calls is None:
                     tool_calls = []
-                # Anthropic 的工具调用格式需要转换
+                # Anthropic tool call format needs conversion
                 import json
                 tool_calls.append(
                     ToolCall(
@@ -926,17 +932,17 @@ class AnthropicLLM(BaseLLM):
 
 
 def create_llm(config: LLMConfig, output_config: dict[str, Any] | None = None) -> BaseLLM:
-    """LLM 工厂函数
+    """LLM factory function.
 
     Args:
-        config: LLM 配置
-        output_config: 输出显示配置
+        config: LLM configuration.
+        output_config: Output display configuration.
 
     Returns:
-        LLM 实例
+        LLM instance.
 
     Raises:
-        ValueError: 不支持的提供商
+        ValueError: Unsupported provider.
     """
     if config.provider == "openai" or config.provider == "openrouter":
         return OpenAILLM(config, output_config=output_config)

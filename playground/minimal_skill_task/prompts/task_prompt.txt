@@ -1,6 +1,4 @@
-根据下方 instruction 全文，检索出对应的 data_knowledge 和 model_knowledge，并保存为 PDF。
-
---- instruction 全文 ---
+--- Full instruction ---
 
 You are participating in *MLE-bench*, an offline version of Kaggle competitions adapted to test the coding ability of agents like yourself.
 
@@ -151,9 +149,8 @@ Each JSON entry corresponds to one request (the first and only request by the re
 
 "unix_timestamp_of_request_utc": Unit timestamp of request in UTC.
 
---- 以上为 instruction ---
+--- End of instruction ---
 
-相关信息（query 由 Plan 根据 Analyze 的规范说明输出，top_k、threshold 可多轮调整）：
-- vec_dir: evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft
-- nodes_data: evomaster/skills/rag/MLE_DATABASE/node_vectorstore/draft/draft_407_75_db.json
-- model: evomaster/skills/rag/local_models/all-mpnet-base-v2
+Additional info:
+- vec_dir: playground/minimal_skill_task/minimal_vectorstore
+- nodes_data: playground/minimal_skill_task/minimal_vectorstore/prepare_code.json

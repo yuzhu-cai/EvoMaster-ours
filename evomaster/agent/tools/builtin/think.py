@@ -1,6 +1,6 @@
-"""EvoMaster Think 工具
+"""EvoMaster Think tool.
 
-提供思考和推理的能力，不会对环境产生影响。
+Provides the ability to think and reason without affecting the environment.
 """
 
 from __future__ import annotations
@@ -34,13 +34,13 @@ class ThinkToolParams(BaseToolParams):
 
 
 class ThinkTool(BaseTool):
-    """思考工具"""
+    """Think tool."""
     
     name: ClassVar[str] = "think"
     params_class: ClassVar[type[BaseToolParams]] = ThinkToolParams
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """记录思考内容（不执行任何操作）"""
+        """Log thought content (does not execute any action)."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -48,7 +48,7 @@ class ThinkTool(BaseTool):
         
         assert isinstance(params, ThinkToolParams)
         
-        # Think 工具只记录，不执行任何操作
+        # Think tool only logs; it does not perform any action
         self.logger.debug(f"Agent thought: {params.thought[:100]}...")
         
         return "Your thought has been logged.", {"thought": params.thought}

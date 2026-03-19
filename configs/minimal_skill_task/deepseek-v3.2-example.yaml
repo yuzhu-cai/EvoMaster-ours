@@ -1,7 +1,7 @@
-# Minimal Skill Task - RAG 多 Agent 流程（Analyze → Plan → Search → Summarize）
+# Minimal Skill Task - RAG Multi-Agent Pipeline (Analyze -> Plan -> Search -> Summarize)
 
 # ============================================
-# LLM 配置
+# LLM Configuration
 # ============================================
 llm:
   openai:
@@ -29,7 +29,7 @@ llm:
   local_sglang:
     provider: "deepseek"
     model: "deepseek-v3.2"
-    api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
+    api_key: "${DEEPSEEK_API_KEY}"  # Placeholder can be used for local deployment
     base_url: "${DEEPSEEK_API_BASE}"
     temperature: 0.7
     max_tokens: 16384
@@ -40,14 +40,14 @@ llm:
   default: "local_sglang"
 
 # ============================================
-# Agent 配置（四 Agent：analyze / plan / search / summarize）
+# Agent Configuration (four Agents: analyze / plan / search / summarize)
 # ============================================
 agents:
   analyze:
     llm: "openai"
     max_turns: 10
-    # 默认使用builtin工具集: execute_bash, str_replace_editor, think, finish, 默认不使用mcp工具
-    # 默认不使用skills
+    # Default builtin toolset: execute_bash, str_replace_editor, think, finish; MCP tools not used by default
+    # Skills not used by default
 
     context:
       max_tokens: 128000
@@ -61,8 +61,8 @@ agents:
   plan:
     llm: "openai"
     max_turns: 10
-    tools: # 显式指定无 tools
-    skills:  # 显式指定无 skill
+    tools: # Explicitly specify no tools
+    skills:  # Explicitly specify no skills
 
     context:
       max_tokens: 128000
@@ -76,8 +76,8 @@ agents:
   search:
     llm: "openai"
     max_turns: 30
-    tools: "default" # 默认使用builtin工具集: execute_bash, str_replace_editor, think, finish, 默认不使用mcp工具
-    skills:  # 通配符 → 全部 skill
+    tools: "default" # Default builtin toolset: execute_bash, str_replace_editor, think, finish; MCP tools not used by default
+    skills:  # Wildcard -> all skills
       - "*"
 
     context:
@@ -93,13 +93,13 @@ agents:
     llm: "openai"
     max_turns: 20
     tools: 
-      builtin: # 指定子集: 
+      builtin: # Specify subset: 
         - "execute_bash"
         - "think"
         - "finish"
-      mcp: [] # 指定不使用mcp工具
+      mcp: [] # Explicitly specify no MCP tools
 
-    skills:  # 指定子集
+    skills:  # Specify subset
       - "rag"
       - "pdf"
 
@@ -114,31 +114,27 @@ agents:
     user_prompt_file: "prompts/summarize_user_prompt.txt"
 
 # ============================================
-# Embedding 配置（RAG 向量检索使用）
-# Embedding 配置（RAG 向量检索使用）
+# Embedding Configuration (used for RAG vector search)
+# Embedding Configuration (used for RAG vector search)
 # ============================================
 embedding:
-  # 类型：local（本地 transformer 模型）或 openai（OpenAI API）
+  # Type: local (local transformer model) or openai (OpenAI API)
   type: "openai"
   
-  # OpenAI embedding 配置（当 type 为 openai 时使用）
+  # OpenAI embedding configuration (used when type is openai)
   openai:
     model: "text-embedding-3-large"
     api_key: "${OPENAI_API_KEY}"
     base_url: "${GPT_BASE_URL}"
-    dimensions: 3072  # text-embedding-3-large 支持 512, 768, 1024, 2048, 3072
+    dimensions: 3072  # text-embedding-3-large supports 512, 768, 1024, 2048, 3072
   
-  # 本地模型配置（当 type 为 local 时使用）
+  # Local model configuration (used when type is local)
   local:
-    model: "evomaster/skills/rag/local_models/all-mpnet-base-v2"
+    model: "playground/minimal_skill_task/local_models/all-mpnet-base-v2"
     device: "cpu"
 
 # ============================================
-# MCP 配置
-# ============================================
-
-# ============================================
-# Session 配置
+# Session Configuration
 # ============================================
 session:
   type: "local"
@@ -162,22 +158,7 @@ session:
     auto_remove: false
     timeout: 300
 
-# ============================================
-# Env / 日志 / 其他
-# ============================================
-env:
-  cluster:
-    debug_pool: { type: "cpu", max_concurrent: 1 }
-    train_pool: { type: "cpu", max_concurrent: 1 }
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
+
 
 llm_output:
   show_in_console: true
@@ -188,9 +169,4 @@ logging:
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: null
   console: true
-  log_path: "./logs/evomaster.log"
 
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false

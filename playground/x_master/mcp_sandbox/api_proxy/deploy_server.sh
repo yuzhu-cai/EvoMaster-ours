@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 启动 FastAPI 服务
+# Start FastAPI service
 echo "deploy FastAPI service"
 python api_server.py &
 API_PID=$!
 
-# 等待 API 服务启动
+# Wait for API service to start
 sleep 4
 
-# 启动 MCP 适配器
+# Start MCP adapter
 
 python mcp_search_adapter.py &
 MCP_PID=$!
 
-# 等待终止信号
+# Wait for termination signal
 trap "kill $API_PID $MCP_PID; exit" INT TERM
 wait

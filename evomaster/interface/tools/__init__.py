@@ -1,6 +1,6 @@
-"""跨 interface 共用的 Agent 工具
+"""Shared Agent tools across interfaces
 
-适用于所有交互式 interface（feishu、telegram 等），由 dispatcher 按需注入。
+Applicable to all interactive interfaces (feishu, telegram, etc.), injected by the dispatcher on demand.
 """
 
 from .ask_user import AskUserTool, AskUserToolParams

@@ -1,6 +1,6 @@
-"""Chat Agent Web Fetch 工具
+"""Chat Agent Web Fetch Tool
 
-通过 Jina Reader API 抓取网页内容，并使用 LLM 根据用户目标提取关键信息。
+Fetches web page content via the Jina Reader API and uses an LLM to extract key information based on user goals.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 最大抓取内容长度（字符），超出截断后再送 LLM
+# Maximum fetched content length (characters); truncated before sending to LLM
 MAX_CONTENT_LENGTH = 80000
 
 EXTRACTOR_PROMPT = """Please process the following webpage content and user goal to extract relevant information:
@@ -59,7 +59,7 @@ class WebFetchToolParams(BaseToolParams):
 
 
 class WebFetchTool(BaseTool):
-    """网页内容抓取 + LLM 摘要提取工具（Jina Reader API + LLM）"""
+    """Web content fetch + LLM summary extraction tool (Jina Reader API + LLM)."""
 
     name: ClassVar[str] = "web_fetch"
     params_class: ClassVar[type[BaseToolParams]] = WebFetchToolParams
@@ -69,7 +69,7 @@ class WebFetchTool(BaseTool):
         self._llm = None
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """抓取网页内容并用 LLM 提取关键信息"""
+        """Fetch web page content and extract key information using LLM."""
         jina_api_key = os.environ.get("JINA_API_KEY")
 
         try:
@@ -95,22 +95,22 @@ class WebFetchTool(BaseTool):
         return response, {"urls": urls, "goal": goal}
 
     def _fetch_and_extract(self, url: str, goal: str, jina_api_key: str | None) -> str:
-        """抓取单个页面并用 LLM 提取信息"""
+        """Fetch and extract information from a single page using LLM."""
         content = self._fetch_single(url, jina_api_key)
 
         if content.startswith("[web_fetch]"):
             return content
 
-        # 截断过长内容
+        # Truncate overly long content
         if len(content) > MAX_CONTENT_LENGTH:
             content = content[:MAX_CONTENT_LENGTH]
 
-        # LLM 提取
+        # LLM extraction
         extracted = self._extract_with_llm(content, url, goal)
         return extracted
 
     def _fetch_single(self, url: str, jina_api_key: str | None) -> str:
-        """使用 Jina Reader API 抓取单个页面"""
+        """Fetch a single page using Jina Reader API."""
         headers = {}
         if jina_api_key:
             headers["Authorization"] = f"Bearer {jina_api_key}"
@@ -143,7 +143,7 @@ class WebFetchTool(BaseTool):
         return f"[web_fetch] Failed to fetch {url}"
 
     def _extract_with_llm(self, content: str, url: str, goal: str) -> str:
-        """使用 LLM 从网页内容中提取与目标相关的信息"""
+        """Use LLM to extract goal-relevant information from web page content."""
         if self._llm is None:
             self.logger.warning("No LLM set for web_fetch extraction, returning raw content")
             if len(content) > MAX_CONTENT_LENGTH:
@@ -153,7 +153,7 @@ class WebFetchTool(BaseTool):
         from evomaster.utils.types import Dialog, UserMessage
 
         try:
-            # 最多重试 3 次摘要，内容逐步截断
+            # Retry summary up to 3 times, progressively truncating content
             raw = ""
             summary_content = content
             for retry in range(3):
@@ -172,7 +172,7 @@ class WebFetchTool(BaseTool):
                 if len(raw) >= 10:
                     break
 
-                # 内容截断后重试
+                # Truncate content and retry
                 truncate_length = int(0.7 * len(summary_content)) if retry < 2 else 25000
                 self.logger.info(
                     "[web_fetch] Summary for %s attempt %d/3, truncating to %d chars",
@@ -180,7 +180,7 @@ class WebFetchTool(BaseTool):
                 )
                 summary_content = summary_content[:truncate_length]
 
-            # 解析 JSON
+            # Parse JSON
             parsed = self._parse_json(raw)
 
             if parsed:
@@ -189,7 +189,7 @@ class WebFetchTool(BaseTool):
                 useful += f"Summary:\n{parsed.get('summary', 'N/A')}\n\n"
                 return useful
             else:
-                # JSON 解析失败，返回 LLM 原始输出
+                # JSON parse failed, return raw LLM output
                 return f"The useful information in {url} for user goal \"{goal}\" as follows:\n\n{raw}"
 
         except Exception as e:
@@ -200,12 +200,12 @@ class WebFetchTool(BaseTool):
 
     @staticmethod
     def _parse_json(text: str) -> dict | None:
-        """尝试从 LLM 输出中解析 JSON"""
+        """Attempt to parse JSON from LLM output."""
         if not text:
             return None
 
         text = text.strip()
-        # 移除 markdown 代码块
+        # Remove markdown code blocks
         if text.startswith("```"):
             text = text.split("\n", 1)[-1] if "\n" in text else text[3:]
             if text.endswith("```"):
@@ -215,7 +215,7 @@ class WebFetchTool(BaseTool):
         try:
             return json.loads(text)
         except json.JSONDecodeError:
-            # 尝试提取 {} 包裹的 JSON
+            # Try to extract JSON wrapped in {}
             left = text.find("{")
             right = text.rfind("}")
             if left != -1 and right != -1 and left < right:

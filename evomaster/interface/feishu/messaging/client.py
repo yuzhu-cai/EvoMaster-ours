@@ -1,6 +1,6 @@
-"""Feishu SDK Client 工厂
+"""Feishu SDK Client factory
 
-创建并缓存 lark_oapi.Client 实例。
+Create and cache lark_oapi.Client instances.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import lark_oapi as lark
 
 logger = logging.getLogger(__name__)
 
-# 缓存：key = (app_id, domain) → Client
+# Cache: key = (app_id, domain) -> Client
 _client_cache: Dict[str, lark.Client] = {}
 
 
@@ -21,15 +21,15 @@ def create_feishu_client(
     app_secret: str,
     domain: str = "https://open.feishu.cn",
 ) -> lark.Client:
-    """创建或获取缓存的飞书 Client
+    """Create or retrieve a cached Feishu Client.
 
     Args:
-        app_id: 飞书应用 App ID
-        app_secret: 飞书应用 App Secret
-        domain: 飞书 API 域名
+        app_id: Feishu application App ID.
+        app_secret: Feishu application App Secret.
+        domain: Feishu API domain.
 
     Returns:
-        lark_oapi.Client 实例
+        A lark_oapi.Client instance.
     """
     cache_key = f"{app_id}@{domain}"
 
@@ -37,7 +37,7 @@ def create_feishu_client(
         logger.debug("Reusing cached Feishu client: %s", cache_key)
         return _client_cache[cache_key]
 
-    # 域名 → lark domain 常量映射
+    # Domain -> lark domain constant mapping
     domain_map = {
         "https://open.feishu.cn": lark.FEISHU_DOMAIN,
         "https://open.larksuite.com": lark.LARK_DOMAIN,

@@ -1,6 +1,6 @@
-"""MCP 工具集成
+"""MCP tool integration.
 
-将 MCP (Model Context Protocol) 服务器的工具包装为 EvoMaster 工具。
+Wraps MCP (Model Context Protocol) server tools as EvoMaster tools.
 """
 
 from __future__ import annotations
@@ -19,17 +19,17 @@ if TYPE_CHECKING:
 
 
 class MCPTool(BaseTool):
-    """MCP 工具包装器
+    """MCP tool wrapper.
 
-    将单个 MCP 工具包装为 EvoMaster BaseTool。
+    Wraps a single MCP tool as an EvoMaster BaseTool.
 
-    特点：
-    - 动态工具：运行时从 MCP 服务器获取
-    - 异步转同步：MCP 是异步的，需要转换
-    - Schema 转换：MCP schema -> ToolSpec
-    - 元数据标记：标记工具来源（MCP 服务器）
+    Features:
+    - Dynamic tools: Obtained from MCP servers at runtime
+    - Async-to-sync: MCP is asynchronous and needs conversion
+    - Schema conversion: MCP schema -> ToolSpec
+    - Metadata tagging: Tags tool origin (MCP server)
 
-    使用示例：
+    Usage example:
         mcp_tool = MCPTool(
             mcp_connection=connection,
             tool_name="github_create_issue",
@@ -39,45 +39,45 @@ class MCPTool(BaseTool):
         observation, info = mcp_tool.execute(session, args_json)
     """
 
-    # 类属性（BaseTool 需要）
-    name: ClassVar[str] = "mcp_tool"  # 会被实例属性覆盖
-    params_class: ClassVar[type] = None  # MCP 工具不使用 params_class
+    # Class attributes (required by BaseTool)
+    name: ClassVar[str] = "mcp_tool"  # Will be overridden by instance attribute
+    params_class: ClassVar[type] = None  # MCP tools do not use params_class
 
     def __init__(
         self,
-        mcp_connection,  # MCPConnection 实例
+        mcp_connection,  # MCPConnection instance
         tool_name: str,
         tool_description: str,
         input_schema: dict,
         remote_tool_name: str | None = None,
     ):
-        """初始化 MCP 工具
+        """Initialize the MCP tool.
 
         Args:
-            mcp_connection: MCP 连接实例
-            tool_name: 工具名称（已添加服务器前缀）
-            tool_description: 工具描述
-            input_schema: 输入参数 schema（JSON Schema 格式）
+            mcp_connection: MCP connection instance.
+            tool_name: Tool name (with server prefix added).
+            tool_description: Tool description.
+            input_schema: Input parameter schema (JSON Schema format).
         """
         super().__init__()
 
-        # MCP 相关属性
+        # MCP-related attributes
         self.mcp_connection = mcp_connection
         self._tool_name = tool_name
         self._tool_description = tool_description
         self._input_schema = input_schema
         self._remote_tool_name = remote_tool_name
-        # ✅ MCP 专用 event loop（由 MCPToolManager 或 Playground 注入）
+        # Dedicated MCP event loop (injected by MCPToolManager or Playground)
         self._mcp_loop = None
 
-        # 覆盖类属性
+        # Override class attribute
         self.name = tool_name
 
-        # 元数据标记（由 MCPToolManager 设置）
+        # Metadata tags (set by MCPToolManager)
         self._is_mcp_tool = True
-        self._mcp_server = None  # 服务器名称
+        self._mcp_server = None  # Server name
 
-        # 统计信息
+        # Statistics
         self._call_count = 0
         self._last_error = None
 
@@ -86,19 +86,19 @@ class MCPTool(BaseTool):
         session: BaseSession,
         args_json: str
     ) -> tuple[str, dict[str, Any]]:
-        """执行 MCP 工具
+        """Execute the MCP tool.
 
         Args:
-            session: Session 实例（MCP 工具不使用，但保持接口一致）
-            args_json: JSON 格式的参数
+            session: Session instance (not used by MCP tools, kept for interface consistency).
+            args_json: JSON-formatted arguments.
 
         Returns:
-            (observation, info) 元组
-            - observation: 返回给 Agent 的观察结果
-            - info: 额外信息（包含 MCP 元数据）
+            (observation, info) tuple:
+            - observation: Observation result returned to the Agent.
+            - info: Additional information (including MCP metadata).
         """
         try:
-            # 1. 解析参数
+            # 1. Parse arguments
             args = json.loads(args_json)
             self.logger.debug(f"Executing MCP tool {self._tool_name} with args: {args}")
 
@@ -119,13 +119,13 @@ class MCPTool(BaseTool):
                     input_schema=getattr(self, "_input_schema", None),
                 )
 
-            # 3. 调用 MCP 工具（异步转同步）
+            # 3. Call MCP tool (async-to-sync)
             result = self._call_mcp_tool_sync(args)
 
-            # 4. 格式化输出
+            # 4. Format output
             observation = self._format_mcp_result(result)
 
-            # 5. 更新统计
+            # 5. Update statistics
             self._call_count += 1
             self._last_error = None
 
@@ -147,12 +147,13 @@ class MCPTool(BaseTool):
             raise ToolError(f"MCP tool execution failed: {str(e)}")
 
     def _call_mcp_tool_sync(self, args: dict) -> Any:
-        """同步调用 MCP 工具（内部处理异步）
+        """Synchronously call an MCP tool (handles async internally).
 
-        ✅ 关键：禁止 asyncio.run() 产生临时 loop，必须把协程丢到“同一个长期 loop”里执行，
-        否则会出现 anyio/mcp stream 卡死、ClosedResourceError、cancel scope 错位等问题。
+        IMPORTANT: Do not use asyncio.run() which creates a temporary loop. The coroutine
+        must be submitted to the same long-lived loop to avoid anyio/mcp stream deadlocks,
+        ClosedResourceError, and cancel scope misalignment.
         """
-        # 1) 必须有一个被注入的 MCP loop
+        # 1) A persistent MCP loop must have been injected
         loop = getattr(self, "_mcp_loop", None)
         if loop is None:
             raise ToolError(
@@ -165,11 +166,11 @@ class MCPTool(BaseTool):
         coro = self.mcp_connection.call_tool(self._remote_tool_name, args)
 
         try:
-            # 2) 如果这个 loop 当前没有在运行（最常见：同步 Agent 场景），直接 run_until_complete
+            # 2) If the loop is not currently running (most common: synchronous Agent scenario), run directly
             if not loop.is_running():
                 return loop.run_until_complete(coro)
 
-            # 3) 如果 loop 在运行（比如你把 loop 放到后台线程 run_forever），用线程安全提交
+            # 3) If the loop is running (e.g. run_forever in a background thread), use thread-safe submission
             fut = asyncio.run_coroutine_threadsafe(coro, loop)
             return fut.result(timeout=60)
 
@@ -179,24 +180,24 @@ class MCPTool(BaseTool):
             raise ToolError(f"Failed to call MCP tool: {str(e)}")
 
     def _format_mcp_result(self, result: Any) -> str:
-        """格式化 MCP 工具返回结果
+        """Format the MCP tool return result.
 
-        MCP 返回的是 content 列表，需要提取文本内容。
-        支持多种 content 类型：text, json, image 等。
+        MCP returns a content list; text content needs to be extracted.
+        Supports multiple content types: text, json, image, etc.
 
         Args:
-            result: MCP 工具返回的原始结果
+            result: Raw result returned by the MCP tool.
 
         Returns:
-            格式化后的字符串
+            Formatted string.
         """
         if isinstance(result, list):
-            # MCP 返回的是 content 列表
+            # MCP returns a content list
             parts = []
             for item in result:
-                # 处理不同类型的 content
+                # Handle different content types
                 if hasattr(item, 'text'):
-                    # Pydantic 模型
+                    # Pydantic model
                     parts.append(item.text)
                 elif isinstance(item, dict):
                     if 'text' in item:
@@ -204,7 +205,7 @@ class MCPTool(BaseTool):
                     elif 'type' in item and item['type'] == 'text':
                         parts.append(item.get('text', ''))
                     else:
-                        # 其他类型的 content，转为 JSON
+                        # Other content types, convert to JSON
                         parts.append(json.dumps(item, indent=2))
                 else:
                     parts.append(str(item))
@@ -214,16 +215,16 @@ class MCPTool(BaseTool):
         elif result is None:
             return ""
         else:
-            # 其他类型，转为 JSON
+            # Other types, convert to JSON
             return json.dumps(result, indent=2, default=str)
 
     def get_tool_spec(self) -> ToolSpec:
-        """获取工具规格（用于 LLM function calling）
+        """Get tool specification (used for LLM function calling).
 
-        将 MCP 的 schema 转换为 EvoMaster 的 ToolSpec。
+        Converts MCP schema to EvoMaster ToolSpec.
 
         Returns:
-            ToolSpec 实例
+            ToolSpec instance.
         """
         from evomaster.utils.types import FunctionSpec, ToolSpec
 
@@ -238,10 +239,10 @@ class MCPTool(BaseTool):
         )
 
     def get_stats(self) -> dict[str, Any]:
-        """获取工具统计信息
+        """Get tool statistics.
 
         Returns:
-            统计信息字典
+            Statistics dictionary.
         """
         return {
             "tool_name": self._tool_name,

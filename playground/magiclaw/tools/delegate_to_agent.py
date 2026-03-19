@@ -25,13 +25,14 @@ _DEFAULT_AGENTS = {
 
 
 class DelegateToAgentParams(BaseToolParams):
-    """将任务委派给专业 Agent。
+    """Delegate a task to a specialized Agent.
 
-    可用 Agent:
-    - agent_builder: 创建/设计/构建新的 AI Agent。当用户想要创建 agent 时使用。
-      示例: "帮我创建一个xxx的agent", "我想做一个review code的agent"
+    Available Agents:
+    - agent_builder: Create/design/build new AI Agents. Use when user wants to create an agent.
+      Examples: "Help me create an xxx agent", "I want to build a code review agent"
 
-    只在用户明确需要专业 Agent 能力时委派。普通对话、搜索、问答自己处理。
+    Only delegate when the user explicitly needs specialized Agent capabilities.
+    Handle normal conversation, search, and Q&A by yourself.
     """
 
     name: ClassVar[str] = "delegate_to_agent"
@@ -45,7 +46,7 @@ class DelegateToAgentParams(BaseToolParams):
 
 
 class DelegateToAgentTool(BaseTool):
-    """委派工具：将任务转交给专业 Agent"""
+    """Delegation tool: forwards tasks to specialized Agents."""
 
     name: ClassVar[str] = "delegate_to_agent"
     params_class: ClassVar[type[BaseToolParams]] = DelegateToAgentParams
@@ -70,10 +71,10 @@ class DelegateToAgentTool(BaseTool):
         return "\n".join(lines)
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """执行委派：验证 agent 名称并存储委派信息。
+        """Execute delegation: validate agent name and store delegation info.
 
-        返回的 info dict 中包含 delegated=True 标记，
-        dispatcher 通过扫描 trajectory 的 ToolMessage.meta["info"] 检测委派。
+        The returned info dict contains a delegated=True marker.
+        The dispatcher detects delegation by scanning the trajectory's ToolMessage.meta["info"].
         """
         try:
             params = self.parse_params(args_json)

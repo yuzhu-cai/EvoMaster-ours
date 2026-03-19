@@ -1,6 +1,6 @@
-"""EvoMaster Env 基类
+"""EvoMaster Env base class.
 
-Env 是环境组件，负责管理执行环境和作业调度。
+Env is the environment component, responsible for managing execution environments and job scheduling.
 """
 
 from __future__ import annotations
@@ -16,25 +16,25 @@ if TYPE_CHECKING:
 
 
 class EnvConfig(BaseModel):
-    """Env 基础配置"""
-    name: str = Field(default="default_env", description="环境名称")
-    session_config: SessionConfig | None = Field(default=None, description="Session 配置")
+    """Base Env configuration."""
+    name: str = Field(default="default_env", description="Environment name")
+    session_config: SessionConfig | None = Field(default=None, description="Session configuration")
 
 
 class BaseEnv(ABC):
-    """Env 抽象基类
+    """Abstract base class for Env.
 
-    定义环境组件的标准接口：
-    - Session 管理
-    - 作业执行
-    - 资源管理
+    Defines the standard interface for the environment component:
+    - Session management
+    - Job execution
+    - Resource management
     """
 
     def __init__(self, config: EnvConfig | None = None):
-        """初始化 Env
+        """Initialize Env.
 
         Args:
-            config: Env 配置
+            config: Env configuration.
         """
         self.config = config or EnvConfig()
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -42,25 +42,25 @@ class BaseEnv(ABC):
 
     @property
     def is_ready(self) -> bool:
-        """环境是否已准备就绪"""
+        """Whether the environment is ready."""
         return self._is_ready
 
     @abstractmethod
     def setup(self) -> None:
-        """初始化环境"""
+        """Initialize the environment."""
         pass
 
     @abstractmethod
     def teardown(self) -> None:
-        """清理环境资源"""
+        """Clean up environment resources."""
         pass
 
     @abstractmethod
     def get_session(self) -> BaseSession:
-        """获取 Session 用于执行命令
+        """Get a Session for executing commands.
 
         Returns:
-            BaseSession 实例
+            BaseSession instance.
         """
         pass
 
@@ -71,44 +71,44 @@ class BaseEnv(ABC):
         job_type: str = "debug",
         **kwargs: Any,
     ) -> str:
-        """提交作业到环境
+        """Submit a job to the environment.
 
         Args:
-            command: 要执行的命令
-            job_type: 作业类型（"debug" 或 "train"）
-            **kwargs: 额外参数
+            command: Command to execute.
+            job_type: Job type ("debug" or "train").
+            **kwargs: Additional arguments.
 
         Returns:
-            作业 ID
+            Job ID.
         """
         pass
 
     @abstractmethod
     def get_job_status(self, job_id: str) -> dict[str, Any]:
-        """查询作业状态
+        """Query job status.
 
         Args:
-            job_id: 作业 ID
+            job_id: Job ID.
 
         Returns:
-            状态信息字典
+            Status information dictionary.
         """
         pass
 
     @abstractmethod
     def cancel_job(self, job_id: str) -> None:
-        """取消作业
+        """Cancel a job.
 
         Args:
-            job_id: 作业 ID
+            job_id: Job ID.
         """
         pass
 
     def __enter__(self) -> BaseEnv:
-        """上下文管理器入口"""
+        """Context manager entry."""
         self.setup()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """上下文管理器出口"""
+        """Context manager exit."""
         self.teardown()

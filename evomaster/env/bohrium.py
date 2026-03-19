@@ -1,7 +1,8 @@
-"""Bohrium 鉴权与 MCP calculation 用 storage/executor 配置。
+"""Bohrium authentication and MCP calculation storage/executor configuration.
 
-供 MCP calculation path adaptor 使用，统一从环境变量（.env）读取 BOHRIUM_*，
-生成 HTTPS storage 与注入 executor 的鉴权信息。与 _tmp/MatMaster 的 private_callback 对齐。
+Used by the MCP calculation path adaptor. Reads BOHRIUM_* from environment variables (.env)
+to generate HTTPS storage and inject executor authentication information.
+Aligned with the private_callback in _tmp/MatMaster.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from typing import Any, Dict
 
 
 def get_bohrium_credentials() -> Dict[str, Any]:
-    """从环境变量读取 Bohrium 鉴权（.env 或 os.environ）。"""
+    """Read Bohrium credentials from environment variables (.env or os.environ)."""
     access_key = os.getenv("BOHRIUM_ACCESS_KEY", "").strip()
     try:
         project_id = int(os.getenv("BOHRIUM_PROJECT_ID", "-1"))
@@ -30,7 +31,7 @@ def get_bohrium_credentials() -> Dict[str, Any]:
 
 
 def get_bohrium_storage_config() -> Dict[str, Any]:
-    """MCP calculation 用 HTTPS storage（type https + Bohrium plugin）。"""
+    """HTTPS storage for MCP calculation (type https + Bohrium plugin)."""
     cred = get_bohrium_credentials()
     return {
         "type": "https",
@@ -44,7 +45,7 @@ def get_bohrium_storage_config() -> Dict[str, Any]:
 
 
 def inject_bohrium_executor(executor_template: Dict[str, Any]) -> Dict[str, Any]:
-    """深拷贝 executor 模板并注入 BOHRIUM_* 鉴权（与 MatMaster private_callback 一致）。"""
+    """Deep-copy an executor template and inject BOHRIUM_* credentials (aligned with MatMaster private_callback)."""
     executor = copy.deepcopy(executor_template)
     cred = get_bohrium_credentials()
     if executor.get("type") == "dispatcher":

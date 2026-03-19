@@ -1,6 +1,6 @@
-"""EvoMaster Bash 工具
+"""EvoMaster Bash tool.
 
-提供在环境中执行 Bash 命令的能力。
+Provides the ability to execute Bash commands in the environment.
 """
 
 from __future__ import annotations
@@ -56,13 +56,13 @@ class BashToolParams(BaseToolParams):
 
 
 class BashTool(BaseTool):
-    """Bash 命令执行工具"""
+    """Bash command execution tool."""
     
     name: ClassVar[str] = "execute_bash"
     params_class: ClassVar[type[BaseToolParams]] = BashToolParams
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """执行 Bash 命令"""
+        """Execute a Bash command."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -70,7 +70,7 @@ class BashTool(BaseTool):
         
         assert isinstance(params, BashToolParams)
         
-        # 执行命令
+        # Execute command
         timeout = int(params.timeout) if params.timeout > 0 else None
         is_input = params.is_input == "true"
         
@@ -80,16 +80,16 @@ class BashTool(BaseTool):
             is_input=is_input,
         )
         
-        # 构建输出
-        # 优先使用合并输出（stdout+stderr），保证报错可见
+        # Build output
+        # Prefer merged output (stdout+stderr) to ensure errors are visible
         output = result.get("output", "") or result.get("stdout", "")
         exit_code = result.get("exit_code", -1)
         working_dir = result.get("working_dir", "")
         
-        # 将相对路径转换为绝对路径
+        # Convert relative path to absolute path
         working_dir_abs = str(Path(working_dir).absolute()) if working_dir else ""
         
-        # 添加状态信息
+        # Add status information
         obs = output
         if working_dir_abs:
             obs += f"\n[Current working directory: {working_dir_abs}]"

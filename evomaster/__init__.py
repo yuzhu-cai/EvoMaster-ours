@@ -1,17 +1,17 @@
-"""EvoMaster - 科学实验迭代 Agent 系统
+"""EvoMaster - Iterative Scientific Experiment Agent System
 
-EvoMaster 是一个用于迭代完成科学实验任务的 Agent 系统，
-主要针对 MLE、Phys、Embody 等科学实验场景。
+EvoMaster is an agent system for iteratively completing scientific experiment tasks,
+primarily targeting MLE, Physics, Embodied AI, and other scientific experiment scenarios.
 
-核心组件（三层架构）：
-- agent: 智能体（包含 Session、Tools）
-- env: 环境（集群调度、Docker 沙箱）
-- skills: 技能
+Core components (three-layer architecture):
+- agent: Intelligent agent (includes Session, Tools)
+- env: Environment (cluster scheduling, Docker sandbox)
+- skills: Skills
 """
 
 __version__ = "0.1.0"
 
-# 从 agent 模块导出常用类
+# Export commonly used classes from the agent module
 from evomaster.agent import (
     # Agent
     BaseAgent,
@@ -33,7 +33,7 @@ from evomaster.agent import (
     create_default_registry,
 )
 
-# 从 utils 模块导出工具类和类型
+# Export utility classes and types from the utils module
 from evomaster.utils import (
     # LLM
     BaseLLM,
@@ -59,21 +59,21 @@ from evomaster.utils import (
     TaskInstance,
 )
 
-# 从 config 模块导出配置管理
+# Export configuration management from the config module
 from evomaster.config import (
-    # 配置基类
+    # Config base class
     BaseConfig,
-    # Env 配置
+    # Env config
     # EnvConfig,
     ClusterConfig,
     ClusterPoolConfig,
     DockerEnvConfig,
     SchedulerConfig,
-    # 日志配置
+    # Logging config
     LoggingConfig,
-    # 顶层配置
+    # Top-level config
     EvoMasterConfig,
-    # 配置管理器
+    # Config manager
     ConfigManager,
     get_config_manager,
     load_config,

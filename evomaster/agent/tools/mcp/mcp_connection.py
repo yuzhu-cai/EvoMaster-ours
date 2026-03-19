@@ -1,7 +1,7 @@
-"""MCP 连接管理
+"""MCP connection management.
 
-提供 MCP (Model Context Protocol) 服务器的连接管理功能。
-支持三种传输方式：stdio、SSE、HTTP。
+Provides connection management for MCP (Model Context Protocol) servers.
+Supports three transport methods: stdio, SSE, and HTTP.
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ from mcp.client.streamable_http import streamablehttp_client
 
 
 class MCPConnection(ABC):
-    """MCP 服务器连接基类
+    """Base class for MCP server connections.
 
-    提供与 MCP 服务器通信的统一接口。
-    支持异步上下文管理器协议。
+    Provides a unified interface for communicating with MCP servers.
+    Supports the async context manager protocol.
     """
 
     def __init__(self):
@@ -29,10 +29,10 @@ class MCPConnection(ABC):
 
     @abstractmethod
     def _create_context(self):
-        """创建连接上下文（由子类实现）"""
+        """Create a connection context (implemented by subclasses)."""
 
     async def __aenter__(self):
-        """初始化 MCP 服务器连接"""
+        """Initialize the MCP server connection."""
         self._stack = AsyncExitStack()
         await self._stack.__aenter__()
 
@@ -56,17 +56,17 @@ class MCPConnection(ABC):
             raise
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """清理 MCP 服务器连接资源"""
+        """Clean up MCP server connection resources."""
         if self._stack:
             await self._stack.__aexit__(exc_type, exc_val, exc_tb)
         self.session = None
         self._stack = None
 
     async def list_tools(self) -> list[dict[str, Any]]:
-        """获取 MCP 服务器提供的工具列表
+        """Get the list of tools provided by the MCP server.
 
         Returns:
-            工具信息列表，每个工具包含 name、description、input_schema
+            List of tool information dicts, each containing name, description, and input_schema.
         """
         response = await self.session.list_tools()
         return [
@@ -79,32 +79,32 @@ class MCPConnection(ABC):
         ]
 
     async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
-        """调用 MCP 服务器上的工具
+        """Call a tool on the MCP server.
 
         Args:
-            tool_name: 工具名称
-            arguments: 工具参数
+            tool_name: Tool name.
+            arguments: Tool arguments.
 
         Returns:
-            工具执行结果
+            Tool execution result.
         """
         result = await self.session.call_tool(tool_name, arguments=arguments)
         return result.content
 
 
 class MCPConnectionStdio(MCPConnection):
-    """使用标准输入输出的 MCP 连接
+    """MCP connection using standard I/O.
 
-    通过启动子进程并使用 stdio 进行通信。
+    Communicates by starting a subprocess and using stdio.
     """
 
     def __init__(self, command: str, args: list[str] = None, env: dict[str, str] = None):
-        """初始化 stdio 连接
+        """Initialize stdio connection.
 
         Args:
-            command: 启动命令
-            args: 命令参数
-            env: 环境变量
+            command: Startup command.
+            args: Command arguments.
+            env: Environment variables.
         """
         super().__init__()
         self.command = command
@@ -118,14 +118,14 @@ class MCPConnectionStdio(MCPConnection):
 
 
 class MCPConnectionSSE(MCPConnection):
-    """使用 Server-Sent Events 的 MCP 连接"""
+    """MCP connection using Server-Sent Events."""
 
     def __init__(self, url: str, headers: dict[str, str] = None):
-        """初始化 SSE 连接
+        """Initialize SSE connection.
 
         Args:
-            url: 服务器 URL
-            headers: HTTP 请求头
+            url: Server URL.
+            headers: HTTP request headers.
         """
         super().__init__()
         self.url = url
@@ -136,14 +136,14 @@ class MCPConnectionSSE(MCPConnection):
 
 
 class MCPConnectionHTTP(MCPConnection):
-    """使用 Streamable HTTP 的 MCP 连接"""
+    """MCP connection using Streamable HTTP."""
 
     def __init__(self, url: str, headers: dict[str, str] = None):
-        """初始化 HTTP 连接
+        """Initialize HTTP connection.
 
         Args:
-            url: 服务器 URL
-            headers: HTTP 请求头
+            url: Server URL.
+            headers: HTTP request headers.
         """
         super().__init__()
         self.url = url
@@ -161,21 +161,21 @@ def create_connection(
     url: str = None,
     headers: dict[str, str] = None,
 ) -> MCPConnection:
-    """工厂函数：创建适当的 MCP 连接
+    """Factory function: Create the appropriate MCP connection.
 
     Args:
-        transport: 传输方式（"stdio"、"sse" 或 "http"）
-        command: 启动命令（仅 stdio）
-        args: 命令参数（仅 stdio）
-        env: 环境变量（仅 stdio）
-        url: 服务器 URL（仅 sse 和 http）
-        headers: HTTP 请求头（仅 sse 和 http）
+        transport: Transport method ("stdio", "sse", or "http").
+        command: Startup command (stdio only).
+        args: Command arguments (stdio only).
+        env: Environment variables (stdio only).
+        url: Server URL (sse and http only).
+        headers: HTTP request headers (sse and http only).
 
     Returns:
-        MCPConnection 实例
+        MCPConnection instance.
 
     Raises:
-        ValueError: 传输方式不支持或缺少必需参数
+        ValueError: Unsupported transport or missing required parameters.
     """
     transport = transport.lower()
 

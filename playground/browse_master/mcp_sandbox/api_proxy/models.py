@@ -1,4 +1,4 @@
-# 定义请求体的模型
+# Define request body models
 from matplotlib.pyplot import cla
 from pydantic import BaseModel
 

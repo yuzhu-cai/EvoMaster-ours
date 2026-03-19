@@ -46,6 +46,7 @@ def __init__(
     output_config: dict[str, Any] | None = None,
     config_dir: Path | str | None = None,
     enable_tools: bool = True,
+    enabled_tool_names: list[str] | None = None,
 )
 ```
 
@@ -57,20 +58,39 @@ def __init__(
 - `skill_registry`: Optional skill registry
 - `output_config`: Output display configuration
 - `config_dir`: Config directory path for loading prompt files
-- `enable_tools`: Whether to include tool info in prompts
+- `enable_tools`: Whether to include tool info in prompts (default `True`). If `False`, tools are still registered but not exposed to the LLM
+- `enabled_tool_names`: List of tool names to expose to the LLM (optional). `None` or `["*"]` means all registered tools are enabled. Only affects the tools visible to the LLM, not tools callable from code
 
 ### Key Methods
 
-#### run(task)
+#### run(task, on_step)
 ```python
-def run(self, task: TaskInstance) -> Trajectory:
+def run(self, task: TaskInstance, on_step=None) -> Trajectory:
     """Execute a task
 
     Args:
         task: Task instance
+        on_step: Optional step callback, signature (StepRecord, step_number, max_steps) -> None
 
     Returns:
         Execution trajectory
+    """
+```
+
+#### continue_run(user_message, on_step)
+```python
+def continue_run(self, user_message: str, on_step=None) -> Trajectory:
+    """Continue execution with a new user message on existing dialog
+
+    Unlike run(), does not call _initialize(), preserves existing dialog context.
+    Suitable for multi-turn conversation scenarios.
+
+    Args:
+        user_message: New user message
+        on_step: Optional step callback
+
+    Returns:
+        Execution trajectory for this round
     """
 ```
 
@@ -116,16 +136,18 @@ def _get_user_prompt(self, task: TaskInstance) -> str:
     """Get user prompt for task"""
 ```
 
-### Class Methods
+### Instance and Class Methods
 
 ```python
-@classmethod
-def set_trajectory_file_path(cls, trajectory_file_path: str | Path) -> None:
-    """Set trajectory file path (shared by all agent instances)"""
+def set_trajectory_file_path(self, trajectory_file_path: str | Path) -> None:
+    """Set trajectory file path (per-instance, each agent independent)"""
 
 @classmethod
 def set_exp_info(cls, exp_name: str, exp_index: int) -> None:
-    """Set current exp info for trajectory recording"""
+    """Set current exp info for trajectory recording (class-level, shared by all instances)"""
+
+def set_agent_name(self, name: str) -> None:
+    """Set agent name (used to identify different agents in trajectory files)"""
 ```
 
 ## Agent
@@ -148,6 +170,7 @@ def __init__(
     output_config: dict[str, Any] | None = None,
     config_dir: Path | str | None = None,
     enable_tools: bool = True,
+    enabled_tool_names: list[str] | None = None,
 )
 ```
 
@@ -160,6 +183,10 @@ class AgentConfig(BaseModel):
     context_config: ContextConfig = Field(
         default_factory=ContextConfig,
         description="Context management config"
+    )
+    finish_on_text_response: bool = Field(
+        default=False,
+        description="Finish when LLM replies with pure text (no tool call), suitable for chat scenarios"
     )
 ```
 
@@ -291,7 +318,7 @@ class DockerSessionConfig(SessionConfig):
 ### Basic Agent Usage
 
 ```python
-from evomaster.agent import Agent, AgentConfig, create_default_registry
+from evomaster.agent import Agent, AgentConfig, create_registry
 from evomaster.agent.session import LocalSession, LocalSessionConfig
 from evomaster.utils import LLMConfig, create_llm
 from evomaster.utils.types import TaskInstance
@@ -299,7 +326,7 @@ from evomaster.utils.types import TaskInstance
 # Create components
 llm = create_llm(LLMConfig(provider="openai", model="gpt-4", api_key="..."))
 session = LocalSession(LocalSessionConfig(workspace_path="./workspace"))
-tools = create_default_registry()
+tools = create_registry()  # creates default registry with all builtin tools
 
 # Create agent
 agent = Agent(

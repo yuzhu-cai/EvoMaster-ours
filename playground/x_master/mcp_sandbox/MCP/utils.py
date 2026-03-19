@@ -18,7 +18,7 @@ with open(os.path.join(current_dir, "../configs/mcp_config.json"), "r") as f:
 
 class CodeRequest(BaseModel):
     code: str
-    timeout: Optional[int] = 180  # 默认超时30秒
+    timeout: Optional[int] = 180  # Default timeout 30 seconds
     session_id:str = "test_id"
 
 class CodeResponse(BaseModel):
@@ -177,11 +177,11 @@ class SessionManager:
     def get_session(self, session_id: str) -> _RuntimeModule:
         
         if session_id not in self.sessions:
-            # 使用pyext.RuntimeModule创建可重复执行的模块
+            # Use pyext.RuntimeModule to create a reusable execution module
             code_string = self.build_lib()
             # print(code_string)
             self.sessions[session_id] = RuntimeModule.from_string(f"session_{session_id}","", "")
-            # 初始化 runtime module 对应session 管理的变量和函数，异步队列收取当前代码流式返回
+            # Initialize runtime module session-managed variables and functions; async queue for streaming responses
             self.sessions[session_id].__dict__.update(
                 {"inform_handler":SessionInformHandler(session_id=session_id)}
             )

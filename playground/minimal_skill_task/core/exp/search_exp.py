@@ -1,4 +1,4 @@
-"""SearchExp：包含 plan agent 和 search agent，至少两轮 Plan → Search；两轮全空时放宽 threshold 再检索一轮"""
+"""SearchExp: includes the plan and search agents; runs at least two Plan → Search rounds; if both rounds are empty, relax the threshold and run one more search."""
 
 import logging
 from evomaster.core.exp import BaseExp
@@ -11,18 +11,21 @@ from ..utils.rag_utils import (
 )
 
 DEFAULT_QUERY = "Summarize the following machine learning task in one complete English sentence."
-RELAXED_THRESHOLD = 2.0  # 多轮结果均为空时放宽 threshold 重试
+RELAXED_THRESHOLD = 2.0  # When results from multiple rounds are all empty, retry with a relaxed threshold.
 
 
 def _is_result_empty(text: str) -> bool:
-    """检索结果是否视为空（无有效 content）"""
+    """Determine whether a search result should be treated as empty (no valid content). Use node_id, similarity, and prepare_code as validity markers."""
     if not text or not text.strip():
         return True
-    # 无 node_id / content 等有效信息视为空
     stripped = text.strip().lower()
     if len(stripped) < 30:
         return True
-    if "node_id" not in stripped and "content" not in stripped and "distance" not in stripped:
+    has_valid_marker = (
+        "node_id" in stripped
+        and ("similarity" in stripped or "prepare_code" in stripped)
+    )
+    if not has_valid_marker:
         return True
     return False
 
@@ -41,12 +44,12 @@ class SearchExp(BaseExp):
         db: dict,
         task_id: str = "exp_001",
     ) -> tuple[str, list]:
-        """运行两轮 Plan → Search，返回 (combined_search_results, [trajectories])。"""
+        """Run two Plan → Search rounds and return (combined_search_results, [trajectories])."""
         self.logger.info("Starting SearchExp (plan + search, 2 rounds)")
         trajectories = []
 
         # ---------- Round 1: Plan (initial) ----------
-        stage_input = analyze_output or "(无 Analyze 输出)"
+        stage_input = analyze_output or "(no Analyze output)"
         update_agent_format_kwargs(
             self.plan_agent,
             task_description=task_description,
@@ -67,7 +70,8 @@ class SearchExp(BaseExp):
         params1 = parse_plan_output(plan_output_1)
         if not params1.get("query"):
             params1["query"] = DEFAULT_QUERY
-        update_agent_format_kwargs(self.search_agent, **params1, **db)
+        # Also pass the full Plan output to Search so it can follow the multi-round retrieval strategy.
+        update_agent_format_kwargs(self.search_agent, plan_output=plan_output_1, **params1, **db)
         search_task_1 = TaskInstance(
             task_id=f"{task_id}_search1",
             task_type="search",
@@ -80,13 +84,16 @@ class SearchExp(BaseExp):
 
         # ---------- Round 2: Plan (second params) ----------
         first_round_empty = _is_result_empty(search_results_1 or "")
-        stage_input_2 = (
-            "第一轮检索结果：\n"
-            + (search_results_1 or "(无)")
-            + "\n\n请给出第二轮 query、top_k、threshold（格式：query: ... top_k: ... threshold: ...）。"
-            + ("**第一轮无有效结果，第二轮请务必放宽 threshold（建议 1.5～2.0 或更高），不要沿用过严的 threshold。** " if first_round_empty else "")
-            + "query 仍须符合 Analyze 的 (2) query 写作规范，可沿用首轮 query 或在其规范内微调。若认为第一轮已足够可说明仅用第一轮。"
-        )
+        # For the second-round plan, provide both:
+        # (1) the Analyze output (query-writing guidelines, DB description), and
+        # (2) the first-round search results, so the planner can refine queries with full context.
+        stage_input_2_parts = [
+            "Analyze output:\n",
+            (analyze_output or "(none)"),
+            "\n\nFirst-round search results:\n",
+            (search_results_1 or "(none)"),
+        ]
+        stage_input_2 = "".join(stage_input_2_parts)
         update_agent_format_kwargs(
             self.plan_agent,
             task_description=task_description,
@@ -107,7 +114,8 @@ class SearchExp(BaseExp):
         params2 = parse_plan_output(plan_output_2)
         if not params2.get("query"):
             params2 = params1
-        update_agent_format_kwargs(self.search_agent, **params2, **db)
+        # For the second round, also pass the corresponding Plan output so Search can use it as strategy and context.
+        update_agent_format_kwargs(self.search_agent, plan_output=plan_output_2, **params2, **db)
         search_task_2 = TaskInstance(
             task_id=f"{task_id}_search2",
             task_type="search",
@@ -118,12 +126,13 @@ class SearchExp(BaseExp):
         trajectories.append(search_traj_2)
         search_results_2 = extract_agent_response(search_traj_2)
 
-        # 强制要求：多轮结果均为空时，放宽 threshold 后重试一轮
+        # Hard requirement: if results from multiple rounds are all empty, relax the threshold and retry one more round.
         search_results_3 = None
         if _is_result_empty(search_results_1 or "") and _is_result_empty(search_results_2 or ""):
             self.logger.info("Both rounds empty; retrying with relaxed threshold")
             params_retry = {**params2, "threshold": max(RELAXED_THRESHOLD, params2.get("threshold", 1.5) * 1.2)}
-            update_agent_format_kwargs(self.search_agent, **params_retry, **db)
+            # During retry, keep using the second-round Plan output as the strategy reference.
+            update_agent_format_kwargs(self.search_agent, plan_output=plan_output_2, **params_retry, **db)
             search_task_3 = TaskInstance(
                 task_id=f"{task_id}_search_retry",
                 task_type="search",
@@ -134,8 +143,8 @@ class SearchExp(BaseExp):
             trajectories.append(search_traj_3)
             search_results_3 = extract_agent_response(search_traj_3)
 
-        combined = (search_results_1 or "") + "\n\n--- 第二轮 ---\n\n" + (search_results_2 or "")
+        combined = (search_results_1 or "") + "\n\n--- Second round ---\n\n" + (search_results_2 or "")
         if search_results_3:
-            combined += "\n\n--- 放宽 threshold 重试 ---\n\n" + (search_results_3 or "")
+            combined += "\n\n--- Retry with relaxed threshold ---\n\n" + (search_results_3 or "")
         self.logger.info("SearchExp completed")
         return combined, trajectories
