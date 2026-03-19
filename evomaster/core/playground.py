@@ -1225,12 +1225,13 @@ class BasePlayground:
                 # Single task mode: save to trajectories/trajectory.json
                 trajectory_file = self.run_dir / "trajectories" / "trajectory.json"
         
-        # Set trajectory file path for each agent instance (instance-level, avoids multi-agent overwriting)
+        # Set trajectory file path to BaseAgent
         if trajectory_file:
-            for agent in self.agents.values():
-                agent.set_trajectory_file_path(trajectory_file)
+            from evomaster.agent import BaseAgent
+            BaseAgent.set_trajectory_file_path(trajectory_file)
             self.logger.info(f"Trajectory file set to: {trajectory_file}")
-        
+        else:
+            self.logger.warning("No trajectory file set")
         return trajectory_file
 
     def run(self, task_description: str, output_file: str | None = None, images: list[str] | None = None, on_step=None) -> dict:
