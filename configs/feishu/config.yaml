@@ -37,8 +37,9 @@ feishu:
   # 格式: agent名称: 描述
   available_agents:
     agent_builder: "创建/设计/构建新的 AI Agent"
-    browse_master: "网页浏览与信息搜索"
-    ml_master_2: "机器学习任务自动化"
+    web_search_agent: "深度网络搜索与信息综合"
+    coding_agent: "代码编写、调试与执行"
+    report_writer_agent: "专业报告撰写"
 
   # Docker 容器池配置（可选，启用后每个用户 session 分配独立容器）
   container_pool:
@@ -49,4 +50,4 @@ feishu:
     memory_limit: "8g"
     cpu_limit: 4.0
     network_mode: "host"
-    container_name_prefix: "evopool"
+    container_name_prefix: "evopool_test_xinyu"
