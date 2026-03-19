@@ -17,6 +17,8 @@ from lark_oapi.api.docx.v1 import (
     BatchDeleteDocumentBlockChildrenRequest,
     BatchDeleteDocumentBlockChildrenRequestBody,
     Block,
+    ConvertDocumentRequest,
+    ConvertDocumentRequestBody,
     CreateDocumentBlockChildrenRequest,
     CreateDocumentBlockChildrenRequestBody,
     CreateDocumentRequest,
@@ -61,6 +63,9 @@ _LANG_PYTHON = 15
 
 # Max chars per code block (Feishu limit is ~64KB per block)
 _MAX_CODE_BLOCK_CHARS = 30000
+
+# Max blocks per batch insert API call (Feishu limit)
+_MAX_BLOCKS_PER_INSERT = 50
 
 _LANG_MAP = {
     "plaintext": _LANG_PLAIN,
@@ -537,6 +542,103 @@ class FeishuDocumentWriter:
         block = _build_divider_block()
         return self.insert_blocks(document_id, [block], index)
 
+    # ---- Markdown conversion & batch write ----
+
+    def convert_markdown(self, markdown: str) -> list[Block] | None:
+        """Convert markdown to Feishu blocks via the docx convert API.
+
+        Returns:
+            Ordered list of top-level Block objects ready for insertion,
+            or None on failure.
+        """
+        request = (
+            ConvertDocumentRequest.builder()
+            .request_body(
+                ConvertDocumentRequestBody.builder()
+                .content_type("markdown")
+                .content(markdown)
+                .build()
+            )
+            .build()
+        )
+
+        try:
+            response = self._client.docx.v1.document.convert(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to convert markdown: code=%s, msg=%s",
+                    response.code, response.msg,
+                )
+                return None
+
+            blocks = response.data.blocks or []
+            first_level_ids = response.data.first_level_block_ids or []
+
+            # Reorder blocks by first_level_block_ids
+            ordered = _reorder_blocks(blocks, first_level_ids)
+            # Clean read-only fields for insertion
+            _clean_blocks_for_insert(ordered)
+            return ordered
+        except Exception:
+            logger.exception("Exception converting markdown to blocks")
+            return None
+
+    def append_blocks_batched(self, document_id: str, blocks: list[Block]) -> bool:
+        """Append blocks in batches of _MAX_BLOCKS_PER_INSERT."""
+        for i in range(0, len(blocks), _MAX_BLOCKS_PER_INSERT):
+            batch = blocks[i : i + _MAX_BLOCKS_PER_INSERT]
+            if not self.append_blocks(document_id, batch):
+                logger.warning(
+                    "Batch append failed at offset %d/%d", i, len(blocks),
+                )
+                return False
+        return True
+
+    def write_markdown(
+        self, document_id: str, markdown: str
+    ) -> tuple[bool, int]:
+        """Replace entire document content with markdown.
+
+        Returns:
+            (success, blocks_added)
+        """
+        # Convert markdown → blocks first (before clearing)
+        blocks = self.convert_markdown(markdown)
+        if blocks is None:
+            return False, 0
+
+        # Clear existing content
+        existing = self.list_blocks(document_id)
+        if existing is None:
+            return False, 0
+        # Skip the page block (index 0, type 1)
+        content_count = sum(1 for b in existing if b["block_type"] != 1)
+        if content_count > 0:
+            if not self.delete_blocks(document_id, 0, content_count):
+                return False, 0
+
+        # Insert converted blocks in batches
+        if not blocks:
+            return True, 0
+        ok = self.append_blocks_batched(document_id, blocks)
+        return ok, len(blocks) if ok else 0
+
+    def append_markdown(
+        self, document_id: str, markdown: str
+    ) -> tuple[bool, int]:
+        """Append markdown content to the end of document.
+
+        Returns:
+            (success, blocks_added)
+        """
+        blocks = self.convert_markdown(markdown)
+        if blocks is None:
+            return False, 0
+        if not blocks:
+            return True, 0
+        ok = self.append_blocks_batched(document_id, blocks)
+        return ok, len(blocks) if ok else 0
+
 
 # ---- Block builder helpers ----
 
@@ -684,6 +786,27 @@ def upload_media_for_doc(client, file_path: str, doc_id: str) -> str | None:
     except Exception:
         logger.exception("Error uploading media %s for document %s", file_path, doc_id)
         return None
+
+
+def _reorder_blocks(blocks: list[Block], first_level_ids: list[str]) -> list[Block]:
+    """Reorder blocks by first_level_block_ids from the convert API.
+
+    The convert API returns blocks as a flat unordered array;
+    first_level_block_ids gives the correct top-level document order.
+    """
+    if not first_level_ids:
+        return list(blocks)
+    block_map = {b.block_id: b for b in blocks if b.block_id}
+    ordered = [block_map[bid] for bid in first_level_ids if bid in block_map]
+    return ordered if ordered else list(blocks)
+
+
+def _clean_blocks_for_insert(blocks: list[Block]) -> None:
+    """Remove read-only fields from converted blocks so they can be inserted."""
+    for block in blocks:
+        block.block_id = None
+        block.parent_id = None
+        block.children = None
 
 
 def _extract_block_text(block) -> str:
