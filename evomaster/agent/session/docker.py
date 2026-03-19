@@ -187,15 +187,22 @@ class DockerSession(BaseSession):
         self._prev_command_status = "timeout"
         
         while time.time() - start_time < timeout:
+            # Cancel-aware: 收到取消信号时中断当前命令
+            if self._cancel_event and self._cancel_event.is_set():
+                self._env.tmux_send_keys("C-c", enter=False)
+                time.sleep(0.5)
+                self._prev_command_status = "timeout"
+                break
+
             logs = self._env.get_tmux_logs()
             matches = list(PS1_PATTERN.finditer(logs))
             ps1_count = len(matches)
-            
+
             if ps1_count > self._last_ps1_count:
                 # 命令完成
                 self._prev_command_status = "completed"
                 break
-            
+
             time.sleep(poll_interval)
         
         # 解析输出
@@ -206,7 +213,15 @@ class DockerSession(BaseSession):
         output = ""
         exit_code = -1
         working_dir = ""
-        
+
+        # 检测 scrollback 溢出：旧的 PS1 已被冲出缓冲区
+        if self._last_ps1_count > ps1_count:
+            self.logger.warning(
+                "Tmux scrollback overflow: expected %d PS1 prompts, found %d. Resetting.",
+                self._last_ps1_count, ps1_count,
+            )
+            self._last_ps1_count = ps1_count
+
         if ps1_count > self._last_ps1_count:
             # 提取最后一个命令的输出
             if self._last_ps1_count > 0:

@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class BackgroundTaskStatus(enum.Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -38,6 +40,8 @@ class BackgroundTask:
     result: str | None = None
     error: str | None = None
     reviewed: bool = False
+    agent: Any = None       # BaseAgent reference for cancellation
+    reporter: Any = None    # FeishuStepReporter reference
 
     @property
     def elapsed_seconds(self) -> float:
@@ -87,6 +91,11 @@ class BackgroundTaskRegistry:
             tasks = self._tasks.get(chat_id, {})
             return [t for t in tasks.values() if t.is_active]
 
+    def get_task(self, chat_id: str, task_id: str) -> BackgroundTask | None:
+        """获取指定的后台任务。"""
+        with self._lock:
+            return self._tasks.get(chat_id, {}).get(task_id)
+
     def get_unreviewed_completed(self, chat_id: str) -> list[BackgroundTask]:
         """获取某个 chat 已完成但未审阅的任务。"""
         with self._lock:
@@ -121,6 +130,16 @@ class BackgroundTaskRegistry:
             task.status = BackgroundTaskStatus.FAILED
             task.error = error
         logger.warning("Background task failed: id=%s, agent=%s, error=%s", task.task_id, task.agent_name, error)
+
+    def mark_cancelled(self, task: BackgroundTask) -> None:
+        """标记任务被用户取消。仅在任务仍活跃时生效。"""
+        with self._lock:
+            if task.is_active:
+                task.status = BackgroundTaskStatus.CANCELLED
+                task.reviewed = True  # 取消的任务跳过自动审阅
+                logger.info("Background task cancelled: id=%s, agent=%s", task.task_id, task.agent_name)
+            else:
+                logger.info("Background task %s already %s, skip cancel", task.task_id, task.status.value)
 
     def mark_reviewed(self, task: BackgroundTask) -> None:
         """标记任务已审阅。"""

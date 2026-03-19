@@ -33,6 +33,8 @@ class PlaygroundSession:
     pending_reviews: list[dict] = field(default_factory=list)     # 后台任务完成后待审阅队列
     # 每项: {"task_id", "agent_name", "task_description", "result", "status"}
     dispatched_delegation_keys: set = field(default_factory=set)  # (agent_name, task) 已即时 dispatch 的委派，防止重复
+    current_reporter: Any = None          # FeishuStepReporter, set during task execution
+    current_running_agent: Any = None     # agent actively in run() loop (may differ from self.agent for builder phase2)
 
 
 class ChatSessionManager:
@@ -118,6 +120,11 @@ class ChatSessionManager:
         """返回当前活跃会话数。"""
         with self._global_lock:
             return len(self._sessions)
+
+    def get_sessions_by_prefix(self, prefix: str) -> list[PlaygroundSession]:
+        """查找 key 以 prefix: 开头的所有会话（用于 /stop 查找子会话）。"""
+        with self._global_lock:
+            return [s for k, s in self._sessions.items() if k.startswith(prefix + ":")]
 
     def shutdown(self) -> None:
         """关闭所有会话，释放资源。"""

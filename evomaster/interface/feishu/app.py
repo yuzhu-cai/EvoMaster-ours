@@ -230,14 +230,14 @@ class FeishuBot:
             send_text_message(
                 self._client,
                 ctx.chat_id,
-                "请提供任务描述。\n用法：直接发送消息对话，或使用 /agent <agent名称> <任务描述>\n命令：/new（新会话）、/list（查看智能体）、/shutdown（关闭 Bot）",
+                "请提供任务描述。\n用法：直接发送消息对话，或使用 /agent <agent名称> <任务描述>\n命令：/new（新会话）、/list（查看智能体）、/stop（停止任务）、/shutdown（关闭 Bot）",
                 reply_to_message_id=ctx.message_id,
             )
             return
 
         # 特殊命令直接 dispatch，不发确认消息
         stripped = task_text.strip()
-        if stripped in ("/new", "/shutdown", "/list"):
+        if stripped in ("/new", "/shutdown", "/list", "/stop"):
             self._dispatcher.dispatch(
                 chat_id=ctx.chat_id,
                 message_id=ctx.message_id,
@@ -372,6 +372,39 @@ class FeishuBot:
                 content = "\n\n".join(parts)
 
                 return self._card_update_response("💬 已回复", content, "wathet")
+
+            elif action == "stop_agent":
+                target = action_value.get("target", "orchestrator")
+                task_id = action_value.get("task_id", "")
+                session_key = action_value.get("session_key", "")
+
+                if target == "subtask" and task_id:
+                    # 停止指定后台子任务
+                    bg_task = self._dispatcher._bg_task_registry.get_task(chat_id, task_id)
+                    if bg_task:
+                        if bg_task.agent:
+                            bg_task.agent.cancel()
+                        if bg_task.reporter:
+                            bg_task.reporter.mark_stopping()
+                        self._dispatcher._bg_task_registry.mark_cancelled(bg_task)
+                elif target == "session_subtask" and session_key:
+                    # 停止指定同步委派子任务
+                    sub = self._dispatcher._session_manager.get(session_key)
+                    if sub and sub.current_running_agent:
+                        sub.current_running_agent.cancel()
+                    if sub and sub.current_reporter:
+                        sub.current_reporter.mark_stopping()
+                else:
+                    # 停止编排器
+                    session = self._dispatcher._session_manager.get(chat_id)
+                    if session and session.current_running_agent:
+                        session.current_running_agent.cancel()
+                    if session and session.current_reporter:
+                        session.current_reporter.mark_stopping()
+
+                return self._card_update_response(
+                    "🛑 正在停止...", "正在等待当前步骤完成后停止...", "orange"
+                )
 
             else:
                 logger.warning("Unknown card action: %s", action)
