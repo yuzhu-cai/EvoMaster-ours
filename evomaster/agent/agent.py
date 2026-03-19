@@ -783,15 +783,16 @@ class BaseAgent(ABC):
             return []
         return self.current_dialog.messages.copy()
     
-    def set_trajectory_file_path(self, trajectory_file_path: str | Path) -> None:
-        """Set the trajectory file path (instance-level, independent for each agent)
+    @classmethod
+    def set_trajectory_file_path(cls, trajectory_file_path: str | Path) -> None:
+        """Set the trajectory file path
 
         Args:
             trajectory_file_path: Trajectory file path
         """
-        self._trajectory_file_path = Path(trajectory_file_path)
+        cls._trajectory_file_path = Path(trajectory_file_path)
         # Ensure directory exists
-        self._trajectory_file_path.parent.mkdir(parents=True, exist_ok=True)
+        cls._trajectory_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def set_exp_info(cls, exp_name: str, exp_index: int) -> None:
