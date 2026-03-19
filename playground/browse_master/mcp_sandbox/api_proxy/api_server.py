@@ -19,7 +19,7 @@ import os
 
 app = FastAPI()
 
-# 初始化内存限流器
+# Initialize in-memory rate limiter
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 

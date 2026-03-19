@@ -1,6 +1,6 @@
-"""EvoMaster Agent 类型定义
+"""EvoMaster Agent type definitions
 
-定义 Agent 系统中使用的核心数据类型，包括消息、对话、轨迹等。
+Defines the core data types used in the Agent system, including messages, dialogs, trajectories, etc.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 
 
 class MessageRole(str, Enum):
-    """消息角色枚举"""
+    """Message role enumeration"""
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
@@ -21,38 +21,38 @@ class MessageRole(str, Enum):
 
 
 class FunctionCall(BaseModel):
-    """函数调用定义"""
-    name: str = Field(description="函数名称")
-    arguments: str = Field(description="函数参数，JSON 字符串格式")
+    """Function call definition"""
+    name: str = Field(description="Function name")
+    arguments: str = Field(description="Function arguments in JSON string format")
 
 
 class ToolCall(BaseModel):
-    """工具调用定义"""
-    id: str = Field(description="工具调用的唯一标识符")
+    """Tool call definition"""
+    id: str = Field(description="Unique identifier for the tool call")
     type: Literal["function"] = "function"
-    function: FunctionCall = Field(description="函数调用详情")
+    function: FunctionCall = Field(description="Function call details")
 
 
 class BaseMessage(BaseModel):
-    """消息基类"""
-    role: MessageRole = Field(description="消息角色")
-    content: str | list[dict[str, Any]] | None = Field(default=None, description="消息内容，可以是字符串或多模态内容块列表")
-    meta: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    """Base message class"""
+    role: MessageRole = Field(description="Message role")
+    content: str | list[dict[str, Any]] | None = Field(default=None, description="Message content, can be a string or a list of multimodal content blocks")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Metadata")
 
 
 class SystemMessage(BaseMessage):
-    """系统消息"""
+    """System message"""
     role: MessageRole = MessageRole.SYSTEM
 
 
 class UserMessage(BaseMessage):
-    """用户消息
+    """User message
 
-    content 支持两种格式：
-    - str: 纯文本消息
-    - list[dict]: 多模态内容块列表，例如：
+    content supports two formats:
+    - str: Plain text message
+    - list[dict]: Multimodal content block list, e.g.:
         [
-            {"type": "text", "text": "描述这张图片"},
+            {"type": "text", "text": "Describe this image"},
             {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}
         ]
     """
@@ -60,57 +60,57 @@ class UserMessage(BaseMessage):
 
 
 class AssistantMessage(BaseMessage):
-    """助手消息"""
+    """Assistant message"""
     role: MessageRole = MessageRole.ASSISTANT
-    tool_calls: list[ToolCall] | None = Field(default=None, description="工具调用列表")
+    tool_calls: list[ToolCall] | None = Field(default=None, description="List of tool calls")
 
 
 class ToolMessage(BaseMessage):
-    """工具响应消息"""
+    """Tool response message"""
     role: MessageRole = MessageRole.TOOL
-    tool_call_id: str = Field(description="对应的工具调用 ID")
-    name: str = Field(description="工具名称")
+    tool_call_id: str = Field(description="Corresponding tool call ID")
+    name: str = Field(description="Tool name")
 
 
-# 消息联合类型
+# Message union type
 Message = SystemMessage | UserMessage | AssistantMessage | ToolMessage
 
 
 class ToolSpec(BaseModel):
-    """工具规格定义，用于 LLM 的 function calling"""
+    """Tool specification definition, used for LLM function calling"""
     type: Literal["function"] = "function"
-    function: FunctionSpec = Field(description="函数规格")
+    function: FunctionSpec = Field(description="Function specification")
 
 
 class FunctionSpec(BaseModel):
-    """函数规格定义"""
-    name: str = Field(description="函数名称")
-    description: str = Field(description="函数描述")
-    parameters: dict[str, Any] = Field(description="参数 JSON Schema")
-    strict: bool | None = Field(default=None, description="是否严格模式")
+    """Function specification definition"""
+    name: str = Field(description="Function name")
+    description: str = Field(description="Function description")
+    parameters: dict[str, Any] = Field(description="Parameter JSON Schema")
+    strict: bool | None = Field(default=None, description="Whether to use strict mode")
 
 
 class Dialog(BaseModel):
-    """对话定义，包含消息列表和可用工具"""
-    messages: list[Message] = Field(default_factory=list, description="消息列表")
-    tools: list[ToolSpec] = Field(default_factory=list, description="可用工具列表")
-    meta: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    """Dialog definition, containing a message list and available tools"""
+    messages: list[Message] = Field(default_factory=list, description="Message list")
+    tools: list[ToolSpec] = Field(default_factory=list, description="Available tools list")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Metadata")
 
     def add_message(self, message: Message) -> None:
-        """添加消息到对话"""
+        """Add a message to the dialog"""
         self.messages.append(message)
 
     def get_messages_for_api(self) -> list[dict[str, Any]]:
-        """获取用于 API 调用的消息格式
+        """Get messages formatted for API calls
 
-        支持多模态内容：当 content 为 list 时，直接传递内容块列表（包含 text 和 image_url 块）。
+        Supports multimodal content: when content is a list, the content block list (containing text and image_url blocks) is passed directly.
         """
         result = []
         for msg in self.messages:
             msg_dict: dict[str, Any] = {"role": msg.role.value}
             content = msg.content
 
-            # 部分 API（如 Claude/OpenRouter）要求 text content blocks 非空
+            # Some APIs (e.g., Claude/OpenRouter) require non-empty text content blocks
             if isinstance(msg, AssistantMessage) and msg.tool_calls:
                 if content is None or (isinstance(content, str) and not content.strip()):
                     content = " "
@@ -130,33 +130,33 @@ class Dialog(BaseModel):
 
 
 class StepRecord(BaseModel):
-    """单步执行记录"""
-    step_id: int = Field(description="步骤编号")
-    timestamp: datetime = Field(default_factory=datetime.now, description="时间戳")
-    assistant_message: AssistantMessage | None = Field(default=None, description="助手消息")
-    tool_responses: list[ToolMessage] = Field(default_factory=list, description="工具响应列表")
-    meta: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    """Single step execution record"""
+    step_id: int = Field(description="Step number")
+    timestamp: datetime = Field(default_factory=datetime.now, description="Timestamp")
+    assistant_message: AssistantMessage | None = Field(default=None, description="Assistant message")
+    tool_responses: list[ToolMessage] = Field(default_factory=list, description="Tool response list")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Metadata")
 
 
 class Trajectory(BaseModel):
-    """任务执行轨迹，记录完整的执行过程"""
-    task_id: str = Field(description="任务 ID")
-    dialogs: list[Dialog] = Field(default_factory=list, description="对话列表")
-    steps: list[StepRecord] = Field(default_factory=list, description="步骤记录")
-    start_time: datetime = Field(default_factory=datetime.now, description="开始时间")
-    end_time: datetime | None = Field(default=None, description="结束时间")
+    """Task execution trajectory, recording the complete execution process"""
+    task_id: str = Field(description="Task ID")
+    dialogs: list[Dialog] = Field(default_factory=list, description="Dialog list")
+    steps: list[StepRecord] = Field(default_factory=list, description="Step records")
+    start_time: datetime = Field(default_factory=datetime.now, description="Start time")
+    end_time: datetime | None = Field(default=None, description="End time")
     status: Literal["running", "completed", "failed", "cancelled", "waiting_for_input"] = Field(
-        default="running", description="执行状态"
+        default="running", description="Execution status"
     )
-    result: dict[str, Any] = Field(default_factory=dict, description="执行结果")
-    meta: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    result: dict[str, Any] = Field(default_factory=dict, description="Execution result")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Metadata")
 
     def add_step(self, step: StepRecord) -> None:
-        """添加执行步骤"""
+        """Add an execution step"""
         self.steps.append(step)
 
     def finish(self, status: Literal["completed", "failed", "cancelled", "waiting_for_input"], result: dict[str, Any] | None = None) -> None:
-        """完成轨迹记录"""
+        """Finish the trajectory recording"""
         self.end_time = datetime.now()
         self.status = status
         if result:
@@ -164,11 +164,11 @@ class Trajectory(BaseModel):
 
 
 class TaskInstance(BaseModel):
-    """任务实例定义"""
-    task_id: str = Field(description="任务唯一标识")
-    task_type: str = Field(default="general", description="任务类型")
-    description: str = Field(default="", description="任务描述")
-    input_data: dict[str, Any] = Field(default_factory=dict, description="输入数据")
-    images: list[str] = Field(default_factory=list, description="图片文件路径列表（支持 PNG/JPG）")
-    meta: dict[str, Any] = Field(default_factory=dict, description="元数据")
+    """Task instance definition"""
+    task_id: str = Field(description="Unique task identifier")
+    task_type: str = Field(default="general", description="Task type")
+    description: str = Field(default="", description="Task description")
+    input_data: dict[str, Any] = Field(default_factory=dict, description="Input data")
+    images: list[str] = Field(default_factory=list, description="Image file path list (supports PNG/JPG)")
+    meta: dict[str, Any] = Field(default_factory=dict, description="Metadata")
 

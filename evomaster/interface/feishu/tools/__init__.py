@@ -1,6 +1,6 @@
-"""飞书专属 Agent 工具
+"""Feishu-specific Agent tools
 
-仅在交互式上下文（飞书 dispatcher）中按需注入的工具。
+Tools injected on demand only in interactive contexts (Feishu dispatcher).
 """
 
 from .doc_reader import FeishuDocReadTool, FeishuDocReadToolParams

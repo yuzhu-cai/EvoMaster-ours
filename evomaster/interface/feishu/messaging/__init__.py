@@ -1,6 +1,6 @@
-"""飞书 API 通信层
+"""Feishu API communication layer
 
-封装飞书 API 交互：客户端创建、消息发送、文档操作。
+Encapsulates Feishu API interactions: client creation, message sending, and document operations.
 """
 
 from .client import create_feishu_client

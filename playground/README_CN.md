@@ -8,11 +8,17 @@ Playground 是开发者构建自己科研智能体的工作区。每个 playgrou
 
 | Playground | 类型 | 说明 | 文档 |
 |---|---|---|---|
-| `minimal` | 单智能体 | 最简示例，仅继承 `BasePlayground`，适合快速了解框架 | [README](./minimal/README.md) |
-| `minimal_multi_agent` | 多智能体 | Planning + Coding 双智能体协作，演示多 Agent 工作流 | [README](./minimal_multi_agent/README.md) |
-| `minimal_kaggle` | 多智能体 | Kaggle 竞赛自动化，含 6 个角色 Agent（draft/debug/improve/research/knowledge/metric） | [README](./minimal_kaggle/README.md) |
-| `minimal_skill_task` | 单智能体 + Skills | 基于 RAG 技能的 Analyze → Plan → Search → Summarize 工作流 | [README](./minimal_skill_task/README.md) |
-| `x_master` | 多阶段并行 | 四阶段迭代工作流 Solve → Critique → Rewrite → Select，支持 MCP 工具 | [README](./x_master/README.md) |
+| `minimal` | 单智能体 | 最简示例，仅继承 `BasePlayground`，适合快速了解框架 | [README](./minimal/README_CN.md) |
+| `minimal_bohrium` | 单智能体 | 玻尔平台科学计算集成 | [README](./minimal_bohrium/README_CN.md) |
+| `minimal_multi_agent` | 多智能体 | Planning + Coding 双智能体协作，演示多 Agent 工作流 | [README](./minimal_multi_agent/README_CN.md) |
+| `minimal_multi_agent_parallel` | 多智能体 | 使用 ThreadPoolExecutor 并行多智能体实验 | [README](./minimal_multi_agent_parallel/README_CN.md) |
+| `minimal_openclaw_skill` | 单智能体 + Skills | 基于 TypeScript 的 OpenClaw 技能集成，通过 Node.js bridge | [README](./minimal_openclaw_skill/README_CN.md) |
+| `minimal_kaggle` | 多智能体 | Kaggle 竞赛自动化，含 6 个角色 Agent（draft/debug/improve/research/knowledge/metric） | [README](./minimal_kaggle/README_CN.md) |
+| `minimal_skill_task` | 单智能体 + Skills | 基于 RAG 技能的 Analyze → Plan → Search → Summarize 工作流 | [README](./minimal_skill_task/README_CN.md) |
+| `ml_master` | 多智能体 | ML-Master 1.0，结合树搜索和自适应记忆的自主机器学习 | [README](./ml_master/README_CN.md) |
+| `ml_master_2` | 多智能体 | ML-Master 2.0，分层认知缓存架构的超长程自主机器学习 | [README](./ml_master_2/README_CN.md) |
+| `x_master` | 多阶段并行 | 四阶段迭代工作流 Solve → Critique → Rewrite → Select，支持 MCP 工具 | [README](./x_master/README_CN.md) |
+| `browse_master` | 多智能体 | Planner + Executor 网页搜索智能体，支持 MCP 工具 | [README](./browse_master/README_CN.md) |
 
 ## 快速开始：创建你的 Playground
 
@@ -161,4 +167,4 @@ session:
 - 提示词文件使用相对路径（相对于 playground 目录）
 - `run()` 中使用 `try-finally` 确保 `cleanup()` 被调用
 
-更多细节请参考 [开发文档](../docs/zh/architecture.md)。
+更多细节请参考 [开发文档](../docs/architecture.md)。

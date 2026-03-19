@@ -1,6 +1,6 @@
-"""Feishu Bot 配置模型与加载
+"""Feishu Bot configuration model and loading
 
-从 YAML 文件加载飞书 Bot 配置，复用 EvoMaster 的 _substitute_env 模式。
+Load Feishu Bot configuration from a YAML file, reusing EvoMaster's _substitute_env pattern.
 """
 
 from __future__ import annotations
@@ -16,50 +16,50 @@ try:
 except ImportError:
     load_dotenv = None  # type: ignore[misc, assignment]
 
-# 复用 evomaster.config 中的环境变量替换
+# Reuse the environment variable substitution from evomaster.config
 from evomaster.config import _substitute_env
 
 
 class FeishuBotConfig(BaseModel):
-    """飞书 Bot 配置"""
+    """Feishu Bot configuration."""
 
-    app_id: str = Field(description="飞书应用 App ID")
-    app_secret: str = Field(description="飞书应用 App Secret")
+    app_id: str = Field(description="Feishu application App ID")
+    app_secret: str = Field(description="Feishu application App Secret")
     domain: str = Field(
         default="https://open.feishu.cn",
-        description="飞书 API 域名",
+        description="Feishu API domain",
     )
     connection_mode: str = Field(
         default="websocket",
-        description="连接模式: websocket 或 webhook",
+        description="Connection mode: websocket or webhook",
     )
     default_agent: str = Field(
         default="chat_agent",
-        description="默认使用的 playground agent 名称",
+        description="Default playground agent name to use",
     )
     default_config_path: Optional[str] = Field(
         default=None,
-        description="默认配置文件路径（相对于 project_root），不设置则使用 configs/{agent}/config.yaml",
+        description="Default config file path (relative to project_root); if not set, uses configs/{agent}/config.yaml",
     )
     max_concurrent_tasks: int = Field(
         default=4,
-        description="最大并发任务数",
+        description="Maximum number of concurrent tasks",
     )
     task_timeout: int = Field(
         default=600,
-        description="单个任务超时时间（秒）",
+        description="Timeout for a single task in seconds",
     )
     allow_from: List[str] = Field(
         default_factory=list,
-        description="允许的用户 open_id 列表，空列表表示允许所有人",
+        description="List of allowed user open_ids; empty list means all users are allowed",
     )
     doc_folder_token: Optional[str] = Field(
         default=None,
-        description="飞书文件夹 token，用于存放轨迹文档。为空则创建在应用根目录",
+        description="Feishu folder token for storing trajectory documents; empty means root directory of the application",
     )
     max_sessions: int = Field(
         default=100,
-        description="最大并发会话数",
+        description="Maximum number of concurrent sessions",
     )
 
     class Config:
@@ -70,20 +70,20 @@ def load_feishu_config(
     config_path: str | Path,
     project_root: str | Path | None = None,
 ) -> FeishuBotConfig:
-    """加载飞书 Bot 配置
+    """Load Feishu Bot configuration.
 
     Args:
-        config_path: 配置文件路径
-        project_root: 项目根目录，用于搜索 .env 文件
+        config_path: Path to the configuration file.
+        project_root: Project root directory, used for searching the .env file.
 
     Returns:
-        FeishuBotConfig 实例
+        A FeishuBotConfig instance.
     """
     config_path = Path(config_path)
     if not config_path.exists():
         raise FileNotFoundError(f"Feishu config not found: {config_path}")
 
-    # 加载 .env
+    # Load .env
     if load_dotenv is not None:
         if project_root:
             env_file = Path(project_root) / ".env"
@@ -99,7 +99,7 @@ def load_feishu_config(
 
     raw = _substitute_env(raw)
 
-    # 提取 feishu 段
+    # Extract the feishu section
     feishu_section = raw.get("feishu", raw)
 
     return FeishuBotConfig(**feishu_section)

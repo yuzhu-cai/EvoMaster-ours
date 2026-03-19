@@ -18,12 +18,6 @@
 
 ---
 
-## 📢Code Coming Soon
-
-> **Note:** The source code for EvoMaster is currently in preparation for release. We are finalizing the documentation and polishing the core logic to ensure the best developer experience. Please check our [Roadmap](#roadmap) for the release timeline.
-
----
-
 ## <a id="introduction"></a>📖 Introduction
 
 **EvoMaster** is a lightweight yet powerful framework designed to enable researchers and developers to rapidly build their own scientific agents.
@@ -77,16 +71,16 @@ EvoMaster is the engine behind the cutting-edge **SciMaster** family of agents. 
 
 We are committed to open-sourcing EvoMaster and its ecosystem in stages to ensure quality and stability.
 
-[x] **Phase 1: The Core (Expected: End of Feb 2026)**
+- [x] **Phase 1: The Core (Completed: Feb 2026)**
 * Release of `EvoMaster` base framework code.
 * Basic documentation and easy agent examples.
 
 
- [ ] **Phase 2: The Agents (Expected: End of Mar 2026)**
+- [ ] **Phase 2: The Agents (Expected: End of Mar 2026)**
 * Open source implementation of the **SciMaster Series** (ML-Master 2.0, PhysMaster, etc.) based on EvoMaster.
 
 
-[ ] **Phase 3: The Bohrium Tools (Future)**
+- [ ] **Phase 3: The Bohrium Tools (Future)**
 * Integration with the **[Bohrium Tool Library](https://www.bohrium.com/)**.
 * Native support for easily accessing over **30,000+** scientific tools and APIs hosted on the Bohrium platform.
 
@@ -95,20 +89,30 @@ We are committed to open-sourcing EvoMaster and its ecosystem in stages to ensur
 
 ```
 EvoMaster/
-├── evomaster/              # Core library
-│   ├── agent/              # Agent components (Agent, Session, Tools)
-│   ├── core/               # Workflow (Exp, Playground)
-│   ├── env/                # Environment (Docker, Local)
-│   ├── skills/             # Skill system (Knowledge, Operator)
-│   └── utils/              # Utilities (LLM, Types)
-├── playground/             # Playground implementations
-│   ├── minimal/            # Basic single-agent
-│   ├── minimal_kaggle/     # Kaggle automation
-│   ├── minimal_multi_agent/# Planning + Coding agents
-│   ├── minimal_skill_task/ # RAG-based workflow
-│   └── x_master/           # X-Master 4-phase workflow
-├── configs/                # Configuration files
-└── docs/                   # Documentation
+├── evomaster/                        # Core library
+│   ├── agent/                        # Agent components (Agent, Session, Tools)
+│   ├── core/                         # Workflow (Exp, Playground)
+│   ├── env/                          # Environment (Docker, Local)
+│   ├── interface/                    # External interfaces (Feishu, etc.)
+│   ├── memory/                       # Memory system
+│   ├── skills/                       # Skill system
+│   ├── skills_ts/                    # TypeScript skills (OpenClaw bridge)
+│   └── utils/                        # Utilities (LLM, Types)
+├── playground/                       # Playground implementations
+│   ├── minimal/                      # Basic single-agent
+│   ├── minimal_bohrium/              # Bohrium platform computing
+│   ├── minimal_kaggle/               # Kaggle automation
+│   ├── minimal_multi_agent/          # Planning + Coding agents
+│   ├── minimal_multi_agent_parallel/ # Parallel multi-agent
+│   ├── minimal_openclaw_skill/       # TypeScript skill integration
+│   ├── minimal_skill_task/           # RAG-based workflow
+│   ├── ml_master/                    # ML-Master 1.0
+│   ├── ml_master_2/                  # ML-Master 2.0
+│   ├── x_master/                     # X-Master 4-phase workflow
+│   ├── browse_master/                # Browse-Master web search agent
+│   └── mat_master/                   # Mat-Master materials science
+├── configs/                          # Configuration files
+└── docs/                             # Documentation
 ```
 
 ## 📚 Documentation
@@ -128,11 +132,15 @@ EvoMaster/
 | Playground | Description | Documentation |
 |------------|-------------|---------------|
 | `minimal` | Basic single-agent playground | [README](./playground/minimal/README.md) |
+| `minimal_bohrium` | Bohrium platform scientific computing | [README](./playground/minimal_bohrium/README.md) |
 | `minimal_kaggle` | Simple Kaggle competition automation | [README](./playground/minimal_kaggle/README.md) |
 | `minimal_multi_agent` | Planning + Coding agents | [README](./playground/minimal_multi_agent/README.md) |
+| `minimal_multi_agent_parallel` | Parallel multi-agent experiments | [README](./playground/minimal_multi_agent_parallel/README.md) |
+| `minimal_openclaw_skill` | TypeScript skill integration | [README](./playground/minimal_openclaw_skill/README.md) |
 | `minimal_skill_task` | RAG-based Analyze→Search→Summarize | [README](./playground/minimal_skill_task/README.md) |
+| `ml_master` | ML-Master 1.0 for Autonomous ML | [README](./playground/ml_master/README.md) |
+| `ml_master_2` | ML-Master 2.0 with cognitive accumulation | [README](./playground/ml_master_2/README.md) |
 | `x_master` | 4-phase parallel workflow | [README](./playground/x_master/README.md) |
-| `ML-Master 2.0` |  Complex agentic science multi-agent framework for Autonomous Machine Learning| [README](./playground/ml_master_2/README.md) |
 | `browse_master` | Web Search Agent | [README](./playground/browse_master/README.md) |
 
 ## 🚀 Quick Start
@@ -244,7 +252,14 @@ pip install -r playground/minimal_kaggle/requirements.txt
 python run.py --agent minimal_kaggle --config configs/minimal_kaggle/deepseek-v3.2-example.yaml --task playground/minimal_kaggle/data/public/description.md
 ```
 
-### ML-Master 2
+### ML-Master 1.0
+Please refer to [ML-Master 1.0 README](./playground/ml_master/README.md) for more details
+```bash
+pip install -r playground/ml_master/requirements.txt
+python run.py --agent ml_master --config configs/ml_master/config.yaml --task /data/exp_data/detecting-insults-in-social-commentary/prepared/public/description.md
+```
+
+### ML-Master 2.0
 Please refer to [ML-Master 2.0 README](./playground/ml_master_2/README.md) for more details
 ```bash
 pip install -r playground/ml_master_2/requirements.txt

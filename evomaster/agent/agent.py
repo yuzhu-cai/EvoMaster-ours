@@ -1,6 +1,6 @@
-"""EvoMaster Agent 基础实现
+"""EvoMaster Agent base implementation
 
-提供 Agent 的基础抽象，支持工具调用、对话管理、轨迹记录等功能。
+Provides the base abstraction for Agent, supporting tool invocation, dialog management, trajectory recording, and more.
 """
 
 from __future__ import annotations
@@ -36,38 +36,38 @@ if TYPE_CHECKING:
 
 
 class AgentConfig(BaseModel):
-    """Agent 配置"""
-    max_turns: int = Field(default=100, description="最大执行轮数")
+    """Agent configuration"""
+    max_turns: int = Field(default=100, description="Maximum number of execution turns")
     context_config: ContextConfig = Field(
         default_factory=ContextConfig,
-        description="上下文管理配置"
+        description="Context management configuration"
     )
     finish_on_text_response: bool = Field(
         default=False,
-        description="当 LLM 回复纯文本（无 tool call）时直接视为任务完成，适用于对话场景"
+        description="Treat the task as completed when the LLM replies with plain text (no tool call); suitable for conversational scenarios"
     )
 
 
 class BaseAgent(ABC):
-    """Agent 基类
+    """Agent base class
 
-    提供 Agent 的基础功能：
-    - 对话管理（Dialog）
-    - 轨迹记录（Trajectory）
-    - 工具调用执行
-    - 上下文管理
+    Provides the fundamental Agent functionality:
+    - Dialog management (Dialog)
+    - Trajectory recording (Trajectory)
+    - Tool call execution
+    - Context management
 
-    子类需要实现：
-    - _get_system_prompt(): 获取系统提示词
-    - _get_user_prompt(task): 获取用户提示词
+    Subclasses must implement:
+    - _get_system_prompt(): Get the system prompt
+    - _get_user_prompt(task): Get the user prompt
     """
 
     VERSION: str = "1.0"
     
-    # 类级别的轨迹文件锁（多agent实例写文件时互斥）
+    # Class-level trajectory file lock (mutex when multiple agent instances write to file)
     _trajectory_file_lock = threading.Lock()
 
-    # 类级别的当前exp信息（所有agent实例共享）
+    # Class-level current experiment info (shared by all agent instances)
     _current_exp_name: str | None = None
     _current_exp_index: int | None = None
 
@@ -83,19 +83,19 @@ class BaseAgent(ABC):
         enable_tools: bool = True,
         enabled_tool_names: list[str] | None = None,
     ):
-        """初始化 Agent
+        """Initialize Agent
 
         Args:
-            llm: LLM 实例
-            session: 环境会话，用于执行工具
-            tools: 工具注册中心（始终注册所有工具，但只有启用的工具才会暴露给 LLM）
-            config: Agent 配置
-            skill_registry: Skills 注册中心（可选）
-            output_config: 输出显示配置
-            config_dir: 配置目录路径，用于加载提示词文件
-            enable_tools: 是否在提示词中包含工具信息（默认 True）。如果为 False，工具仍然注册但不会出现在提示词中
-            enabled_tool_names: 启用的工具名称列表（可选）。None 或 ["*"] 表示所有已注册工具都启用。
-                仅影响暴露给 LLM 的工具列表，不影响代码中手动调用工具。
+            llm: LLM instance
+            session: Environment session for executing tools
+            tools: Tool registry (all tools are always registered, but only enabled tools are exposed to the LLM)
+            config: Agent configuration
+            skill_registry: Skill registry (optional)
+            output_config: Output display configuration
+            config_dir: Configuration directory path for loading prompt files
+            enable_tools: Whether to include tool information in the prompt (default True). If False, tools are still registered but not exposed in the prompt
+            enabled_tool_names: List of enabled tool names (optional). None or ["*"] means all registered tools are enabled.
+                Only affects the tool list exposed to the LLM; does not affect manual tool calls in code.
         """
         self.llm = llm
         self.session = session
@@ -105,70 +105,70 @@ class BaseAgent(ABC):
         self.enable_tools = enable_tools
         self.enabled_tool_names = enabled_tool_names
 
-        # 输出配置
+        # Output configuration
         self.output_config = output_config or {}
         self.show_in_console = self.output_config.get("show_in_console", False)
         self.log_to_file = self.output_config.get("log_to_file", False)
 
-        # 配置目录（用于加载提示词文件）
+        # Configuration directory (for loading prompt files)
         self.config_dir = Path(config_dir) if config_dir else None
 
-        # 上下文管理器
+        # Context manager
         self.context_manager = ContextManager(self.config.context_config)
 
-        # 当前对话
+        # Current dialog
         self.current_dialog: Dialog | None = None
 
-        # 执行轨迹
+        # Execution trajectory
         self.trajectory = None
 
-        # 日志
+        # Logger
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # 当前步骤计数
+        # Current step count
         self._step_count = 0
 
-        # ask_user 工具暂存（拦截后在 step loop 中处理）
+        # ask_user tool buffer (intercepted and handled in the step loop)
         self._pending_ask_user: dict[str, Any] | None = None
 
-        # 存储初始系统提示词和用户提示词（用于重置）
+        # Store initial system prompt and user prompt (for resetting)
         self._initial_system_prompt: str | None = None
         self._initial_user_prompt: str | None = None
-        
-        # Agent名称（用于标识不同的agent）
+
+        # Agent name (used to identify different agents)
         self._agent_name: str | None = None
 
-        # 实例级别的轨迹文件路径（每个agent实例独立）
+        # Instance-level trajectory file path (independent for each agent instance)
         self._trajectory_file_path: Path | None = None
 
     def run(self, task: TaskInstance, on_step=None):
-        """执行任务
+        """Execute a task
 
         Args:
-            task: 任务实例
-            on_step: 每步回调，签名 (StepRecord, step_number, max_steps) -> None
+            task: Task instance
+            on_step: Per-step callback with signature (StepRecord, step_number, max_steps) -> None
 
         Returns:
-            执行轨迹
+            Execution trajectory
         """
         from evomaster.utils.types import Trajectory
 
         self.logger.info(f"Starting task: {task.task_id}")
 
-        # 初始化
+        # Initialize
         self._initialize(task)
 
         try:
-            # 执行循环
+            # Execution loop
             for turn in range(self.config.max_turns):
-                # 清晰显示当前步骤
+                # Clearly display the current step
                 self.logger.info("=" * 80)
                 self.logger.info(f"📍 Step [{turn + 1}/{self.config.max_turns}]")
                 self.logger.info("=" * 80)
 
                 should_finish = self._step()
 
-                # 调用步骤回调
+                # Invoke step callback
                 if on_step and self.trajectory and self.trajectory.steps:
                     try:
                         on_step(self.trajectory.steps[-1], turn + 1, self.config.max_turns)
@@ -202,20 +202,21 @@ class BaseAgent(ABC):
         return self.trajectory
 
     def continue_run(self, user_message: str, on_step=None):
-        """在已有对话上追加用户消息，继续执行 step 循环。
+        """Append a user message to the existing dialog and continue the step loop.
 
-        与 run() 的区别：不调用 _initialize()，保留已有 dialog 上下文。
-        适用于多轮对话场景（如飞书 Bot），上一轮 finish 后接收新消息继续对话。
+        Unlike run(), this does not call _initialize() and preserves the existing dialog context.
+        Suitable for multi-turn conversation scenarios (e.g., Feishu Bot), where a new message
+        continues the conversation after the previous round finishes.
 
         Args:
-            user_message: 新的用户消息
-            on_step: 每步回调，签名 (StepRecord, step_number, max_steps) -> None
+            user_message: New user message
+            on_step: Per-step callback with signature (StepRecord, step_number, max_steps) -> None
 
         Returns:
-            本轮执行轨迹
+            Execution trajectory for this round
 
         Raises:
-            ValueError: 如果 agent 尚未通过 run() 初始化
+            ValueError: If the agent has not been initialized via run()
         """
         from evomaster.utils.types import Trajectory
 
@@ -226,10 +227,10 @@ class BaseAgent(ABC):
 
         self.logger.info("Continuing conversation with new user message")
 
-        # 追加用户消息到已有对话
+        # Append user message to existing dialog
         self.add_user_message(user_message)
 
-        # 创建本轮新的 Trajectory（用于追踪和报告）
+        # Create a new Trajectory for this round (for tracking and reporting)
         self.trajectory = Trajectory(
             task_id=f"continue_{self._step_count}",
             meta={
@@ -239,7 +240,7 @@ class BaseAgent(ABC):
         )
         self.trajectory.dialogs.append(self.current_dialog)
 
-        # 重置步骤计数
+        # Reset step count
         self._step_count = 0
 
         try:
@@ -283,14 +284,14 @@ class BaseAgent(ABC):
         return self.trajectory
 
     def _initialize(self, task: TaskInstance) -> None:
-        """初始化执行环境
+        """Initialize the execution environment
 
         Args:
-            task: 任务实例
+            task: Task instance
         """
         from evomaster.utils.types import Trajectory
 
-        # 创建轨迹
+        # Create trajectory
         self.trajectory = Trajectory(
             task_id=task.task_id,
             meta={
@@ -299,21 +300,21 @@ class BaseAgent(ABC):
             }
         )
 
-        # 获取初始提示词
+        # Get initial prompts
         system_prompt = self._get_system_prompt()
         user_prompt = self._get_user_prompt(task)
 
-        # 保存初始提示词（用于重置）
+        # Save initial prompts (for resetting)
         self._initial_system_prompt = system_prompt
         self._initial_user_prompt = user_prompt
 
-        # 构建用户消息内容：如果任务包含图片，构建多模态内容
+        # Build user message content: construct multimodal content if the task includes images
         if task.images:
             user_content = build_multimodal_content(user_prompt, task.images)
         else:
             user_content = user_prompt
 
-        # 创建对话
+        # Create dialog
         self.current_dialog = Dialog(
             messages=[
                 SystemMessage(content=system_prompt),
@@ -327,26 +328,26 @@ class BaseAgent(ABC):
         self._step_count = 0
 
     def _step(self) -> bool:
-        """执行一步
+        """Execute one step
 
         Returns:
-            是否应该结束（True 表示结束）
+            Whether the execution should finish (True means finish)
         """
         self._step_count += 1
 
-        # 准备对话（可能需要截断）
+        # Prepare dialog (may need truncation)
         dialog_for_query, compacted = self.context_manager.prepare_for_query(self.current_dialog)
 
-        # 如果执行了永久压缩（summary/truncate），回写到 current_dialog
-        # prune 仅为临时视图（compacted=False），不回写，保留完整 tool 输出供未来 summary 使用
+        # If permanent compaction was performed (summary/truncate), write back to current_dialog
+        # prune is only a temporary view (compacted=False), not written back, preserving full tool output for future summary use
         if compacted:
             self.current_dialog = dialog_for_query
             self.context_manager.reset_prompt_tokens()
-            # 同步更新 trajectory 引用，避免 extract_agent_response 读到旧 dialog
+            # Sync update the trajectory reference to prevent extract_agent_response from reading a stale dialog
             if self.trajectory and self.trajectory.dialogs:
                 self.trajectory.dialogs[-1] = self.current_dialog
 
-        # 查询模型（使用 LLM）— 被动恢复：捕获 ContextOverflowError，紧急 compact 后重试
+        # Query the model (using LLM) -- passive recovery: catch ContextOverflowError, perform emergency compaction, and retry
         try:
             assistant_message = self.llm.query(dialog_for_query)
         except ContextOverflowError:
@@ -360,15 +361,15 @@ class BaseAgent(ABC):
             dialog_for_query = self.current_dialog
             assistant_message = self.llm.query(dialog_for_query)
 
-        # 记录真实 prompt_tokens，用于下次 prepare_for_query 判断是否需要 compact
+        # Record actual prompt_tokens, used by the next prepare_for_query call to determine whether compaction is needed
         usage = assistant_message.meta.get("usage")
         if usage:
             self.context_manager.update_usage(
                 usage, msg_count=len(dialog_for_query.messages)
             )
 
-            # 主动检查：参考 OpenCode isOverflow，用真实 usage 判断是否需要 compact
-            # 即使本次调用成功，如果 token 用量已接近极限，提前 compact 避免下次溢出
+            # Proactive check: following OpenCode's isOverflow approach, use actual usage to determine whether compaction is needed
+            # Even if the current call succeeds, if token usage is close to the limit, compact proactively to avoid overflow next time
             if self.context_manager.is_overflow(usage):
                 self.logger.info(
                     "Token usage near limit (total=%s), proactive compaction",
@@ -383,40 +384,40 @@ class BaseAgent(ABC):
 
         self.current_dialog.add_message(assistant_message)
 
-        # 创建步骤记录
+        # Create step record
         step_record = StepRecord(
             step_id=self._step_count,
             assistant_message=assistant_message,
         )
 
-        # 如果没有工具调用
+        # If there are no tool calls
         if not assistant_message.tool_calls:
-            # 检查Agent是否启用了工具调用
-            # 如果没有启用工具（enable_tools=False），则直接结束
-            # 因为这种Agent只需要给出回答，不需要工具调用
-            # 同理，finish_on_text_response=True 时也直接结束（对话场景）
+            # Check whether the Agent has tool calling enabled
+            # If tools are not enabled (enable_tools=False), finish directly
+            # because this type of Agent only needs to provide an answer without tool calls
+            # Similarly, when finish_on_text_response=True, also finish directly (conversational scenario)
             if (hasattr(self, 'enable_tools') and not self.enable_tools) or \
                self.config.finish_on_text_response:
                 self.trajectory.add_step(step_record)
-                # 追加保存本次step到轨迹文件（包含tool_responses）
+                # Append and save this step to the trajectory file (including tool_responses)
                 self._append_trajectory_entry(dialog_for_query, step_record)
-                return True  # 直接结束
+                return True  # Finish directly
 
-            # 如果启用了工具但没有工具调用，提示继续
+            # If tools are enabled but no tool calls were made, prompt to continue
             self._handle_no_tool_call()
             self.trajectory.add_step(step_record)
-            # 追加保存本次step到轨迹文件（包含tool_responses）
+            # Append and save this step to the trajectory file (including tool_responses)
             self._append_trajectory_entry(dialog_for_query, step_record)
             return False
 
-        # 处理工具调用
+        # Process tool calls
         should_finish = False
         for tool_call in assistant_message.tool_calls:
             self.logger.debug(f"Processing tool call: {tool_call.function.name}")
 
-            # 检查是否是 finish 工具
+            # Check if this is the finish tool
             if tool_call.function.name == "finish":
-                # 打印 finish 工具的参数（最终答案）
+                # Print the finish tool's arguments (final answer)
                 try:
                     finish_args = json.loads(tool_call.function.arguments)
                     self.logger.info("=" * 80)
@@ -429,7 +430,7 @@ class BaseAgent(ABC):
                     self.logger.info(f"📝 Finish Tool Raw Args: {tool_call.function.arguments}")
                 should_finish = True
 
-                # 为 finish 工具创建 ToolMessage，确保 continue_run 时对话历史合法
+                # Create a ToolMessage for the finish tool to ensure dialog history is valid during continue_run
                 tool_message = ToolMessage(
                     content="Task marked as finished.",
                     tool_call_id=tool_call.id,
@@ -441,7 +442,7 @@ class BaseAgent(ABC):
 
                 break
 
-            # 检查是否是 ask_user 工具（暂停执行，等待用户回答）
+            # Check if this is the ask_user tool (pause execution, wait for user response)
             elif tool_call.function.name == "ask_user":
                 try:
                     ask_args = json.loads(tool_call.function.arguments)
@@ -467,10 +468,10 @@ class BaseAgent(ABC):
                 should_finish = True
                 break
 
-            # 执行工具
+            # Execute tool
             observation, info = self._execute_tool(tool_call)
 
-            # 截断过长的工具输出，防止 context 溢出
+            # Truncate excessively long tool output to prevent context overflow
             MAX_TOOL_OUTPUT = 30000
             if len(observation) > MAX_TOOL_OUTPUT:
                 observation = (
@@ -479,7 +480,7 @@ class BaseAgent(ABC):
                     + observation[-MAX_TOOL_OUTPUT // 2:]
                 )
 
-            # 创建工具响应消息
+            # Create tool response message
             tool_message = ToolMessage(
                 content=observation,
                 tool_call_id=tool_call.id,
@@ -491,26 +492,26 @@ class BaseAgent(ABC):
             step_record.tool_responses.append(tool_message)
 
         self.trajectory.add_step(step_record)
-        # 追加保存本次step到轨迹文件（包含tool_responses）
+        # Append and save this step to the trajectory file (including tool_responses)
         self._append_trajectory_entry(dialog_for_query, step_record)
         return should_finish
 
     def _execute_tool(self, tool_call) -> tuple[str, dict[str, Any]]:
-        """执行工具调用
+        """Execute a tool call
 
         Args:
-            tool_call: 工具调用
+            tool_call: Tool call
 
         Returns:
-            (observation, info) 元组
+            (observation, info) tuple
         """
         tool_name = tool_call.function.name
         tool_args = tool_call.function.arguments
 
-        # 记录工具调用开始
+        # Log tool call start
         self._log_tool_start(tool_name, tool_args)
 
-        # 获取工具并执行
+        # Get tool and execute
         tool = self.tools.get_tool(tool_name)
         if tool is None:
             error_msg = f"Unknown tool: {tool_name}"
@@ -518,10 +519,10 @@ class BaseAgent(ABC):
             return error_msg, {"error": "tool_not_found"}
 
         try:
-            # 执行工具
+            # Execute tool
             observation, info = tool.execute(self.session, tool_args)
 
-            # 截断过长的工具输出（超过 30000 字符时保留前 5000 + 后 5000）
+            # Truncate excessively long tool output (keep first 15000 + last 15000 when exceeding 30000 characters)
             if len(observation) > 30000:
                 observation = (
                     observation[:15000]
@@ -529,7 +530,7 @@ class BaseAgent(ABC):
                     + observation[-15000:]
                 )
 
-            # 记录工具调用结束
+            # Log tool call end
             self._log_tool_end(tool_name, observation, info)
             
             return observation, info
@@ -540,7 +541,7 @@ class BaseAgent(ABC):
             return error_msg, {"error": str(e)}
 
     def _log_tool_start(self, tool_name: str, tool_args: str) -> None:
-        """记录工具调用开始"""
+        """Log tool call start"""
         if self.log_to_file:
             self.logger.info("=" * 80)
             self.logger.info(f"Tool Call Start: {tool_name}")
@@ -550,7 +551,7 @@ class BaseAgent(ABC):
         if self.show_in_console:
             print(f"\n[Tool Call] {tool_name}")
             if tool_args:
-                # 尝试格式化JSON参数
+                # Try to format JSON arguments
                 try:
                     args_dict = json.loads(tool_args)
                     print(f"  Arguments: {json.dumps(args_dict, indent=2, ensure_ascii=False)}")
@@ -559,7 +560,7 @@ class BaseAgent(ABC):
             print("-" * 60)
 
     def _log_tool_end(self, tool_name: str, observation: str, info: dict[str, Any]) -> None:
-        """记录工具调用结束"""
+        """Log tool call end"""
         obs_display = observation
         if self.log_to_file:
             self.logger.info("=" * 80)
@@ -576,8 +577,8 @@ class BaseAgent(ABC):
             print("-" * 60)
 
     def _handle_no_tool_call(self) -> None:
-        """处理没有工具调用的情况"""
-        # 添加用户消息提示继续
+        """Handle the case when there are no tool calls"""
+        # Add a user message prompting to continue
         prompt = (
             "Please continue working on the task.\n"
             "When you have completed the task, use the finish tool.\n"
@@ -587,11 +588,11 @@ class BaseAgent(ABC):
 
 
     def _get_tool_specs(self) -> list:
-        """获取工具规格列表
+        """Get the list of tool specifications
 
-        只有在 enable_tools=True 时才返回工具规格列表。
-        如果 enable_tools=False，返回空列表（工具仍然注册，但不会出现在提示词中）。
-        如果设置了 enabled_tool_names，则只返回启用的工具的规格。
+        Only returns the tool specification list when enable_tools=True.
+        If enable_tools=False, returns an empty list (tools are still registered but not exposed in the prompt).
+        If enabled_tool_names is set, only returns specifications for the enabled tools.
         """
         if not self.enable_tools:
             return []
@@ -605,7 +606,7 @@ class BaseAgent(ABC):
                 self.logger.info([spec.function.name for spec in filtered_specs])
                 return filtered_specs
             else:
-                # 如果没有指定 enabled_tool_names，返回所有工具
+                # If enabled_tool_names is not specified, return all tools
                 return all_specs
 
     def load_prompt_from_file(
@@ -613,23 +614,23 @@ class BaseAgent(ABC):
         prompt_file: str | Path,
         format_kwargs: dict[str, Any] | None = None,
     ) -> str:
-        """从文件加载提示词
+        """Load a prompt from a file
 
-        支持相对路径（相对于config_dir）和绝对路径。
-        支持使用format_kwargs进行字符串格式化（{}占位符）。
+        Supports relative paths (relative to config_dir) and absolute paths.
+        Supports string formatting with format_kwargs ({} placeholders).
 
         Args:
-            prompt_file: 提示词文件路径（相对或绝对）
-            format_kwargs: 用于格式化提示词的参数字典（可选）
+            prompt_file: Prompt file path (relative or absolute)
+            format_kwargs: Dictionary of parameters for formatting the prompt (optional)
 
         Returns:
-            提示词内容（已格式化）
+            Prompt content (formatted)
 
         Examples:
             >>> agent.load_prompt_from_file("prompts/system_prompt.txt")
-            >>> agent.load_prompt_from_file("prompts/user_prompt.txt", {"task": "完成代码任务"})
+            >>> agent.load_prompt_from_file("prompts/user_prompt.txt", {"task": "complete the code task"})
         """
-        # 解析文件路径
+        # Resolve file path
         prompt_path = Path(prompt_file)
         if not prompt_path.is_absolute():
             if self.config_dir is None:
@@ -639,7 +640,7 @@ class BaseAgent(ABC):
                 )
             prompt_path = self.config_dir / prompt_file
 
-        # 读取文件内容
+        # Read file content
         if not prompt_path.exists():
             raise FileNotFoundError(
                 f"Prompt file not found: {prompt_path}\n"
@@ -650,7 +651,7 @@ class BaseAgent(ABC):
             with open(prompt_path, 'r', encoding='utf-8') as f:
                 prompt_content = f.read()
 
-            # 如果提供了format_kwargs，进行格式化
+            # If format_kwargs are provided, perform formatting
             if format_kwargs:
                 try:
                     prompt_content = prompt_content.format(**format_kwargs)
@@ -667,10 +668,10 @@ class BaseAgent(ABC):
             raise RuntimeError(f"Failed to load prompt from {prompt_path}: {e}")
 
     def reset_context(self) -> None:
-        """重置Agent的上下文到初始状态
+        """Reset the Agent's context to its initial state
 
-        将对话重置为只包含初始的系统提示词和用户提示词。
-        需要先调用initialize或手动设置_initial_system_prompt和_initial_user_prompt。
+        Resets the dialog to contain only the initial system prompt and user prompt.
+        Requires prior initialization via initialize or manual setting of _initial_system_prompt and _initial_user_prompt.
         """
         if self._initial_system_prompt is None:
             raise ValueError(
@@ -678,7 +679,7 @@ class BaseAgent(ABC):
                 "Please initialize the agent first or set _initial_system_prompt manually."
             )
 
-        # 重新创建对话
+        # Re-create dialog
         messages = [SystemMessage(content=self._initial_system_prompt)]
         if self._initial_user_prompt:
             messages.append(UserMessage(content=self._initial_user_prompt))
@@ -688,16 +689,16 @@ class BaseAgent(ABC):
             tools=self._get_tool_specs(),
         )
 
-        # 重置步骤计数
+        # Reset step count
         self._step_count = 0
 
         self.logger.info("Context reset to initial state")
 
     def add_user_message(self, content: str) -> None:
-        """添加用户消息到当前对话
+        """Add a user message to the current dialog
 
         Args:
-            content: 用户消息内容
+            content: User message content
         """
         if self.current_dialog is None:
             raise ValueError(
@@ -709,11 +710,11 @@ class BaseAgent(ABC):
         self.logger.debug(f"Added user message: {content[:50]}...")
 
     def add_assistant_message(self, content: str, tool_calls: list | None = None) -> None:
-        """添加助手消息到当前对话
+        """Add an assistant message to the current dialog
 
         Args:
-            content: 助手消息内容
-            tool_calls: 工具调用列表（可选）
+            content: Assistant message content
+            tool_calls: Tool call list (optional)
         """
         if self.current_dialog is None:
             raise ValueError(
@@ -732,13 +733,13 @@ class BaseAgent(ABC):
         name: str,
         meta: dict[str, Any] | None = None,
     ) -> None:
-        """添加工具消息到当前对话
+        """Add a tool message to the current dialog
 
         Args:
-            content: 工具执行结果
-            tool_call_id: 工具调用ID
-            name: 工具名称
-            meta: 元数据（可选）
+            content: Tool execution result
+            tool_call_id: Tool call ID
+            name: Tool name
+            meta: Metadata (optional)
         """
         if self.current_dialog is None:
             raise ValueError(
@@ -755,71 +756,71 @@ class BaseAgent(ABC):
         self.logger.debug(f"Added tool message: {name}")
 
     def set_next_user_request(self, content: str) -> None:
-        """设置下一次对话的用户请求
+        """Set the user request for the next conversation turn
 
-        这会添加一条用户消息到当前对话。
+        This adds a user message to the current dialog.
 
         Args:
-            content: 用户请求内容
+            content: User request content
         """
         self.add_user_message(content)
 
     def get_current_dialog(self) -> Dialog | None:
-        """获取当前对话
+        """Get the current dialog
 
         Returns:
-            当前对话对象，如果未初始化则返回None
+            Current dialog object, or None if not initialized
         """
         return self.current_dialog
 
     def get_conversation_history(self) -> list:
-        """获取对话历史
+        """Get conversation history
 
         Returns:
-            消息列表
+            List of messages
         """
         if self.current_dialog is None:
             return []
         return self.current_dialog.messages.copy()
     
     def set_trajectory_file_path(self, trajectory_file_path: str | Path) -> None:
-        """设置轨迹文件路径（实例级别，每个agent独立）
+        """Set the trajectory file path (instance-level, independent for each agent)
 
         Args:
-            trajectory_file_path: 轨迹文件路径
+            trajectory_file_path: Trajectory file path
         """
         self._trajectory_file_path = Path(trajectory_file_path)
-        # 确保目录存在
+        # Ensure directory exists
         self._trajectory_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
     def set_exp_info(cls, exp_name: str, exp_index: int) -> None:
-        """设置当前exp信息（类级别，所有agent实例共享）
+        """Set the current experiment info (class-level, shared by all agent instances)
 
-        在exp运行时调用，用于记录当前step属于哪个exp阶段和迭代。
+        Called during experiment execution, used to record which experiment stage and iteration the current step belongs to.
 
         Args:
-            exp_name: exp阶段名称（如 "Solver", "Critic", "Rewriter", "Selector"）
-            exp_index: 迭代序号（如 0, 1, 2, 3, 4）
+            exp_name: Experiment stage name (e.g., "Solver", "Critic", "Rewriter", "Selector")
+            exp_index: Iteration index (e.g., 0, 1, 2, 3, 4)
         """
         cls._current_exp_name = exp_name
         cls._current_exp_index = exp_index
     
     def set_agent_name(self, name: str) -> None:
-        """设置Agent名称（用于标识不同的agent）
-        
+        """Set the Agent name (used to identify different agents)
+
         Args:
-            name: Agent名称
+            name: Agent name
         """
         self._agent_name = name
     
     def _append_trajectory_entry(self, dialog_for_query: Dialog, step_record: "StepRecord") -> None:
-        """追加轨迹条目到轨迹文件
+        """Append a trajectory entry to the trajectory file
 
-        每次step完成后，将prompt、response和tool_responses追加保存到轨迹文件。
-        使用文件锁确保多个agent写入同一文件时的线程安全。
+        After each step completes, appends the prompt, response, and tool_responses to the trajectory file.
+        Uses a file lock to ensure thread safety when multiple agents write to the same file.
 
-        保存格式与现有轨迹格式保持一致：
+        The save format is consistent with the existing trajectory format:
         [
             {
                 "task_id": "...",
@@ -829,33 +830,33 @@ class BaseAgent(ABC):
             }
         ]
 
-        每次step会追加一个新的条目，包含本次调用的prompt、response和tool_responses。
+        Each step appends a new entry containing the prompt, response, and tool_responses for this call.
 
         Args:
-            dialog_for_query: 发送给LLM的对话（prompt）
-            step_record: 步骤记录（包含assistant_message和tool_responses）
+            dialog_for_query: Dialog sent to the LLM (prompt)
+            step_record: Step record (containing assistant_message and tool_responses)
         """
         if self._trajectory_file_path is None:
             return
 
         try:
             with self._trajectory_file_lock:
-                # 读取现有数据
+                # Read existing data
                 existing_data = []
                 if self._trajectory_file_path.exists():
                     try:
                         with open(self._trajectory_file_path, 'r', encoding='utf-8') as f:
                             existing_data = json.load(f)
                     except (json.JSONDecodeError, FileNotFoundError):
-                        # 如果文件损坏或不存在，从空列表开始
+                        # If the file is corrupted or does not exist, start with an empty list
                         existing_data = []
 
-                # 构建新的轨迹条目
-                # 格式与现有轨迹格式保持一致，但保存的是每次LLM调用的信息
+                # Build a new trajectory entry
+                # Format is consistent with the existing trajectory format, but saves per-LLM-call information
                 task_id = self.trajectory.task_id if self.trajectory else "unknown"
                 status = self.trajectory.status if self.trajectory else "running"
 
-                # 将dialog_for_query转换为字典格式
+                # Convert dialog_for_query to dictionary format
                 prompt_dict = dialog_for_query.model_dump() if hasattr(dialog_for_query, 'model_dump') else {
                     "messages": [
                         {
@@ -867,10 +868,10 @@ class BaseAgent(ABC):
                     "tools": dialog_for_query.tools if hasattr(dialog_for_query, 'tools') else []
                 }
 
-                # 从step_record中获取assistant_message
+                # Get assistant_message from step_record
                 assistant_message = step_record.assistant_message
 
-                # 将assistant_message转换为字典格式
+                # Convert assistant_message to dictionary format
                 response_dict = assistant_message.model_dump() if hasattr(assistant_message, 'model_dump') else {
                     "role": assistant_message.role.value if hasattr(assistant_message.role, 'value') else str(assistant_message.role),
                     "content": assistant_message.content if hasattr(assistant_message, 'content') else "",
@@ -886,7 +887,7 @@ class BaseAgent(ABC):
                     ] if hasattr(assistant_message, 'tool_calls') and assistant_message.tool_calls else []
                 }
 
-                # 将tool_responses转换为字典格式
+                # Convert tool_responses to dictionary format
                 tool_responses_list = []
                 for tr in step_record.tool_responses:
                     tr_dict = tr.model_dump() if hasattr(tr, 'model_dump') else {
@@ -897,23 +898,23 @@ class BaseAgent(ABC):
                     }
                     tool_responses_list.append(tr_dict)
 
-                # 构建轨迹条目，格式与现有轨迹格式保持一致
+                # Build trajectory entry, format consistent with existing trajectory format
                 entry = {
                     "task_id": f"{task_id}_{self._agent_name or 'agent'}_step_{self._step_count}",
-                    "exp_name": self._current_exp_name,      # exp阶段名称
-                    "exp_index": self._current_exp_index,    # exp迭代序号
+                    "exp_name": self._current_exp_name,      # experiment stage name
+                    "exp_index": self._current_exp_index,    # experiment iteration index
                     "status": status,
                     "steps": self._step_count,
                     "trajectory": {
                         "task_id": task_id,
                         "agent_name": self._agent_name or "unknown",
                         "step": self._step_count,
-                        "dialogs": [prompt_dict],  # 保存本次调用的prompt
+                        "dialogs": [prompt_dict],  # Save the prompt of this call
                         "steps": [
                             {
                                 "step_id": self._step_count,
-                                "assistant_message": response_dict,  # 保存本次调用的response
-                                "tool_responses": tool_responses_list,  # 保存工具响应
+                                "assistant_message": response_dict,  # Save the response of this call
+                                "tool_responses": tool_responses_list,  # Save tool responses
                                 "meta": {}
                             }
                         ],
@@ -932,42 +933,42 @@ class BaseAgent(ABC):
                     }
                 }
 
-                # 追加新条目
+                # Append new entry
                 existing_data.append(entry)
 
-                # 写回文件
+                # Write back to file
                 with open(self._trajectory_file_path, 'w', encoding='utf-8') as f:
                     json.dump(existing_data, f, indent=2, default=str, ensure_ascii=False)
 
         except Exception as e:
-            # 如果保存失败，只记录日志，不中断执行
+            # If saving fails, only log a warning without interrupting execution
             self.logger.warning(f"Failed to append trajectory entry: {e}", exc_info=True)
 
     @abstractmethod
     def _get_system_prompt(self) -> str:
-        """获取系统提示词
+        """Get the system prompt
 
-        子类必须实现此方法。
+        Subclasses must implement this method.
         """
         pass
 
     @abstractmethod
     def _get_user_prompt(self, task: TaskInstance) -> str:
-        """获取用户提示词
+        """Get the user prompt
 
-        子类必须实现此方法。
+        Subclasses must implement this method.
 
         Args:
-            task: 任务实例
+            task: Task instance
         """
         pass
 
 
 class Agent(BaseAgent):
-    """标准 Agent 实现
+    """Standard Agent implementation
 
-    使用可配置的提示词模板。
-    支持从配置文件加载提示词。
+    Uses configurable prompt templates.
+    Supports loading prompts from configuration files.
     """
 
     def __init__(
@@ -985,30 +986,30 @@ class Agent(BaseAgent):
         enable_tools: bool = True,
         enabled_tool_names: list[str] | None = None,
     ):
-        """初始化 Agent
+        """Initialize Agent
 
         Args:
-            llm: LLM 实例
-            session: 环境会话
-            tools: 工具注册中心
-            system_prompt_file: 系统提示词文件路径（相对于config_dir或绝对路径）
-            user_prompt_file: 用户提示词文件路径（相对于config_dir或绝对路径）
-            prompt_format_kwargs: 用于格式化提示词的参数字典（{}占位符）
-            config: Agent 配置
-            skill_registry: Skills 注册中心（可选）
-            output_config: 输出显示配置
-            config_dir: 配置目录路径，用于加载提示词文件
-            enable_tools: 是否在提示词中包含工具信息（默认 True）。如果为 False，工具仍然注册但不会出现在提示词中，Agent 将不会调用工具
-            enabled_tool_names: 启用的工具名称列表（可选）。None 或 ["*"] 表示所有已注册工具都启用。
+            llm: LLM instance
+            session: Environment session
+            tools: Tool registry
+            system_prompt_file: System prompt file path (relative to config_dir or absolute)
+            user_prompt_file: User prompt file path (relative to config_dir or absolute)
+            prompt_format_kwargs: Dictionary of parameters for formatting prompts ({} placeholders)
+            config: Agent configuration
+            skill_registry: Skill registry (optional)
+            output_config: Output display configuration
+            config_dir: Configuration directory path for loading prompt files
+            enable_tools: Whether to include tool information in the prompt (default True). If False, tools are still registered but not exposed in the prompt, and the Agent will not call tools
+            enabled_tool_names: List of enabled tool names (optional). None or ["*"] means all registered tools are enabled.
         """
         super().__init__(llm, session, tools, config, skill_registry, output_config, config_dir=config_dir, enable_tools=enable_tools, enabled_tool_names=enabled_tool_names)
 
-        # 存储提示词
+        # Store prompts
         self._system_prompt: str | None = None
         self._user_prompt: str | None = None
         self._prompt_format_kwargs = prompt_format_kwargs or {}
         
-        # 加载系统提示词（优先级：system_prompt_file > 默认）
+        # Load system prompt (priority: system_prompt_file > default)
         if system_prompt_file:
             self._system_prompt = self.load_prompt_from_file(
                 system_prompt_file,
@@ -1017,7 +1018,7 @@ class Agent(BaseAgent):
         else:
             self._system_prompt = self._default_system_prompt()
         
-        # 加载用户提示词（可选）
+        # Load user prompt (optional)
         if user_prompt_file:
             self._user_prompt = self.load_prompt_from_file(
                 user_prompt_file,
@@ -1025,7 +1026,7 @@ class Agent(BaseAgent):
             )
 
     def _default_system_prompt(self) -> str:
-        """默认系统提示词"""
+        """Default system prompt"""
         prompt = """You are a helpful AI assistant that can execute tasks using tools.
 
 You have access to the following tools:
@@ -1045,7 +1046,7 @@ Always be careful with file operations and bash commands.
         return prompt
 
     def _get_system_prompt(self) -> str:
-        """获取系统提示词，动态添加工作目录信息"""
+        """Get the system prompt, dynamically adding working directory information"""
         working_dir = self.session.get_workspace_path()
         if working_dir is None:
             working_dir = self.session.config.workspace_path
@@ -1055,8 +1056,8 @@ Always be careful with file operations and bash commands.
         return prompt
 
     def _get_user_prompt(self, task: TaskInstance) -> str:
-        """获取用户提示词"""
-        # 如果设置了用户提示词，使用它（可以包含{}占位符）
+        """Get the user prompt"""
+        # If a user prompt is set, use it (may contain {} placeholders)
         if self._user_prompt:
             try:
                 return self._user_prompt.format(
@@ -1067,10 +1068,10 @@ Always be careful with file operations and bash commands.
                     **self._prompt_format_kwargs
                 )
             except KeyError:
-                # 如果格式化失败，直接返回（可能没有占位符）
+                # If formatting fails, return as-is (may not have placeholders)
                 return self._user_prompt
         
-        # 默认用户提示词
+        # Default user prompt
         return f"""Please complete the following task:
 
 Task ID: {task.task_id}
@@ -1082,8 +1083,8 @@ Additional Information:
 """
 
     def _get_tool_specs(self) -> list:
-        """获取工具规格列表
+        """Get the list of tool specifications
 
-        覆盖基类方法，调用基类实现。
+        Overrides the base class method, calls the base class implementation.
         """
         return super()._get_tool_specs()

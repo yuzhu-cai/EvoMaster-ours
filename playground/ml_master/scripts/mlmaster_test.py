@@ -1,3 +1,8 @@
+"""ML Master batch test script.
+
+Runs ML Master experiments in parallel across multiple Kaggle competitions.
+"""
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
@@ -41,23 +46,32 @@ COMPETITIONS = [
     "the-icml-2013-whale-challenge-right-whale-redux"
 ]
 
-# 并行分CPU
+# Parallel CPU assignment
 CPU_SETS = ["0-127"]
 THREADS_PER_JOB = 128
 
 def task_path(comp_id: str) -> Path:
+    """Return the path to the task description file for a competition."""
     return EXP_ROOT / comp_id / "prepared" / "public" / "description.md"
 
 def make_tmp_config(comp_id: str) -> Path:
+    """Create a temporary config file for a specific competition.
+
+    Args:
+        comp_id: Competition identifier
+
+    Returns:
+        Path to the generated temporary config file
+    """
     cfg = yaml.safe_load(BASE_CONFIG.read_text(encoding="utf-8"))
     cfg["exp_id"] = comp_id
 
-    # 动态更新 symlinks
+    # Dynamically update symlinks
     public_dir = str(EXP_ROOT / comp_id / "prepared" / "public")
     cfg.setdefault("session", {}).setdefault("local", {}).setdefault("symlinks", {})
     cfg["session"]["local"]["symlinks"] = {public_dir: "input"}
 
-    #改工作目录
+    #Change working directory
     cfg["session"]["local"]["working_dir"] = f"./playground/ml_master/workspace/{comp_id}"
     cfg["session"]["local"]["workspace_path"] = f"./playground/workspace/{comp_id}"
 
@@ -69,6 +83,15 @@ def make_tmp_config(comp_id: str) -> Path:
     return tmp_cfg
 
 def run_one(comp_id: str, slot: int) -> int:
+    """Run a single competition experiment.
+
+    Args:
+        comp_id: Competition identifier
+        slot: CPU slot index for task affinity
+
+    Returns:
+        Process return code
+    """
     tpath = task_path(comp_id)
     if not tpath.exists():
         print(f"[SKIP] {comp_id}: task not found: {tpath}", flush=True)
@@ -84,7 +107,7 @@ def run_one(comp_id: str, slot: int) -> int:
     # out_dir.mkdir(parents=True, exist_ok=True)
     # out_file = out_dir / f"{comp_id}.out.txt"
 
-    # CPU/线程限制
+    # CPU/thread limits
     cpu_set = CPU_SETS[slot % len(CPU_SETS)]
     env = {
         **dict(**__import__("os").environ),
@@ -119,19 +142,21 @@ def run_one(comp_id: str, slot: int) -> int:
     return p.returncode
 
 def abs_if_relative(p: str) -> str:
+    """Convert a relative path to an absolute path relative to the project directory."""
     pth = Path(p)
     return str(pth if pth.is_absolute() else (PROJECT_DIR/"playground"/"ml_master"/pth))
 
 def fix_prompt_paths(cfg: dict):
-    # 顶层 system prompt
+    """Convert relative prompt paths in config to absolute paths."""
+    # Top-level system prompt
     if "system_prompt_file" in cfg:
         cfg["system_prompt_file"] = abs_if_relative(cfg["system_prompt_file"])
 
-    # mcp 配置
+    # mcp configuration
     if "mcp" in cfg and isinstance(cfg["mcp"], dict) and "config_file" in cfg["mcp"]:
         cfg["mcp"]["config_file"] = abs_if_relative(cfg["mcp"]["config_file"])
 
-    # agents 的 prompts
+    # agents prompts
     agents = cfg.get("agents", {})
     for name, agent_cfg in agents.items():
         if not isinstance(agent_cfg, dict):
@@ -141,10 +166,11 @@ def fix_prompt_paths(cfg: dict):
                 agent_cfg[k] = abs_if_relative(agent_cfg[k])
 
 def main():
+    """Main entry point: run all competitions in batches."""
     assert RUN_PY.exists(), f"run.py not found: {RUN_PY}"
     assert BASE_CONFIG.exists(), f"base config not found: {BASE_CONFIG}"
 
-    # 以“批次”的方式：每次提交最多 MAX_PARALLEL 个任务，跑完再跑下一批
+    # Run in “batch” mode: submit at most MAX_PARALLEL tasks at a time, finish before starting next batch
     i = 0
     while i < len(COMPETITIONS):
         batch = COMPETITIONS[i:i+MAX_PARALLEL]

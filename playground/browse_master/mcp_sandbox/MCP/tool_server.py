@@ -231,13 +231,13 @@ async def create_tool_task(tool_name: str, tool_args: Dict):
 
 
 output_manager = ThreadOutputManager()
-execution_semaphore = asyncio.Semaphore(2000)  # 每个worker限制50个并发
-executor = ThreadPoolExecutor(max_workers=1000)  # 每个worker使用少量线程
+execution_semaphore = asyncio.Semaphore(2000)  # Limit concurrency per worker
+executor = ThreadPoolExecutor(max_workers=1000)  # Limited threads per worker
 
 
 
 async def execute_python_code(code: str, session_id:str, timeout: int) -> Tuple[str, Optional[str], float]:
-    """执行Python代码并返回输出、错误和执行时间"""
+    """Execute Python code and return output, error, and execution time."""
     loop = asyncio.get_event_loop()
     start_time = loop.time()
 
@@ -343,7 +343,7 @@ def restricted_open(*args, **kwargs):
 
 
 def redirect_stderr(stream):
-    """重定向stderr到指定流"""
+    """Redirect stderr to a specified stream."""
     return _RedirectStream(sys.stderr, stream)
 
 class _RedirectStream:

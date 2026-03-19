@@ -1,8 +1,8 @@
-# Chat Agent 配置文件
-# 面向对话式交互的 Agent，适用于飞书等即时通讯场景
+# Chat Agent Configuration File
+# Agent for conversational interaction, suitable for instant messaging scenarios such as Feishu
 
 # ============================================
-# LLM 配置
+# LLM Configuration
 # ============================================
 llm:
   openai:
@@ -30,7 +30,7 @@ llm:
   local_sglang:
     provider: "deepseek"
     model: "deepseek-v3.2"
-    api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
+    api_key: "${DEEPSEEK_API_KEY}"  # Placeholder can be used for local deployment
     base_url: "${DEEPSEEK_API_BASE}"
     temperature: 0.7
     max_tokens: 16384
@@ -41,7 +41,7 @@ llm:
   default: "local_sglang"
 
 # ============================================
-# Agent 配置
+# Agent Configuration
 # ============================================
 agents:
   general:
@@ -51,12 +51,12 @@ agents:
     tools:
       builtin: ["*"]
       mcp: "mcp_config.json"
-      google_search: "google_search"   # 自定义工具：google_search 或 ai_search
-      ai_search: "ai_search"   # 自定义工具：google_search 或 ai_search
-      web_fetch: "web_fetch"  # 网页抓取工具（可选）
-      ask_user: "ask_user"  # 用户提问工具（可选）
-      delegate_to_agent: "delegate_to_agent"  # 委托给其他代理工具（可选）
-      feishu_doc_read: "feishu_doc_read"  # 飞书文档阅读工具（可选）
+      google_search: "google_search"   # Custom tool: google_search or ai_search
+      ai_search: "ai_search"   # Custom tool: google_search or ai_search
+      web_fetch: "web_fetch"  # Web scraping tool (optional)
+      ask_user: "ask_user"  # User inquiry tool (optional)
+      delegate_to_agent: "delegate_to_agent"  # Delegate to other agent tool (optional)
+      feishu_doc_read: "feishu_doc_read"  # Feishu document reading tool (optional)
       send_file: "send_file"
       memory_search: "memory_search"
       memory_save: "memory_save"
@@ -75,7 +75,7 @@ agents:
     user_prompt_file: "prompts/user_prompt.txt"
 
 # ============================================
-# AI Search 配置（Perplexity 风格综合搜索）
+# AI Search Configuration (Perplexity-style comprehensive search)
 # ============================================
 ai_search:
   provider: "perplexity"
@@ -84,31 +84,31 @@ ai_search:
   model: "${WEB_SEARCH_MODEL}"
 
 # ============================================
-# Google Search 配置（Serper API）
+# Google Search Configuration (Serper API)
 # ============================================
 google_search:
   api_key: "${SERPER_KEY_ID}"
 
 # ============================================
-# Web Fetch 配置（Jina Reader API，LLM 摘要复用默认 LLM）
+# Web Fetch Configuration (Jina Reader API, LLM summary reuses default LLM)
 # ============================================
 web_fetch:
   api_key: "${JINA_API_KEY}"
 
 # ============================================
-# Memory 配置（跨会话持久化记忆）
+# Memory Configuration (cross-session persistent memory)
 # ============================================
 memory:
   enabled: true
   db_path: "./data/memory/memories.db"
-  auto_capture: true          # 自动从对话中提取记忆（规则匹配）
-  auto_recall: true           # 自动在对话开始时注入相关记忆
-  recall_limit: 5             # 自动召回的最大记忆数
-  max_memories_per_user: 500  # 每用户最大记忆数
-  capture_with_llm: false     # 是否用 LLM 做更精准的记忆提取
+  auto_capture: true          # Automatically extract memories from conversations (rule matching)
+  auto_recall: true           # Automatically inject relevant memories at the start of a conversation
+  recall_limit: 5             # Maximum number of auto-recalled memories
+  max_memories_per_user: 500  # Maximum number of memories per user
+  capture_with_llm: false     # Whether to use LLM for more precise memory extraction
 
 # ============================================
-# Session 配置
+# Session Configuration
 # ============================================
 session:
   type: "local"
@@ -135,14 +135,14 @@ session:
     timeout: 300
 
 # ============================================
-# LLM 输出显示配置
+# LLM Output Display Configuration
 # ============================================
 llm_output:
   show_in_console: true
   log_to_file: true
 
 # ============================================
-# 日志配置
+# Logging Configuration
 # ============================================
 logging:
   level: "INFO"

@@ -1,6 +1,6 @@
-"""MCP 工具管理器
+"""MCP tool manager.
 
-负责 MCP 连接的初始化、工具注册和生命周期管理。
+Responsible for MCP connection initialization, tool registration, and lifecycle management.
 """
 
 from __future__ import annotations
@@ -15,24 +15,24 @@ if TYPE_CHECKING:
 
 
 class MCPToolManager:
-    """MCP 工具管理器
+    """MCP tool manager.
 
-    管理 MCP 服务器连接和工具注册。
-    采用混合方案（方案C）：
-    - 对外：注册到统一的 ToolRegistry
-    - 对内：独立管理 MCP 连接和工具
+    Manages MCP server connections and tool registration.
+    Uses a hybrid approach (Approach C):
+    - Externally: Registers tools to the unified ToolRegistry
+    - Internally: Independently manages MCP connections and tools
 
-    职责：
-    1. 管理 MCP 服务器连接
-    2. 创建 MCPTool 实例
-    3. 按服务器组织工具
-    4. 注册到 ToolRegistry
-    5. 生命周期管理（添加/移除服务器）
+    Responsibilities:
+    1. Manage MCP server connections
+    2. Create MCPTool instances
+    3. Organize tools by server
+    4. Register to ToolRegistry
+    5. Lifecycle management (add/remove servers)
 
-    使用示例：
+    Usage example:
         manager = MCPToolManager()
 
-        # 添加 MCP 服务器
+        # Add MCP server
         await manager.add_server(
             name="github",
             transport="stdio",
@@ -40,22 +40,22 @@ class MCPToolManager:
             args=["mcp_servers/github_server.py"]
         )
 
-        # 注册到 ToolRegistry
+        # Register to ToolRegistry
         manager.register_tools(tool_registry)
 
-        # 清理
+        # Cleanup
         await manager.cleanup()
     """
 
     def __init__(self):
-        """初始化 MCP 工具管理器"""
-        # MCP 连接：{server_name: MCPConnection}
+        """Initialize the MCP tool manager."""
+        # MCP connections: {server_name: MCPConnection}
         self.connections: dict[str, Any] = {}
 
-        # 按服务器组织的工具：{server_name: {tool_name: MCPTool}}
+        # Tools organized by server: {server_name: {tool_name: MCPTool}}
         self.tools_by_server: dict[str, dict[str, MCPTool]] = {}
 
-        # 已注册到的 ToolRegistry（用于后续移除工具）
+        # The ToolRegistry this manager has registered to (for subsequent tool removal)
         self._registered_registry: ToolRegistry | None = None
 
         self.logger = logging.getLogger(self.__class__.__name__)
@@ -82,6 +82,13 @@ class MCPToolManager:
         self.tool_include_only: dict[str, list[str]] = {}
 
     def _build_tools(self, server_name: str, connection: Any, tools_info: list[dict]) -> None:
+        """Build MCPTool instances for a server.
+
+        Args:
+            server_name: Name of the MCP server.
+            connection: MCP connection instance.
+            tools_info: List of tool information dicts from the server.
+        """
         from .mcp import MCPTool
 
         include_only = self.tool_include_only.get(server_name)
@@ -102,7 +109,7 @@ class MCPToolManager:
                 remote_tool_name=original_name,
             )
             mcp_tool._mcp_server = server_name
-            mcp_tool._mcp_loop = self.loop  # 你原来注入 loop 的逻辑保留
+            mcp_tool._mcp_loop = self.loop  # Preserve original loop injection logic
             if self.path_adaptor_servers and self.path_adaptor_factory and server_name in self.path_adaptor_servers:
                 mcp_tool._path_adaptor = self.path_adaptor_factory()
 
@@ -111,11 +118,18 @@ class MCPToolManager:
         self.tools_by_server[server_name] = server_tools
 
     async def add_server(self, name: str, transport: str, **connection_kwargs) -> None:
+        """Add an MCP server and load its tools.
+
+        Args:
+            name: Server name.
+            transport: Transport method (e.g., "stdio", "sse", "http").
+            **connection_kwargs: Additional connection arguments.
+        """
         if name in self._server_tasks:
             raise ValueError(f"MCP server '{name}' already exists")
 
         if self.loop is None:
-            # 方案A必须要求 manager.loop 已经被设置到一个长期运行的 loop
+            # The manager.loop must already be set to a long-running loop
             raise RuntimeError("MCPToolManager.loop is None. Set a long-running event loop before add_server().")
 
         self.logger.info(f"Adding MCP server: {name} ({transport})")
@@ -129,7 +143,7 @@ class MCPToolManager:
             from .mcp_connection import create_connection
             try:
                 async with create_connection(transport=transport, **connection_kwargs) as conn:
-                    # ✅ enter 在 runner task 内完成
+                    # Enter completed within the runner task
                     self.connections[name] = conn
 
                     tools_info = await conn.list_tools()
@@ -137,27 +151,27 @@ class MCPToolManager:
 
                     self._build_tools(name, conn, tools_info)
 
-                    # 如果已经注册到 ToolRegistry，立即注册新工具
+                    # If already registered to a ToolRegistry, register the new tools immediately
                     if self._registered_registry:
                         for tool in self.tools_by_server[name].values():
                             self._registered_registry.register(tool)
 
                     ready_evt.set()
 
-                    # ✅ 挂起，直到 remove_server 发 stop
+                    # Suspend until remove_server sends the stop signal
                     await stop_evt.wait()
 
             except Exception as e:
-                # 如果 runner 启动失败，保证 ready_evt 被 set，避免外面一直 await
+                # If the runner fails to start, ensure ready_evt is set to avoid blocking the caller
                 self.logger.error(f"MCP server runner failed for '{name}': {e}")
                 ready_evt.set()
                 raise
             finally:
-                # 退出 async with 后连接已经关了
-                # 这里不要在 finally 里删除 dict（交给 remove_server 统一清）
+                # After exiting async with, the connection is already closed
+                # Do not delete dict entries in finally; leave that to remove_server for unified cleanup
                 pass
 
-        # ✅ 必须保证 runner task 在 self.loop 里创建
+        # The runner task must be created inside self.loop
         if asyncio.get_running_loop() is not self.loop:
             raise RuntimeError(
                 "add_server() must be called inside MCP loop. "
@@ -169,10 +183,10 @@ class MCPToolManager:
 
         self._server_tasks[name] = task
 
-        # 等待 tools 加载完
+        # Wait for tools to finish loading
         await ready_evt.wait()
         if task.done() and (exc := task.exception()) is not None:
-            # 清理掉登记
+            # Clean up registration entries
             self._server_tasks.pop(name, None)
             self._server_stop.pop(name, None)
             self._server_ready.pop(name, None)
@@ -183,10 +197,10 @@ class MCPToolManager:
 
 
     def register_tools(self, tool_registry: ToolRegistry) -> None:
-        """将所有 MCP 工具注册到 ToolRegistry
+        """Register all MCP tools to a ToolRegistry.
 
         Args:
-            tool_registry: 目标工具注册表
+            tool_registry: Target tool registry.
         """
         self._registered_registry = tool_registry
 
@@ -200,6 +214,11 @@ class MCPToolManager:
         self.logger.info(f"Registered {total_count} MCP tools to ToolRegistry")
 
     async def remove_server(self, server_name: str) -> None:
+        """Remove an MCP server and unregister its tools.
+
+        Args:
+            server_name: Server name.
+        """
         if asyncio.get_running_loop() is not self.loop:
             raise RuntimeError("remove_server() must be called inside MCP loop.")
         if server_name not in self._server_tasks:
@@ -207,21 +226,21 @@ class MCPToolManager:
 
         self.logger.info(f"Removing MCP server: {server_name}")
 
-        # 1) 从 ToolRegistry 中移除工具
+        # 1) Remove tools from ToolRegistry
         if self._registered_registry and server_name in self.tools_by_server:
             for tool_name in list(self.tools_by_server[server_name].keys()):
                 self._registered_registry.unregister(tool_name)
 
-        # 2) 让 runner 自己退出 async with（✅ __aexit__ 会在同一个 task 内执行）
+        # 2) Let the runner exit its async with block (__aexit__ executes within the same task)
         stop_evt = self._server_stop.get(server_name)
         if stop_evt:
             stop_evt.set()
 
         task = self._server_tasks.get(server_name)
         if task:
-            await task  # 等它 clean exit
+            await task  # Wait for clean exit
 
-        # 3) 清理本地记录
+        # 3) Clean up local records
         self._server_tasks.pop(server_name, None)
         self._server_stop.pop(server_name, None)
         self._server_ready.pop(server_name, None)
@@ -233,32 +252,32 @@ class MCPToolManager:
         self.logger.info(f"Removed {tool_count} tools from server '{server_name}'")
 
     async def reload_server(self, server_name: str) -> None:
-        """重新加载 MCP 服务器的工具
+        """Reload tools from an MCP server.
 
-        用于工具热重载场景。
+        Used for hot-reloading tools.
 
         Args:
-            server_name: 服务器名称
+            server_name: Server name.
 
         Raises:
-            ValueError: 服务器不存在
+            ValueError: Server not found.
         """
         if server_name not in self.connections:
             raise ValueError(f"MCP server '{server_name}' not found")
 
         self.logger.info(f"Reloading MCP server: {server_name}")
 
-        # 保存连接配置（简化实现，实际可能需要保存完整配置）
+        # Save connection config (simplified; in practice, full config may need to be saved)
         connection = self.connections[server_name]
 
-        # 移除并重新添加
-        # 注意：这里简化处理，实际应该保存原始配置
+        # Remove and re-add
+        # Note: Simplified handling; in practice, the original config should be saved
         await self.remove_server(server_name)
 
-        # 重新获取工具
+        # Re-fetch tools
         tools_info = await connection.list_tools()
 
-        # 重新创建工具（类似 add_server 的逻辑）
+        # Re-create tools (similar to add_server logic)
         from .mcp import MCPTool
 
         server_tools = {}
@@ -279,7 +298,7 @@ class MCPToolManager:
         self.tools_by_server[server_name] = server_tools
         self.connections[server_name] = connection
 
-        # 重新注册
+        # Re-register
         if self._registered_registry:
             for tool in server_tools.values():
                 self._registered_registry.register(tool)
@@ -287,7 +306,7 @@ class MCPToolManager:
         self.logger.info(f"Reloaded {len(server_tools)} tools from server '{server_name}'")
 
     async def cleanup(self) -> None:
-        """清理所有 MCP 连接"""
+        """Clean up all MCP connections."""
         self.logger.info("Cleaning up MCP connections")
         
         if asyncio.get_running_loop() is not self.loop:
@@ -313,10 +332,10 @@ class MCPToolManager:
         self.logger.info("MCP cleanup complete")
 
     def get_tool_names(self) -> list[str]:
-        """获取所有 MCP 工具名称
+        """Get all MCP tool names.
 
         Returns:
-            工具名称列表
+            List of tool names.
         """
         names = []
         for tools in self.tools_by_server.values():
@@ -324,29 +343,29 @@ class MCPToolManager:
         return names
 
     def get_server_names(self) -> list[str]:
-        """获取所有 MCP 服务器名称
+        """Get all MCP server names.
 
         Returns:
-            服务器名称列表
+            List of server names.
         """
         return list(self.connections.keys())
 
     def get_tools_by_server(self, server_name: str) -> list[MCPTool]:
-        """获取特定服务器的所有工具
+        """Get all tools from a specific server.
 
         Args:
-            server_name: 服务器名称
+            server_name: Server name.
 
         Returns:
-            工具列表
+            List of tools.
         """
         return list(self.tools_by_server.get(server_name, {}).values())
 
     def get_stats(self) -> dict[str, Any]:
-        """获取统计信息
+        """Get statistics.
 
         Returns:
-            统计信息字典
+            Statistics dictionary.
         """
         stats = {
             "total_servers": len(self.connections),

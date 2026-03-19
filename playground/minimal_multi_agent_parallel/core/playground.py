@@ -1,14 +1,14 @@
-"""多智能体 Playground 实现
+"""Multi-Agent Playground Implementation
 
-展示如何使用多个Agent协作完成任务。
-包含Planning Agent和Coding Agent的工作流。
+Demonstrates how to use multiple Agents collaborating on tasks.
+Contains the workflow for Planning Agent and Coding Agent.
 """
 
 import logging
 import sys
 from pathlib import Path
 
-# 确保可以导入evomaster模块
+# Ensure evomaster module can be imported
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -26,36 +26,36 @@ from typing import List, Any, Callable
 
 @register_playground("minimal_multi_agent_parallel")
 class MultiAgentParallelPlayground(BasePlayground):
-    """多智能体 Playground
+    """Multi-Agent Parallel Playground
 
-    实现Planning Agent和Coding Agent的协作工作流：
-    1. Planning Agent分析任务并制定计划
-    2. Coding Agent根据计划执行代码任务
+    Implements the collaborative workflow of Planning Agent and Coding Agent:
+    1. Planning Agent analyzes the task and formulates a plan
+    2. Coding Agent executes code tasks based on the plan
 
-    使用方式：
-        # 通过统一入口
-        python run.py --agent minimal_multi_agent --task "任务描述"
+    Usage:
+        # Via the unified entry point
+        python run.py --agent minimal_multi_agent --task "task description"
 
-        # 或使用独立入口
+        # Or via the standalone entry point
         python playground/minimal_multi_agent/main.py
     """
 
     def __init__(self, config_dir: Path = None, config_path: Path = None):
-        """初始化多智能体 Playground
+        """Initialize Multi-Agent Parallel Playground.
 
         Args:
-            config_dir: 配置目录路径，默认为 configs/minimal_multi_agent/
-            config_path: 配置文件完整路径（如果提供，会覆盖 config_dir）
+            config_dir: Configuration directory path, defaults to configs/minimal_multi_agent/
+            config_path: Full path to config file (overrides config_dir if provided)
         """
         if config_path is None and config_dir is None:
-            # 默认配置目录
+            # Default configuration directory
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "agent" / "minimal_multi_agent"
 
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.agents.declare("planning_agent", "coding_agent")
 
-        # 从配置中读取并行配置
+        # Read parallel configuration from config
         session_config = self.config.session.get("local", {})
         parallel_config = session_config.get("parallel", {})
         if parallel_config.get("enabled", False):
@@ -63,10 +63,11 @@ class MultiAgentParallelPlayground(BasePlayground):
         else:
             self.max_workers = 3
         
-        # 初始化mcp_manager（BasePlayground.cleanup需要）
+        # Initialize mcp_manager (required by BasePlayground.cleanup)
         self.mcp_manager = None
 
     def setup(self) -> None:
+        """Initialize all components."""
         self.logger.info("Setting up minimal multi-agent parallel playground...")
 
         self._setup_session()
@@ -75,20 +76,20 @@ class MultiAgentParallelPlayground(BasePlayground):
         self.logger.info("Minimal multi-agent parallel playground setup complete")
 
     def _create_exp(self, exp_index):
-        """创建多智能体实验实例
+        """Create a multi-agent experiment instance.
 
-        覆盖基类方法，创建 MultiAgentExp 实例。
-        为每个 exp 创建独立的 Agent 副本，确保并行运行时上下文不冲突。
+        Overrides the base class method to create a MultiAgentExp instance.
+        Creates independent Agent copies for each exp to avoid context conflicts during parallel execution.
 
         Args:
-            exp_index: 实验索引
+            exp_index: Experiment index
 
         Returns:
-            MultiAgentExp 实例
+            MultiAgentExp instance
         """
-        # 为每个 exp 创建独立的 Agent 副本
-        # 每个 agent 副本拥有独立的 LLM 实例（不共享），避免并行时的冲突
-        # 共享 session, tools, skill_registry 等配置，但拥有独立的上下文
+        # Create independent Agent copies for each exp
+        # Each agent copy has its own LLM instance (not shared) to avoid conflicts during parallelism
+        # Shares session, tools, skill_registry, etc., but has independent context
         planning_agent_copy = self.copy_agent(
             self.agents.planning_agent, 
             new_agent_name=f"planning_exp_{exp_index}"
@@ -105,21 +106,21 @@ class MultiAgentParallelPlayground(BasePlayground):
             config=self.config,
             exp_index=exp_index
         )
-        # 传递 run_dir 给 Exp
+        # Pass run_dir to Exp
         if self.run_dir:
             exp.set_run_dir(self.run_dir)
         return exp
 
 
     def run(self, task_description: str, output_file: str | None = None) -> dict:
-        """运行工作流（覆盖基类方法）
+        """Run the workflow (overrides base class method).
 
         Args:
-            task_description: 任务描述
-            output_file: 结果保存文件（可选，如果设置了 run_dir 则自动保存到 trajectories/）
+            task_description: Task description
+            output_file: Result save file (optional; automatically saves to trajectories/ if run_dir is set)
 
         Returns:
-            运行结果
+            Run result
         """
         try:
             self.setup()
@@ -127,7 +128,7 @@ class MultiAgentParallelPlayground(BasePlayground):
             task_description_1 = task_description
             task_description_2 = task_description
             task_description_3 = task_description
-            # --- 关键步骤：创建任务列表 ---
+            # --- Key step: create task list ---
             task_descriptions = [task_description_1, task_description_2, task_description_3]
             tasks = []
             for i in range(self.max_workers):
@@ -137,7 +138,7 @@ class MultiAgentParallelPlayground(BasePlayground):
                 
                 tasks.append(task_func)
             
-            # --- 调用封装好的并行函数 ---
+            # --- Call the wrapped parallel execution function ---
             results = self.execute_parallel_tasks(tasks, max_workers=self.max_workers)
             
             result = {

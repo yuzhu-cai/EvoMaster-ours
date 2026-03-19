@@ -1,6 +1,6 @@
-"""Minimal Playground 实现
+"""Minimal Playground Implementation
 
-最简单的 playground 实现，展示如何使用 EvoMaster 基础功能。
+The simplest playground implementation, demonstrating how to use EvoMaster basic features.
 """
 
 import logging
@@ -13,26 +13,26 @@ from evomaster.core import BasePlayground, register_playground
 class MinimalOpenClawSkillPlayground(BasePlayground):
     """Minimal OpenClaw Skill Playground
 
-    最小的 playground 实现，展示如何使用 EvoMaster 基础功能。
-    当前使用默认的 BasePlayground 行为，未来可以添加定制逻辑。
+    The simplest playground implementation, demonstrating how to use EvoMaster basic features.
+    Currently uses the default BasePlayground behavior; custom logic can be added in the future.
 
-    使用方式：
-        # 通过统一入口
-        python run.py --agent minimal_openclaw_skill --task "任务描述"
+    Usage:
+        # Via the unified entry point
+        python run.py --agent minimal_openclaw_skill --task "task description"
 
-        # 或使用独立入口
+        # Or via the standalone entry point
         python playground/minimal_openclaw_skill/main.py
     """
 
     def __init__(self, config_dir: Path = None, config_path: Path = None):
-        """初始化 MinimalPlayground
+        """Initialize MinimalPlayground.
 
         Args:
-            config_dir: 配置目录路径，默认为 configs/minimal_openclaw_skill/
-            config_path: 配置文件完整路径（如果提供，会覆盖 config_dir）
+            config_dir: Configuration directory path, defaults to configs/minimal_openclaw_skill/
+            config_path: Full path to config file (overrides config_dir if provided)
         """
         if config_path is None and config_dir is None:
-            # 默认配置目录
+            # Default configuration directory
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "agent" / "minimal"
 
         super().__init__(config_dir=config_dir, config_path=config_path)

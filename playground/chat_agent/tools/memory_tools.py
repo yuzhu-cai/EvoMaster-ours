@@ -1,7 +1,7 @@
-"""Chat Agent 记忆工具
+"""Chat Agent Memory Tools
 
-提供 memory_search / memory_save / memory_forget 三个 agent 工具，
-让 agent 主动搜索、保存和删除用户的长期记忆。
+Provides memory_search / memory_save / memory_forget agent tools,
+allowing the agent to actively search, save, and delete user long-term memories.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class MemorySearchToolParams(BaseToolParams):
 
 
 class MemorySearchTool(BaseTool):
-    """记忆搜索工具"""
+    """Memory search tool."""
 
     name: ClassVar[str] = "memory_search"
     params_class: ClassVar[type[BaseToolParams]] = MemorySearchToolParams
@@ -93,7 +93,7 @@ class MemorySaveToolParams(BaseToolParams):
 
 
 class MemorySaveTool(BaseTool):
-    """记忆保存工具"""
+    """Memory save tool."""
 
     name: ClassVar[str] = "memory_save"
     params_class: ClassVar[type[BaseToolParams]] = MemorySaveToolParams
@@ -146,7 +146,7 @@ class MemoryForgetToolParams(BaseToolParams):
 
 
 class MemoryForgetTool(BaseTool):
-    """记忆删除工具"""
+    """Memory delete tool."""
 
     name: ClassVar[str] = "memory_forget"
     params_class: ClassVar[type[BaseToolParams]] = MemoryForgetToolParams

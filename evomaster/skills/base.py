@@ -1,6 +1,6 @@
-"""EvoMaster Skills 基类
+"""EvoMaster Skills base classes.
 
-提供 Skill 的基础抽象和注册机制。
+Provides the base abstractions and registration mechanism for Skills.
 """
 
 from __future__ import annotations
@@ -18,47 +18,47 @@ if TYPE_CHECKING:
 
 
 class SkillMetaInfo(BaseModel):
-    """Skill 元信息（Level 1）
+    """Skill metadata (Level 1).
 
-    从 SKILL.md 的 YAML frontmatter 解析得到。
-    这部分信息总是在上下文中，帮助 Agent 决定是否使用该 skill。
+    Parsed from the YAML frontmatter of SKILL.md.
+    This information is always present in the context, helping the Agent decide whether to use the skill.
     """
-    name: str = Field(description="技能名称")
-    description: str = Field(description="技能描述，包含使用场景和触发条件")
-    license: str | None = Field(default=None, description="许可证信息")
-    type: str | None = Field(default=None, description="技能类型，如 'openclaw' 表示 Openclaw 插件技能")
-    tool_name: str | None = Field(default=None, description="Openclaw 工具名称，如 'feishu_doc'")
+    name: str = Field(description="Skill name")
+    description: str = Field(description="Skill description, including use cases and trigger conditions")
+    license: str | None = Field(default=None, description="License information")
+    type: str | None = Field(default=None, description="Skill type, e.g., 'openclaw' for Openclaw plugin skills")
+    tool_name: str | None = Field(default=None, description="Openclaw tool name, e.g., 'feishu_doc'")
 
 
 class BaseSkill(ABC):
-    """Skill 基类
+    """Skill base class.
 
-    Skills 是 EvoMaster 的技能组件，包含：
-    - Level 1 (meta_info): 技能元信息 (~100 tokens)，总在上下文
-    - Level 2 (full_info): 完整信息 (500-2000 tokens)，按需加载
-    - Level 3 (scripts): 可执行脚本
+    Skills are EvoMaster's skill components, containing:
+    - Level 1 (meta_info): Skill metadata (~100 tokens), always in context
+    - Level 2 (full_info): Full information (500-2000 tokens), loaded on demand
+    - Level 3 (scripts): Executable scripts
     """
 
     def __init__(self, skill_path: Path):
-        """初始化 Skill
+        """Initialize the Skill.
 
         Args:
-            skill_path: 技能目录路径
+            skill_path: Skill directory path.
         """
         self.skill_path = skill_path
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # 解析 meta_info
+        # Parse meta_info
         self.meta_info = self._parse_meta_info()
 
-        # full_info 缓存（延迟加载）
+        # full_info cache (lazy loading)
         self._full_info_cache: str | None = None
 
     def _parse_meta_info(self) -> SkillMetaInfo:
-        """解析 SKILL.md 的 frontmatter 获取 meta_info
+        """Parse the SKILL.md frontmatter to obtain meta_info.
 
         Returns:
-            SkillMetaInfo 对象
+            SkillMetaInfo object.
         """
         skill_md_path = self.skill_path / "SKILL.md"
         if not skill_md_path.exists():
@@ -66,14 +66,14 @@ class BaseSkill(ABC):
 
         content = skill_md_path.read_text(encoding="utf-8")
 
-        # 解析 YAML frontmatter
+        # Parse YAML frontmatter
         frontmatter_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
         if not frontmatter_match:
             raise ValueError(f"Invalid SKILL.md format: no YAML frontmatter found in {skill_md_path}")
 
         frontmatter_text = frontmatter_match.group(1)
 
-        # YAML 解析：支持 key: value 和 key: | 多行块格式
+        # YAML parsing: supports key: value and key: | multiline block formats
         frontmatter_data = {}
         current_key = None
         multiline_lines: list[str] = []
@@ -83,12 +83,12 @@ class BaseSkill(ABC):
             if not stripped or stripped.startswith('#'):
                 continue
 
-            # 检查是否是多行块的缩进续行
+            # Check if this is a continuation line of a multiline block
             if current_key and (line.startswith('  ') or line.startswith('\t')):
                 multiline_lines.append(stripped)
                 continue
 
-            # 如果之前在收集多行值，保存它
+            # If a multiline value was being collected, save it
             if current_key and multiline_lines:
                 frontmatter_data[current_key] = ' '.join(multiline_lines)
                 current_key = None
@@ -99,17 +99,17 @@ class BaseSkill(ABC):
                 key = key.strip()
                 value = value.strip()
                 if value == '|' or value == '>':
-                    # 开始多行块
+                    # Start a multiline block
                     current_key = key
                     multiline_lines = []
                 else:
                     frontmatter_data[key] = value
 
-        # 处理最后一个多行块
+        # Handle the last multiline block
         if current_key and multiline_lines:
             frontmatter_data[current_key] = ' '.join(multiline_lines)
 
-        # 创建 SkillMetaInfo
+        # Create SkillMetaInfo
         return SkillMetaInfo(
             name=frontmatter_data.get('name', self.skill_path.name),
             description=frontmatter_data.get('description', ''),
@@ -119,9 +119,9 @@ class BaseSkill(ABC):
         )
 
     def get_full_info(self) -> str:
-        """获取完整信息（Level 2）
+        """Get the full information (Level 2).
 
-        若存在 job_submit.md 则返回其内容；否则从 SKILL.md 的 body 提取。
+        Returns the content of job_submit.md if it exists; otherwise extracts from the body of SKILL.md.
         """
         if self._full_info_cache is not None:
             return self._full_info_cache
@@ -141,15 +141,15 @@ class BaseSkill(ABC):
         return self._full_info_cache
 
     def get_reference(self, reference_name: str) -> str:
-        """获取参考文档内容
+        """Get the content of a reference document.
 
         Args:
-            reference_name: 参考文档名称（如 "forms.md", "reference/api.md"）
+            reference_name: Reference document name (e.g., "forms.md", "reference/api.md").
 
         Returns:
-            参考文档内容
+            Reference document content.
         """
-        # 尝试多个可能的路径
+        # Try multiple possible paths
         possible_paths = [
             self.skill_path / reference_name,
             self.skill_path / "references" / reference_name,
@@ -164,34 +164,34 @@ class BaseSkill(ABC):
 
     @abstractmethod
     def to_context_string(self) -> str:
-        """转换为上下文字符串
+        """Convert to a context string.
 
-        返回应该添加到 Agent 上下文中的字符串。
+        Returns the string that should be added to the Agent's context.
         """
         pass
 
 
 class Skill(BaseSkill):
-    """Skill 具体实现
+    """Skill concrete implementation.
 
-    包含可执行脚本的技能：
-    - Level 1: meta_info（总在上下文）
-    - Level 2: full_info（按需加载）
-    - Level 3: scripts（可执行脚本）
+    A skill with executable scripts:
+    - Level 1: meta_info (always in context)
+    - Level 2: full_info (loaded on demand)
+    - Level 3: scripts (executable scripts)
     """
 
     def __init__(self, skill_path: Path):
         super().__init__(skill_path)
 
-        # 扫描 scripts 目录
+        # Scan the scripts directory
         self.scripts_dir = self.skill_path / "scripts"
         self.available_scripts = self._scan_scripts()
 
     def _scan_scripts(self) -> list[Path]:
-        """扫描 scripts 目录，获取所有可执行脚本
+        """Scan the scripts directory for all executable scripts.
 
         Returns:
-            脚本路径列表
+            List of script paths.
         """
         if not self.scripts_dir.exists():
             return []
@@ -204,13 +204,13 @@ class Skill(BaseSkill):
         return scripts
 
     def get_script_path(self, script_name: str) -> Path | None:
-        """获取脚本路径
+        """Get a script path.
 
         Args:
-            script_name: 脚本名称
+            script_name: Script name.
 
         Returns:
-            脚本路径，如果不存在则返回 None
+            Script path, or None if not found.
         """
         for script in self.available_scripts:
             if script.name == script_name:
@@ -218,41 +218,41 @@ class Skill(BaseSkill):
         return None
 
     def to_context_string(self) -> str:
-        """转换为上下文字符串
+        """Convert to a context string.
 
-        返回 meta_info 的描述和可用脚本列表。
+        Returns the meta_info description and list of available scripts.
         """
         scripts_info = ", ".join([s.name for s in self.available_scripts]) if self.available_scripts else "No scripts"
         return f"[Skill: {self.meta_info.name}] {self.meta_info.description} (Scripts: {scripts_info})"
 
 
 class SkillRegistry:
-    """Skill 注册中心
+    """Skill registry.
 
-    管理所有可用的 Skills，支持：
-    - 自动发现和加载 skills
-    - 按需检索 skill
-    - 提供 meta_info 供 Agent 选择
+    Manages all available Skills, supporting:
+    - Automatic discovery and loading of skills
+    - On-demand skill retrieval
+    - Providing meta_info for Agent selection
     """
 
     def __init__(self, skills_root: Path, skills: list[str] | None = None):
-        """初始化 SkillRegistry
+        """Initialize the SkillRegistry.
 
         Args:
-            skills_root: skills 根目录
-            skills: 指定仅加载的 skill 目录名列表；None 表示加载全部
+            skills_root: Skills root directory.
+            skills: List of skill directory names to load; None means load all.
         """
         self.skills_root = skills_root
         self.logger = logging.getLogger(self.__class__.__name__)
 
-        # 存储所有 skills
+        # Store all skills
         self._skills: dict[str, Skill] = {}
 
-        # 自动加载 skills
+        # Auto-load skills
         self._load_skills(skills)
 
     def _load_skills(self, skills: list[str] | None = None) -> None:
-        """自动加载 skills（可按目录名过滤）"""
+        """Auto-load skills (optionally filtered by directory name)."""
         if not self.skills_root.exists():
             return
 
@@ -269,13 +269,13 @@ class SkillRegistry:
                     self.logger.error(f"Failed to load skill from {skill_dir}: {e}")
 
     def load_from_directory(self, directory: Path, skills: list[str] | None = None) -> None:
-        """从额外目录加载 skills
+        """Load skills from an additional directory.
 
-        可多次调用以从多个目录加载 skills。
+        Can be called multiple times to load skills from multiple directories.
 
         Args:
-            directory: 额外的 skills 目录
-            skills: 指定仅加载的 skill 目录名列表；None 表示加载全部
+            directory: Additional skills directory.
+            skills: List of skill directory names to load; None means load all.
         """
         if not directory.exists():
             self.logger.debug(f"Skills directory not found, skipping: {directory}")
@@ -299,25 +299,25 @@ class SkillRegistry:
                     self.logger.error(f"Failed to load skill from {skill_dir}: {e}")
 
     def get_skill(self, name: str) -> Skill | None:
-        """获取指定名称的 skill
+        """Get a skill by name.
 
         Args:
-            name: skill 名称
+            name: Skill name.
 
         Returns:
-            Skill 对象，如果不存在则返回 None
+            Skill object, or None if not found.
         """
         return self._skills.get(name)
 
     def get_all_skills(self) -> list[Skill]:
-        """获取所有 skills"""
+        """Get all skills."""
         return list(self._skills.values())
 
     def get_meta_info_context(self) -> str:
-        """获取所有 skills 的 meta_info，用于添加到 Agent 上下文
+        """Get the meta_info for all skills, for adding to the Agent context.
 
         Returns:
-            包含所有 skills 的 meta_info 的字符串
+            String containing the meta_info of all skills.
         """
         lines = ["# Available Skills\n"]
 
@@ -329,15 +329,15 @@ class SkillRegistry:
         return "\n".join(lines)
 
     def create_subset(self, skill_names: list[str]) -> "SkillRegistry":
-        """创建仅包含指定 skill 的子集 SkillRegistry
+        """Create a subset SkillRegistry containing only the specified skills.
 
-        用于为每个 Agent 创建独立的、过滤后的 skill 视图。
+        Used to create an independent, filtered skill view for each Agent.
 
         Args:
-            skill_names: 要保留的 skill 名称列表
+            skill_names: List of skill names to keep.
 
         Returns:
-            新的 SkillRegistry 实例，仅包含指定的 skills
+            New SkillRegistry instance containing only the specified skills.
         """
         subset = object.__new__(SkillRegistry)
         subset.skills_root = self.skills_root
@@ -347,7 +347,7 @@ class SkillRegistry:
             if name in skill_names
         }
 
-        # 检查是否有未找到的 skill 名称
+        # Check for skill names not found in the registry
         not_found = set(skill_names) - set(self._skills.keys())
         if not_found:
             subset.logger.warning(f"Skills not found in registry: {not_found}")
@@ -355,13 +355,13 @@ class SkillRegistry:
         return subset
 
     def search_skills(self, query: str) -> list[Skill]:
-        """搜索 skills
+        """Search for skills.
 
         Args:
-            query: 搜索关键词
+            query: Search keyword.
 
         Returns:
-            匹配的 skills 列表
+            List of matching skills.
         """
         query_lower = query.lower()
         results = []

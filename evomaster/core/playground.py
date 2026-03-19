@@ -1,6 +1,6 @@
-"""EvoMaster Playground 基类
+"""EvoMaster Playground Base Class
 
-定义工作流的通用执行逻辑。
+Defines the common execution logic for workflows.
 """
 from __future__ import annotations
 
@@ -27,102 +27,151 @@ from typing import List, Any, Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-# 全局映射：thread_id -> playground 实例（线程池复用线程时自动覆盖）
+# Global mapping: thread_id -> playground instance (overwritten when thread pool reuses threads)
 _thread_playground_map: dict[int, object] = {}
 
 
 class _SessionThreadFilter(logging.Filter):
-    """只放行当前正在为本 session 工作的线程的日志记录。
+    """Only passes log records from threads currently working for this session.
 
-    使用全局 _thread_playground_map 判断线程归属。线程池复用线程时，
-    新的 register_thread 调用会覆盖旧映射，确保日志只写入当前 session 的文件。
+    Uses the global _thread_playground_map to determine thread ownership. When the
+    thread pool reuses threads, the new register_thread call overwrites the old mapping,
+    ensuring logs are only written to the current session's file.
     """
 
     def __init__(self, playground):
+        """Initialize the filter.
+
+        Args:
+            playground: The playground instance to filter for.
+        """
         super().__init__()
         self._playground = playground
 
     def filter(self, record):
+        """Filter log records based on thread ownership.
+
+        Args:
+            record: The log record to filter.
+
+        Returns:
+            True if the record should be passed through, False otherwise.
+        """
         owner = _thread_playground_map.get(record.thread)
-        # 没有映射（如 CLI 模式 setup 阶段、非工作线程）→ 放行
+        # No mapping (e.g., CLI mode setup phase, non-worker threads) -> pass through
         if owner is None:
             return True
         return owner is self._playground
 
 
 class AgentSlots(dict):
-    """兼容 dict 与属性访问的 Agent 容器（self.agents.xxx）。"""
+    """Agent container compatible with both dict and attribute access (self.agents.xxx)."""
 
     def declare(self, *names: str) -> "AgentSlots":
-        """预声明槽位，便于 IDE 补全/避免到处复制 YAML 里的字符串。"""
+        """Pre-declare slot names for IDE auto-completion and to avoid copying YAML strings everywhere.
+
+        Args:
+            *names: Slot names to declare.
+
+        Returns:
+            Self, for method chaining.
+        """
         for name in names:
             self.setdefault(name, None)
         return self
 
     def __getattr__(self, name: str):
+        """Get an agent by attribute access.
+
+        Args:
+            name: Agent slot name.
+
+        Returns:
+            The agent instance.
+
+        Raises:
+            ValueError: If the agent slot exists but is not initialized.
+            AttributeError: If the slot does not exist.
+        """
         if name in self:
             value = self[name]
             if value is None:
-                raise ValueError(f"Agent 未初始化: {name}")
+                raise ValueError(f"Agent not initialized: {name}")
             return value
         raise AttributeError(name)
 
     def __setattr__(self, name: str, value):
+        """Set an agent by attribute access.
+
+        Args:
+            name: Agent slot name.
+            value: The agent instance to set.
+        """
         self[name] = value
 
     def __dir__(self):
+        """Return sorted list of all available attributes and keys.
+
+        Returns:
+            Sorted list of attribute/key names.
+        """
         return sorted(set(super().__dir__()) | set(self.keys()))
 
     def get_random_agent(self) -> BaseAgent:
+        """Return a randomly selected agent from the container.
+
+        Returns:
+            A randomly selected BaseAgent instance.
+        """        
         return random.choice(list(self.values()))
 
 class BasePlayground:
-    """Playground 基类
+    """Playground base class.
 
-    定义工作流的通用生命周期管理：
-    1. 加载配置
-    2. 初始化所有组件
-    3. 创建并运行实验
-    4. 清理资源
+    Defines the common lifecycle management for workflows:
+    1. Load configuration
+    2. Initialize all components
+    3. Create and run experiments
+    4. Clean up resources
 
-    具体 playground 可以：
-    - 继承此类
-    - 覆盖 _create_exp() 以使用自定义 Exp 类
-    - 覆盖 setup() 以添加额外初始化逻辑
+    Concrete playgrounds can:
+    - Inherit from this class
+    - Override _create_exp() to use a custom Exp class
+    - Override setup() to add extra initialization logic
     """
 
     def __init__(self, config_dir: str | Path | None = None, config_path: str | Path | None = None):
-        """初始化 Playground
+        """Initialize the Playground.
 
         Args:
-            config_dir: 配置目录（默认为 configs/）
-            config_path: 配置文件完整路径（如果提供，会覆盖 config_dir）
+            config_dir: Configuration directory (defaults to configs/).
+            config_path: Full path to the configuration file (overrides config_dir if provided).
         """
-        # 如果提供了 config_path，从中提取 config_dir 和 config_file
+        # If config_path is provided, extract config_dir and config_file from it
         if config_path is not None:
             config_path = Path(config_path)
             self.config_dir = config_path.parent
             config_file = config_path.name
         else:
-            # 否则使用 config_dir 和默认的 config.yaml
+            # Otherwise use config_dir and the default config.yaml
             if config_dir is None:
                 config_dir = Path(__file__).parent.parent.parent / "configs"
             self.config_dir = Path(config_dir)
-            config_file = None  # 使用 ConfigManager 的默认值 config.yaml
+            config_file = None  # Use ConfigManager's default value config.yaml
 
         self.config_manager = ConfigManager(config_dir=self.config_dir, config_file=config_file)
         self.config = self.config_manager.load()
-        self.config_path = self.config_dir / self.config_manager.config_file  # 保存实际使用的配置文件路径
+        self.config_path = self.config_dir / self.config_manager.config_file  # Save the actual config file path used
         self.logger = logging.getLogger(self.__class__.__name__)
         self._mcp_loop = None
         self._mcp_thread = None
 
 
-        # Run 目录管理
+        # Run directory management
         self.run_dir = None
         self.log_file_handler = None
 
-        # 组件存储
+        # Component storage
         self.session = None
         self.agents = AgentSlots()
         self.exps = {}
@@ -132,7 +181,11 @@ class BasePlayground:
         self.openclaw_bridge = None
 
     def _start_loop_in_thread(self) -> threading.Thread:
+        """Start an asyncio event loop in a daemon thread for MCP.
 
+        Returns:
+            The started daemon thread.
+        """
         def _runner():
             asyncio.set_event_loop(self._mcp_loop)
             self._mcp_loop.run_forever()
@@ -142,48 +195,48 @@ class BasePlayground:
         return t
     
     def set_run_dir(self, run_dir: str | Path, task_id: str | None = None) -> None:
-        """设置 run 目录并创建目录结构
+        """Set up the run directory and create the directory structure
 
-        创建以下目录结构：
-        - run_dir/config.yaml (配置文件副本)
-        - run_dir/logs/ (日志文件)
-        - run_dir/trajectories/ (对话轨迹)
-        - run_dir/workspace/ 或 run_dir/workspaces/{task_id}/ (工作空间)
+        Creates the following directory structure:
+        - run_dir/config.yaml (configuration file copy)
+        - run_dir/logs/ (log files)
+        - run_dir/trajectories/ (conversation trajectories)
+        - run_dir/workspace/ or run_dir/workspaces/{task_id}/ (workspace)
 
         Args:
-            run_dir: Run 目录路径
-            task_id: 任务 ID（可选）。如果提供，workspace 会创建在 workspaces/{task_id} 下，
-                    用于批量任务场景
+            run_dir: Path to the run directory
+            task_id: Task ID (optional). If provided, the workspace will be created under
+                    workspaces/{task_id}/, used for batch task scenarios
         """
         self.run_dir = Path(run_dir)
         self.task_id = task_id
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
-        # 创建子目录
+        # Create subdirectories
         (self.run_dir / "logs").mkdir(exist_ok=True)
         (self.run_dir / "trajectories").mkdir(exist_ok=True)
 
-        # 复制配置文件到 run_dir（只在第一个 task 时复制，避免并发冲突）
+        # Copy config file to run_dir (only for the first task, to avoid concurrency conflicts)
         config_copy = self.run_dir / "config.yaml"
         if self.config_path.exists() and not config_copy.exists():
             shutil.copy2(self.config_path, config_copy)
             self.logger.info(f"Copied config to: {config_copy}")
 
-        # 创建 workspace 目录
+        # Create workspace directory
         if task_id:
-            # 批量任务模式：workspaces/{task_id}/
+            # Batch task mode: workspaces/{task_id}/
             (self.run_dir / "workspaces").mkdir(exist_ok=True)
             workspace_path = self.run_dir / "workspaces" / task_id
             workspace_path.mkdir(exist_ok=True)
         else:
-            # 单任务模式：workspace/
+            # Single task mode: workspace/
             workspace_path = self.run_dir / "workspace"
             workspace_path.mkdir(exist_ok=True)
 
-        # 动态更新配置中的 workspace_path
+        # Dynamically update workspace_path in configuration
         self._update_workspace_path(workspace_path)
 
-        # 设置日志文件到 run_dir/logs/
+        # Set log file to run_dir/logs/
         self._setup_logging()
 
         self.logger.info(f"Run directory: {self.run_dir}")
@@ -192,46 +245,46 @@ class BasePlayground:
             self.logger.info(f"Workspace: {workspace_path}")
 
     def _update_workspace_path(self, workspace_path: Path) -> None:
-        """动态更新配置中的 workspace_path
+        """Dynamically update the workspace_path in the configuration.
 
-        在 Session 创建之前调用，确保 Session 使用 run_dir 下的 workspace。
+        Called before Session creation to ensure the Session uses the workspace under run_dir.
 
         Args:
-            workspace_path: 新的 workspace 路径（通常是 run_dir/workspace 或 run_dir/workspaces/{task_id}）
+            workspace_path: New workspace path (typically run_dir/workspace or run_dir/workspaces/{task_id}).
         """
         workspace_path_str = str(workspace_path.absolute())
 
-        # 更新 session 配置中的 workspace_path 和 working_dir
+        # Update workspace_path and working_dir in session configuration
         if hasattr(self.config, 'session'):
             session_config = self.config.session
 
-            # 对于 dict 类型的配置
+            # For dict type configuration
             if isinstance(session_config, dict):
                 session_type = session_config.get('type', 'local')
 
-                # 更新 Local Session
+                # Update Local Session
                 if session_type == 'local' and 'local' in session_config:
                     session_config['local']['workspace_path'] = workspace_path_str
                     session_config['local']['working_dir'] = workspace_path_str
                     self.logger.debug(f"Updated local workspace path to: {workspace_path_str}")
 
-                # 更新 Docker Session
+                # Update Docker Session
                 elif session_type == 'docker' and 'docker' in session_config:
                     docker_config = session_config['docker']
                     container_workspace = docker_config.get('working_dir', '/workspace')
 
-                    # 更新 volumes 挂载
+                    # Update volumes mount
                     if 'volumes' not in docker_config:
                         docker_config['volumes'] = {}
                     docker_config['volumes'][workspace_path_str] = container_workspace
 
-                    # 更新 workspace_path
+                    # Update workspace_path
                     docker_config['workspace_path'] = container_workspace
                     docker_config['working_dir'] = container_workspace
 
                     self.logger.debug(f"Updated Docker volume: {workspace_path_str} -> {container_workspace}")
 
-            # 对于 Pydantic 模型（如果已加载）
+            # For Pydantic models (if already loaded)
             elif hasattr(session_config, 'local') and hasattr(session_config.local, 'workspace_path'):
                 session_config.local.workspace_path = workspace_path_str
                 session_config.local.working_dir = workspace_path_str
@@ -243,47 +296,47 @@ class BasePlayground:
 
 
     def _setup_logging(self) -> None:
-        """设置日志文件路径
+        """Set up the log file path.
 
-        优先级：
-        1. 如果设置了 run_dir，则使用 run_dir/logs/{task_id}.log 或 run_dir/logs/evomaster.log
-        2. 否则使用配置文件中的 log_path
-        3. 如果都没有，则不记录到文件
+        Priority:
+        1. If run_dir is set, use run_dir/logs/{task_id}.log or run_dir/logs/evomaster.log
+        2. Otherwise use log_path from the configuration file
+        3. If neither is available, do not log to file
         """
-        # 移除旧的文件处理器（如果存在）
+        # Remove old file handler (if exists)
         if self.log_file_handler:
             root_logger = logging.getLogger()
             root_logger.removeHandler(self.log_file_handler)
             self.log_file_handler.close()
             self.log_file_handler = None
 
-        # 确定日志文件路径
+        # Determine the log file path
         log_file = None
         if self.run_dir:
-            # 优先使用 run_dir
+            # Prefer using run_dir
             if hasattr(self, 'task_id') and self.task_id:
-                # 批量任务模式：使用 task_id.log
+                # Batch task mode: use task_id.log
                 log_file = self.run_dir / "logs" / f"{self.task_id}.log"
             else:
-                # 单任务模式：使用 evomaster.log
+                # Single task mode: use evomaster.log
                 log_file = self.run_dir / "logs" / "evomaster.log"
         else:
-            # 使用配置文件中的路径
+            # Use path from the configuration file
             log_path = getattr(self.config.logging, 'log_path', None)
             if log_path:
                 log_file = Path(log_path)
 
         if log_file:
-            # 确保日志目录存在
+            # Ensure the log directory exists
             log_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # 创建文件处理器（覆盖模式）
+            # Create file handler (overwrite mode)
             self.log_file_handler = logging.FileHandler(log_file, mode='w', encoding='utf-8')
             self.log_file_handler.setLevel(getattr(logging, self.config.logging.level))
             self.log_file_handler.setFormatter(logging.Formatter(self.config.logging.format))
             self.log_file_handler.addFilter(_SessionThreadFilter(self))
 
-            # 添加到根logger
+            # Add to root logger
             root_logger = logging.getLogger()
             root_logger.addHandler(self.log_file_handler)
 
@@ -293,27 +346,71 @@ class BasePlayground:
             self.log_path = None
 
     def register_thread(self) -> None:
-        """将当前线程注册为本 playground 的工作线程（用于日志过滤）。"""
+        """Register the current thread as a worker thread for this playground (used for log filtering)."""
         _thread_playground_map[threading.current_thread().ident] = self
 
     def _get_agents_config(self) -> dict:
+        """Get the configuration for all agents.
+
+        Returns:
+            Agents configuration dictionary.
+        """
         return self.config_manager.get_agents_config()
 
     def _get_agent_config(self, name: str) -> dict:
+        """Get the configuration for a specific agent.
+
+        Args:
+            name: Agent name.
+
+        Returns:
+            Agent configuration dictionary.
+        """
         return self.config_manager.get_agent_config(name)
 
     def _setup_agent_llm(self, agent_name: str) -> dict:
+        """Get the LLM configuration for a specific agent.
+
+        Args:
+            agent_name: Agent name.
+
+        Returns:
+            LLM configuration dictionary.
+        """
         return self.config_manager.get_agent_llm_config(agent_name)
-    
+
     def _setup_agent_tools(self, agent_name: str) -> dict:
+        """Get the tools configuration for a specific agent.
+
+        Args:
+            agent_name: Agent name.
+
+        Returns:
+            Tools configuration dictionary.
+        """
         return self.config_manager.get_agent_tools_config(agent_name)
-    
+
     def _setup_agent_skills(self, agent_name: str) -> dict:
+        """Get the skills configuration for a specific agent.
+
+        Args:
+            agent_name: Agent name.
+
+        Returns:
+            Skills configuration dictionary.
+        """
         return self.config_manager.get_agent_skills_config(agent_name)
         
 
     def _get_or_create_skill_registry(self, skill_config: dict | None = None) -> SkillRegistry:
-        """按 agent 配置创建 SkillRegistry；当 skills 为 '*' 时缓存全量 registry。"""
+        """Create a SkillRegistry based on agent config; caches the full registry when skills is '*'.
+
+        Args:
+            skill_config: Skill configuration dictionary.
+
+        Returns:
+            SkillRegistry instance.
+        """
         if skill_config is None:
             skill_config = {}
 
@@ -335,9 +432,12 @@ class BasePlayground:
 
 
     def _get_or_create_full_skill_registry(self) -> SkillRegistry:
-        """始终创建/获取全量 SkillRegistry（与 builtin 一致：始终注册，config 仅控制是否暴露给 LLM）。
+        """Always create/get the full SkillRegistry (consistent with builtin: always register, config only controls LLM exposure).
 
-        同时扫描 evomaster/skills（Python 技能）和 evomaster/skills_ts（TypeScript/Openclaw 技能）。
+        Also scans evomaster/skills (Python skills) and evomaster/skills_ts (TypeScript/Openclaw skills).
+
+        Returns:
+            Full SkillRegistry instance.
         """
         skills_config = getattr(self.config, "skills", None)
         if isinstance(skills_config, dict):
@@ -347,7 +447,7 @@ class BasePlayground:
         if self._base_skill_registry is None:
             self.logger.info(f"Loading full skill registry from: {skills_root}")
             self._base_skill_registry = SkillRegistry(skills_root)
-            # 也扫描 skills_ts 目录（Openclaw 技能）
+            # Also scan skills_ts directory (Openclaw skills)
             skills_ts_root = Path(skills_root).parent / "skills_ts"
             if skills_ts_root.exists():
                 self.logger.info(f"Also loading skills from: {skills_ts_root}")
@@ -356,7 +456,14 @@ class BasePlayground:
         return self._base_skill_registry
 
     def _resolve_skill_registry(self, skill_config: dict | None) -> SkillRegistry | None:
-        """根据 skill_config 解析 SkillRegistry（可为子集）。用于 Agent 的 skill_registry 参数。"""
+        """Resolve a SkillRegistry based on skill_config (may be a subset). Used for the Agent's skill_registry parameter.
+
+        Args:
+            skill_config: Skill configuration dictionary.
+
+        Returns:
+            SkillRegistry instance, or None if no skills are configured.
+        """
         if not skill_config:
             return None
 
@@ -378,15 +485,15 @@ class BasePlayground:
         return self._get_or_create_skill_registry(normalized_skill_config)
 
     def _setup_session(self) -> None:
-        """创建并打开 Session（如果尚未创建）
+        """Create and open a Session (if not already created).
 
-        根据配置选择 local 或 docker session。
+        Selects a local or docker session based on configuration.
         """
         if self.session is None:
             session_type = self.config.session.get("type", "local")
             if session_type == "docker":
                 session_config_dict = self.config.session.get("docker", {}).copy()
-                # 同步 working_dir 和 workspace_path
+                # Sync working_dir and workspace_path
                 if "working_dir" in session_config_dict and "workspace_path" not in session_config_dict:
                     session_config_dict["workspace_path"] = session_config_dict["working_dir"]
                 elif "workspace_path" in session_config_dict and "working_dir" not in session_config_dict:
@@ -399,19 +506,19 @@ class BasePlayground:
                 self.logger.info(f"Using Docker session with image: {session_config.image}")
             else:
                 session_config_dict = self.config.session.get("local", {}).copy()
-                # 同步 working_dir 和 workspace_path
+                # Sync working_dir and workspace_path
                 if "working_dir" in session_config_dict and "workspace_path" not in session_config_dict:
                     session_config_dict["workspace_path"] = session_config_dict["working_dir"]
                 elif "workspace_path" in session_config_dict and "working_dir" not in session_config_dict:
                     session_config_dict["working_dir"] = session_config_dict["workspace_path"]
-                # 传递 config_dir 用于解析 symlinks 中的相对路径
+                # Pass config_dir for resolving relative paths in symlinks
                 if "config_dir" not in session_config_dict:
                     session_config_dict["config_dir"] = str(self.config_dir)
                 session_config = LocalSessionConfig(**session_config_dict)
                 self.session = LocalSession(session_config)
                 self.logger.info("Using Local session")
         
-        # 打开 Session（如果尚未打开）
+        # Open Session (if not already open)
         if not self.session.is_open:
             self.session.open()
         else:
@@ -422,39 +529,44 @@ class BasePlayground:
         skill_config: dict | None = None,
         tool_config: dict[str, Any] | None = None,
     ):
-        """创建工具注册表并按需初始化 MCP 工具。
+        """Create tool registry and initialize MCP tools as needed.
 
-        无论 tool_config 中是否启用了某些工具，所有内置工具都会被注册到 registry 中。
-        Skill 与 builtin 一致：始终注册 SkillTool，config 仅控制是否将 use_skill 暴露给 LLM。
-        工具的"启用/禁用"仅影响是否将工具信息暴露给 LLM（通过 enable_tools 和 _get_tool_specs 控制）。
+        Regardless of whether certain tools are enabled in tool_config, all builtin tools
+        are registered in the registry.
+        Skills follow the same pattern as builtin: always register SkillTool, config only
+        controls whether use_skill is exposed to LLM.
+        Tool "enable/disable" only affects whether tool info is exposed to LLM (via
+        enable_tools and _get_tool_specs).
 
         Args:
-            skill_config: Skill 配置，其中 skills 列表控制 skill_context 暴露给 agent 的 skills
-            tool_config: per-agent 工具配置，形如 {"builtin": list[str], "mcp": str, "custom": dict}
-                         其中 mcp 为 MCP 配置文件路径，空字符串表示不启用
-                         custom 为自定义工具配置，形如 {"search": "google_search"}
+            skill_config: Skill configuration, where the skills list controls which skills
+                are exposed to the agent.
+            tool_config: Per-agent tool configuration, of the form
+                {"builtin": list[str], "mcp": str, "custom": dict}.
+                mcp is the MCP config file path; empty string means disabled.
+                custom is the custom tool configuration, e.g., {"search": "google_search"}.
         """
         tool_config = tool_config or {"builtin": ["*"], "mcp": ""}
 
         mcp_config_file = tool_config.get("mcp", "")
 
-        # Openclaw bridge 初始化（只初始化一次）
-        # openclaw 可能在顶层或 custom 中（get_agent_tools_config 将非 builtin/mcp 放入 custom）
+        # Openclaw bridge initialization (only once)
+        # openclaw may be at top level or in custom (get_agent_tools_config puts non-builtin/mcp into custom)
         openclaw_config = tool_config.get("openclaw") or tool_config.get("custom", {}).get("openclaw") or {}
-        # 写了 openclaw 且有 plugins 即视为启用；enabled 可省略
+        # openclaw with plugins is considered enabled; "enabled" can be omitted
         openclaw_enabled = bool(openclaw_config.get("plugins")) or openclaw_config.get("enabled", False)
         if openclaw_enabled and self.openclaw_bridge is None:
             self._setup_openclaw_bridge(openclaw_config)
 
-        # 始终注册所有内置工具和 SkillTool（与 builtin 一致），config 仅控制是否暴露给 LLM
-        # skill_context 仅暴露 config 中配置的 skills 给 agent，执行时仍用完整 registry
+        # Always register all builtin tools and SkillTool (consistent with builtin), config only controls LLM exposure
+        # skill_context only exposes the skills configured in config to the agent; execution still uses the full registry
         skill_registry = self._get_or_create_full_skill_registry()
-        # skills: ["*"] → 暴露全部；未配置或 skills: [] → 不暴露任何 skill；[x,y] → 仅暴露指定 skills
+        # skills: ["*"] -> expose all; not configured or skills: [] -> don't expose any skill; [x,y] -> expose only specified skills
         enabled_skills_raw = (skill_config or {}).get("skills")
         if enabled_skills_raw == ["*"]:
-            enabled_skills = None  # None 表示全部
+            enabled_skills = None  # None means all
         elif enabled_skills_raw is None or enabled_skills_raw == []:
-            enabled_skills = []  # 未配置或空列表表示不启用任何 skill
+            enabled_skills = []  # Not configured or empty list means no skills enabled
         else:
             enabled_skills = enabled_skills_raw
         self.logger.info("enabled_skills: %s", enabled_skills)
@@ -465,26 +577,26 @@ class BasePlayground:
             enabled_skills=enabled_skills,
         )
 
-        # MCP: 当 mcp_config_file 非空时加载 MCP 工具
+        # MCP: load MCP tools when mcp_config_file is non-empty
         if mcp_config_file:
-            # 只初始化一次连接，后续 agent 复用并注册到新的 registry
+            # Only initialize the connection once; subsequent agents reuse and register to the new registry
             if self.mcp_manager is None:
                 self.mcp_manager = self._setup_mcp_tools(mcp_config_file)
             elif self.mcp_manager is not None:
                 self.mcp_manager.register_tools(self.tools)
 
-        # 自动注册自定义工具
+        # Auto-register custom tools
         custom_tools = tool_config.get("custom", {})
         if custom_tools:
             self._register_custom_tools(custom_tools)
 
     def _setup_openclaw_bridge(self, openclaw_config: dict[str, Any]) -> None:
-        """初始化 Openclaw bridge 子进程
+        """Initialize the Openclaw bridge subprocess.
 
-        创建并启动 Node.js bridge 子进程，用于执行 Openclaw 类型技能。
+        Creates and starts a Node.js bridge subprocess for executing Openclaw-type skills.
 
         Args:
-            openclaw_config: Openclaw 配置字典，形如:
+            openclaw_config: Openclaw configuration dictionary, e.g.:
                 {
                     "enabled": true,
                     "skills_ts_dir": "./evomaster/skills_ts",
@@ -516,26 +628,27 @@ class BasePlayground:
             self.openclaw_bridge = None
 
     def _register_custom_tools(self, custom_tools: dict[str, Any]) -> None:
-        """自动发现并注册自定义工具
+        """Auto-discover and register custom tools.
 
-        根据配置文件中的自定义工具配置，自动导入并注册工具类。
-        支持从 playground 目录下的 tools 子目录自动加载工具。
+        Based on custom tool configuration in the config file, automatically imports
+        and registers tool classes. Supports auto-loading tools from the tools
+        subdirectory under the playground directory.
 
         Args:
-            custom_tools: 自定义工具配置，形如 {"search": "google_search", "other": "custom_tool"}
-                         键是工具类型（如 "search"），值是工具名称（如 "google_search"）
+            custom_tools: Custom tool configuration, e.g., {"search": "google_search", "other": "custom_tool"}.
+                Keys are tool types (e.g., "search"), values are tool names (e.g., "google_search").
 
-        示例:
-            配置: {"search": "google_search"}
-            会尝试加载: playground/{playground_name}/tools/google_search.py
-            并注册其中的工具类（类名通常是 GoogleSearchTool）
+        Example:
+            Config: {"search": "google_search"}
+            Will attempt to load: playground/{playground_name}/tools/google_search.py
+            and register the tool class within (class name is typically GoogleSearchTool).
         """
         if not custom_tools:
             return
 
-        # 推断 playground 目录
-        # config_dir 通常是 /path/to/configs/{playground_name}
-        # playground_dir 应该是 /path/to/playground/{playground_name}
+        # Infer the playground directory
+        # config_dir is typically /path/to/configs/{playground_name}
+        # playground_dir should be /path/to/playground/{playground_name}
         playground_dir = Path(str(self.config_dir).replace("configs", "playground"))
         tools_dir = playground_dir / "tools"
 
@@ -551,14 +664,14 @@ class BasePlayground:
                 self.logger.warning(f"Invalid tool name for '{tool_key}': {tool_name}")
                 continue
 
-            # 尝试加载工具模块
+            # Try to load the tool module
             tool_module_path = tools_dir / f"{tool_name}.py"
             if not tool_module_path.exists():
                 self.logger.warning(f"Tool module not found: {tool_module_path}")
                 continue
 
             try:
-                # 动态导入工具模块
+                # Dynamically import the tool module
                 import importlib.util
                 import sys
 
@@ -572,7 +685,7 @@ class BasePlayground:
                 sys.modules[module_name] = module
                 spec.loader.exec_module(module)
 
-                # 查找工具类（通常是继承自 BaseTool 的类）
+                # Find the tool class (typically a class inheriting from BaseTool)
                 from evomaster.agent.tools.base import BaseTool
                 tool_class = None
                 for attr_name in dir(module):
@@ -588,11 +701,11 @@ class BasePlayground:
                     self.logger.warning(f"No tool class found in module: {tool_module_path}")
                     continue
 
-                # 调用子类的工具初始化方法（如果存在）
+                # Call subclass tool initialization method (if exists)
                 tool_instance = self._create_custom_tool_instance(tool_class, tool_name, tool_key)
 
                 if tool_instance is not None:
-                    # 注册工具到所有 agent
+                    # Register the tool to all agents
                     self.tools.register(tool_instance)
                     self.logger.info(f"Registered custom tool: {tool_name} (class: {tool_class.__name__})")
                 else:
@@ -602,23 +715,23 @@ class BasePlayground:
                 self.logger.error(f"Failed to load custom tool '{tool_name}': {e}", exc_info=True)
 
     def _create_custom_tool_instance(self, tool_class: type, tool_name: str, tool_key: str):
-        """创建自定义工具实例
+        """Create a custom tool instance.
 
-        子类可以覆盖此方法来提供自定义的工具初始化逻辑。
+        Subclasses can override this method to provide custom tool initialization logic.
 
         Args:
-            tool_class: 工具类
-            tool_name: 工具名称（如 "google_search"）
-            tool_key: 工具配置键（如 "search"）
+            tool_class: The tool class.
+            tool_name: Tool name (e.g., "google_search").
+            tool_key: Tool configuration key (e.g., "search").
 
         Returns:
-            工具实例，如果创建失败则返回 None
+            Tool instance, or None if creation fails.
         """
-        # 默认实现：尝试无参数构造
+        # Default implementation: try no-argument construction
         try:
             return tool_class()
         except TypeError:
-            # 如果需要参数，子类应该覆盖此方法
+            # If arguments are required, subclass should override this method
             self.logger.warning(
                 f"Tool class {tool_class.__name__} requires constructor arguments. "
                 f"Please override _create_custom_tool_instance() in your playground class."
@@ -626,7 +739,7 @@ class BasePlayground:
             return None
 
     def _setup_agents(self) -> None:
-        """按配置创建所有 Agent, 初始化self.agents"""
+        """Create all Agents according to configuration, initializing self.agents."""
         agents_config = self._get_agents_config()
 
         for agent_name, agent_config in agents_config.items():
@@ -649,18 +762,22 @@ class BasePlayground:
             self.logger.info(f"  - Auto Accessed Tools: {tool_config}")
             self.logger.info(f"  - Skills: {skill_config.get('skills', [])}")
 
-        #向后兼容
+        # Backward compatibility
         self.agent = self.agents.get_random_agent()
 
     def _setup_exps(self) -> None:
-        #TODO: 根据配置文件中的exp配置，创建exp实例并存入self.exps字典。当前仅为列表简化
+        """Set up experiments.
+
+        TODO: Create exp instances based on the exp configuration in the config file
+        and store them in self.exps dictionary. Currently simplified to a list.
+        """
         pass
 
     def _get_output_config(self) -> dict:
-        """获取 LLM 输出配置
+        """Get LLM output configuration.
 
         Returns:
-            输出配置字典
+            Output configuration dictionary.
         """
         llm_output_config = self.config.llm_output if hasattr(self.config, 'llm_output') else {}
         if isinstance(llm_output_config, dict):
@@ -676,20 +793,21 @@ class BasePlayground:
         tool_config: dict | None = None,
         skill_config: dict | None = None,
     ):
-        """创建 Agent 实例
+        """Create an Agent instance.
 
-        每个 Agent 使用独立的 LLM 实例，确保日志记录独立。
+        Each Agent uses an independent LLM instance to ensure independent logging.
 
         Args:
-            name: Agent 名称
-            agent_config: Agent 配置字典
-            llm_config: LLM 配置字典
-            tool_config: 工具配置字典，形如 {"builtin": list[str], "mcp": list[str]}
-            skill_config: Skill 配置字典
+            name: Agent name.
+            agent_config: Agent configuration dictionary.
+            llm_config: LLM configuration dictionary.
+            tool_config: Tool configuration dictionary, of the form {"builtin": list[str], "mcp": list[str]}.
+            skill_config: Skill configuration dictionary.
+
         Returns:
-            Agent 实例
+            Agent instance.
         """
-        # 向后兼容：未传参时自动获取
+        # Backward compatibility: auto-fetch when not passed
         if agent_config is None:
             agent_config = self._get_agent_config(name)
         if llm_config is None:
@@ -699,7 +817,7 @@ class BasePlayground:
         if skill_config is None:
             skill_config = self._setup_agent_skills(name)
 
-        # 根据 tool_config 推断是否启用工具
+        # Determine whether to enable tools based on tool_config
         builtin = tool_config.get("builtin", ["*"])
         mcp_config_file = tool_config.get("mcp", "")
         custom_tools = tool_config.get("custom", {})
@@ -710,7 +828,7 @@ class BasePlayground:
         else:
             enable_tools = True
 
-        # 创建工具注册表（始终注册所有工具）
+        # Create tool registry (always register all tools)
         self._setup_tools(skill_config=skill_config, tool_config=tool_config)
 
         enabled_tool_names = []
@@ -724,28 +842,28 @@ class BasePlayground:
         if skills != []:
             enabled_tool_names.extend(["use_skill"])
 
-        # 添加自定义工具到 enabled_tool_names
-        # 自定义工具的工具名称就是配置中的键名（如 "search" -> "google_search" 或 "ai_search"）
+        # Add custom tools to enabled_tool_names
+        # The tool name for custom tools is the value in the config (e.g., "search" -> "google_search" or "ai_search")
         for custom_tool_key, custom_tool_value in custom_tools.items():
             self.logger.info(f"Custom tool: {custom_tool_key} -> {custom_tool_value}")
             enabled_tool_names.append(custom_tool_value)
             continue
-            # 根据配置值推断实际的工具名称
-            # 例如: search: "google" -> 启用 google_search 和 web_fetch
-            #      search: "ai_search" -> 启用 ai_search
+            # Infer actual tool names based on config values
+            # For example: search: "google" -> enable google_search and web_fetch
+            #              search: "ai_search" -> enable ai_search
             if custom_tool_key == "search":
                 if custom_tool_value == "google":
-                    # Google 搜索模式：启用 google_search 和 web_fetch
+                    # Google search mode: enable google_search and web_fetch
                     if self.tools.get_tool("google_search") is not None:
                         enabled_tool_names.append("google_search")
                     if self.tools.get_tool("web_fetch") is not None:
                         enabled_tool_names.append("web_fetch")
                 elif custom_tool_value == "ai_search":
-                    # AI 搜索模式：启用 ai_search
+                    # AI search mode: enable ai_search
                     if self.tools.get_tool("ai_search") is not None:
                         enabled_tool_names.append("ai_search")
             else:
-                # 其他自定义工具：直接使用键名作为工具名称
+                # Other custom tools: use key name as tool name directly
                 if self.tools.get_tool(custom_tool_key) is not None:
                     enabled_tool_names.append(custom_tool_key)
 
@@ -761,36 +879,36 @@ class BasePlayground:
             finish_on_text_response=finish_on_text_response,
         )
 
-        # 获取输出配置
+        # Get output configuration
         output_config = self._get_output_config()
 
-        # 为每个 Agent 创建独立的 LLM 实例
+        # Create an independent LLM instance for each Agent
         llm = create_llm(LLMConfig(**llm_config), output_config=output_config)
         self.logger.debug(f"Created independent LLM instance for {name} agent")
 
-        # 获取提示词文件路径
+        # Get prompt file paths
         system_prompt_file = agent_config.get('system_prompt_file')
         user_prompt_file = agent_config.get('user_prompt_file')
 
         playground_base = Path(str(self.config_dir).replace("configs", "playground"))
-        # 解析 system_prompt_file
+        # Resolve system_prompt_file
         if system_prompt_file:
             prompt_path = Path(system_prompt_file)
             if not prompt_path.is_absolute():
                 system_prompt_file = str((playground_base / prompt_path).resolve())
 
-        # 解析 user_prompt_file
+        # Resolve user_prompt_file
         if user_prompt_file:
             prompt_path = Path(user_prompt_file)
             if not prompt_path.is_absolute():
                 user_prompt_file = str((playground_base / prompt_path).resolve())
 
-        # 获取提示词格式化参数（如果有）
+        # Get prompt format kwargs (if any)
         prompt_format_kwargs = agent_config.get('prompt_format_kwargs', {})
 
         skill_registry = self._resolve_skill_registry(skill_config)
 
-        # 创建 Agent
+        # Create Agent
         agent = Agent(
             llm=llm,
             session=self.session,
@@ -806,34 +924,34 @@ class BasePlayground:
             enabled_tool_names=enabled_tool_names,
         )
 
-        # 设置Agent名称（用于轨迹文件中标识不同的agent）
+        # Set Agent name (used to identify different agents in trajectory files)
         agent.set_agent_name(name)
 
-        # 注入 summary LLM，用于 auto-compact 上下文压缩
+        # Inject summary LLM for auto-compact context compression
         agent.context_manager.set_summary_llm(llm)
 
         return agent
 
     def copy_agent(self, agent, new_agent_name: str | None = None):
-        """复制 Agent 实例，创建新的上下文但共享其他配置
+        """Copy an Agent instance, creating new context but sharing other configurations.
 
-        创建一个新的 Agent 实例，该实例：
-        - 拥有独立的 LLM 实例（复制时必创建新 LLM，不共享）
-        - 共享 session, tools, skill_registry, config_dir, enable_tools 等配置
-        - 拥有独立的上下文（context_manager, current_dialog, trajectory 等）
-        - 上下文相关的状态会被重置（current_dialog=None, trajectory=None, _step_count=0 等）
+        Creates a new Agent instance that:
+        - Has an independent LLM instance (always creates a new LLM on copy, not shared)
+        - Shares session, tools, skill_registry, config_dir, enable_tools, etc.
+        - Has independent context (context_manager, current_dialog, trajectory, etc.)
+        - Context-related state is reset (current_dialog=None, trajectory=None, _step_count=0, etc.)
 
         Args:
-            agent: 要复制的 Agent 实例
-            new_agent_name: 新 Agent 的名称（可选，用于标识）
+            agent: The Agent instance to copy.
+            new_agent_name: Name for the new Agent (optional, for identification).
 
         Returns:
-            新的 Agent 实例，类型与输入 agent 相同
+            A new Agent instance with the same type as the input agent.
         """
         from evomaster.agent import AgentConfig
         from evomaster.utils import LLMConfig, create_llm
 
-        # 复制 AgentConfig，特别是 context_config 需要独立
+        # Copy AgentConfig, especially context_config needs to be independent
         if agent.config:
             new_config = agent.config.model_copy(deep=True)
         else:
@@ -842,11 +960,11 @@ class BasePlayground:
         agent_class = agent.__class__
 
         if hasattr(agent.llm, "config"):
-            # 兼容 Pydantic v2 (.model_dump()) 和 v1 (.dict())
+            # Compatible with Pydantic v2 (.model_dump()) and v1 (.dict())
             cfg_obj = agent.llm.config
             llm_config_dict = cfg_obj.model_dump() if hasattr(cfg_obj, "model_dump") else cfg_obj.dict()
         else:
-            # 降级方案：如果无法从对象获取，尝试通过 agent 名称从配置管理器重新读取
+            # Fallback: if unable to get from object, try re-reading from config manager using agent name
             source_name = getattr(agent, "name", "default")
             llm_config_dict = self._setup_agent_llm(source_name)
         output_config = agent.output_config.copy() if agent.output_config else self._get_output_config()
@@ -891,12 +1009,12 @@ class BasePlayground:
         return new_agent
 
     def setup(self) -> None:
-        """初始化所有组件
+        """Initialize all components.
 
-        具体实现包括：
-        1. 创建 Session（如果尚未创建）
-        2. 初始化 Agent(s)（内部按 agent 处理 llm/tools/skills）
-        3. 初始化 Exp(s) #TODO
+        Concrete implementation includes:
+        1. Create Session (if not already created)
+        2. Initialize Agent(s) (internally handles llm/tools/skills per agent)
+        3. Initialize Exp(s) (TODO)
         """
         self.logger.info("Setting up playground...")
 
@@ -907,17 +1025,18 @@ class BasePlayground:
         self.logger.info("Multi-agent playground setup complete")
 
     def _setup_mcp_tools(self, config_file: str):
-        """初始化 MCP 工具
+        """Initialize MCP tools.
 
-        从 MCP 配置文件（JSON 格式）读取服务器列表，初始化连接并注册工具。
+        Reads the server list from an MCP configuration file (JSON format),
+        initializes connections, and registers tools.
 
         Args:
-            config_file: MCP 配置文件路径（相对于 config_dir 或绝对路径）
+            config_file: MCP configuration file path (relative to config_dir or absolute path).
 
         Returns:
-            MCPToolManager 实例，如果配置无效则返回 None
+            MCPToolManager instance, or None if the configuration is invalid.
         """
-        # 1. 解析配置文件路径
+        # 1. Resolve the configuration file path
         config_path = Path(config_file)
         if not config_path.is_absolute():
             config_path = self.config_manager.config_dir / config_path
@@ -926,7 +1045,7 @@ class BasePlayground:
             self.logger.error(f"MCP config file not found: {config_path}")
             return None
 
-        # 2. 加载 MCP 配置
+        # 2. Load MCP configuration
         self.logger.info(f"Loading MCP config from: {config_path}")
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -958,21 +1077,21 @@ class BasePlayground:
         except Exception as e:
             self.logger.warning(f"[MCP] Failed to replace placeholder paths: {e}")
         
-        # 6. 解析服务器配置
+        # 6. Parse server configuration
         servers = self._parse_mcp_servers(mcp_servers_config)
         if not servers:
             self.logger.warning("No valid MCP servers found in config")
             return None
 
-        # 7. 初始化 MCP 管理器
+        # 7. Initialize MCP manager
         self.logger.info("Setting up MCP tools...")
         manager = MCPToolManager()
 
-        # 子类可以复写此方法来注入自定义逻辑（如 path adaptor、tool_include_only）
+        # Subclasses can override this method to inject custom logic (e.g., path adaptor, tool_include_only)
         mcp_config = getattr(self.config, 'mcp', {}) or {}
         self._configure_mcp_manager(manager, mcp_config)
 
-        # 8. 异步初始化 MCP 服务器
+        # 8. Async initialization of MCP servers
         async def init_mcp_servers():
             for server_config in servers:
                 try:
@@ -980,18 +1099,18 @@ class BasePlayground:
                 except Exception as e:
                     self.logger.error(f"Failed to add MCP server {server_config.get('name')}: {e}")
 
-        # 创建并保存一个“长期存在”的 loop，专门给 MCP 用
+        # Create and save a long-lived event loop dedicated to MCP
         if self._mcp_loop is None or self._mcp_loop.is_closed():
             self._mcp_loop = asyncio.new_event_loop()
             self._mcp_thread = self._start_loop_in_thread()
 
         manager.loop = self._mcp_loop
 
-        # ✅ 往 mcp_loop 提交协程
+        # Submit coroutine to mcp_loop
         future = asyncio.run_coroutine_threadsafe(init_mcp_servers(), self._mcp_loop)
-        future.result()  # 阻塞等待初始化完成（同步代码里只能这么等）
+        future.result()  # Block and wait for initialization to complete (only option in sync code)
 
-        # 9. 注册 MCP 工具到主工具注册表
+        # 9. Register MCP tools to the main tool registry
         manager.register_tools(self.tools)
 
         tool_count = len(manager.get_tool_names())
@@ -1001,44 +1120,44 @@ class BasePlayground:
         return manager
 
     def _configure_mcp_manager(self, manager: MCPToolManager, mcp_config: Dict[str, Any]) -> None:
-        """配置 MCP 管理器的钩子方法
+        """Hook method for configuring the MCP manager.
 
-        子类可以复写此方法来注入自定义逻辑，例如：
-        - path adaptor（路径适配器）
-        - tool_include_only（工具过滤）
-        - 其他自定义配置
+        Subclasses can override this method to inject custom logic, such as:
+        - Path adaptor
+        - tool_include_only (tool filtering)
+        - Other custom configurations
 
         Args:
-            manager: MCP 工具管理器实例
-            mcp_config: MCP 配置字典
+            manager: MCP tool manager instance.
+            mcp_config: MCP configuration dictionary.
 
-        示例:
+        Example:
             class MyPlayground(BasePlayground):
                 def _configure_mcp_manager(self, manager, mcp_config):
-                    # 注入自定义 adaptor
+                    # Inject a custom adaptor
                     manager.path_adaptor_factory = lambda: MyAdaptor()
         """
-        # 基类默认不做任何事情
-        # 子类可以复写来添加自定义逻辑
+        # Base class does nothing by default
+        # Subclasses can override to add custom logic
         pass
 
     def _parse_mcp_servers(self, mcp_config: dict) -> list[dict]:
-        """解析 MCP 服务器配置
+        """Parse MCP server configuration.
 
-        支持标准 MCP 格式和扩展格式。
+        Supports standard MCP format and extended format.
 
         Args:
-            mcp_config: MCP 配置字典
+            mcp_config: MCP configuration dictionary.
 
         Returns:
-            服务器配置列表
+            List of server configurations.
         """
         servers = []
         mcp_servers = mcp_config.get('mcpServers', {})
 
         for name, config in mcp_servers.items():
             if 'command' in config:
-                # 标准格式（stdio）
+                # Standard format (stdio)
                 servers.append({
                     'name': name,
                     'transport': 'stdio',
@@ -1047,7 +1166,7 @@ class BasePlayground:
                     'env': config.get('env', {})
                 })
             elif 'transport' in config:
-                # 扩展格式（http/sse）
+                # Extended format (http/sse)
                 transport = config['transport'].lower()
                 if transport in ['http', 'sse', 'streamable_http', 'streamable-http']:
                     servers.append({
@@ -1064,46 +1183,49 @@ class BasePlayground:
         return servers
 
     def _create_exp(self):
-        """创建 Exp 实例
+        """Create an Exp instance.
 
-        子类可以覆盖此方法使用自定义 Exp 类。
+        Subclasses can override this method to use a custom Exp class.
+
+        Returns:
+            BaseExp instance.
         """
         exp = BaseExp(self.agent, self.config)
-        # 传递 run_dir 给 Exp
+        # Pass run_dir to Exp
         if self.run_dir:
             exp.set_run_dir(self.run_dir)
         return exp
 
     def _setup_trajectory_file(self, output_file: str | Path | None = None) -> Path | None:
-        """设置轨迹文件路径
+        """Set up the trajectory file path.
 
-        确定轨迹文件路径并设置到 BaseAgent。优先级：
-        1. 如果提供了 output_file，则使用该路径
-        2. 如果设置了 run_dir，则自动保存到 trajectories/
-           - 批量任务模式：trajectories/{task_id}/trajectory.json
-           - 单任务模式：trajectories/trajectory.json
+        Determines the trajectory file path and sets it on BaseAgent. Priority:
+        1. If output_file is provided, use that path
+        2. If run_dir is set, auto-save to trajectories/
+           - Batch task mode: trajectories/{task_id}/trajectory.json
+           - Single task mode: trajectories/trajectory.json
 
         Args:
-            output_file: 结果保存文件路径（可选）
+            output_file: Result save file path (optional).
 
         Returns:
-            轨迹文件路径，如果未设置则返回 None
+            Trajectory file path, or None if not set.
         """
         trajectory_file = None
         if output_file:
             trajectory_file = Path(output_file)
         elif self.run_dir:
-            # 如果设置了 run_dir，则自动保存到 trajectories/
+            # If run_dir is set, auto-save to trajectories/
             if hasattr(self, 'task_id') and self.task_id:
-                # 批量任务模式：保存到 trajectories/{task_id}/trajectory.json
+                # Batch task mode: save to trajectories/{task_id}/trajectory.json
                 trajectory_dir = self.run_dir / "trajectories" / self.task_id
                 trajectory_dir.mkdir(parents=True, exist_ok=True)
                 trajectory_file = trajectory_dir / "trajectory.json"
             else:
-                # 单任务模式：保存到 trajectories/trajectory.json
+                # Single task mode: save to trajectories/trajectory.json
                 trajectory_file = self.run_dir / "trajectories" / "trajectory.json"
         
-        # 设置轨迹文件路径到每个agent实例（实例级别，避免多agent互相覆盖）
+        # Set trajectory file path for each agent instance (instance-level, avoids multi-agent overwriting)
         if trajectory_file:
             for agent in self.agents.values():
                 agent.set_trajectory_file_path(trajectory_file)
@@ -1112,26 +1234,27 @@ class BasePlayground:
         return trajectory_file
 
     def run(self, task_description: str, output_file: str | None = None, images: list[str] | None = None, on_step=None) -> dict:
-        """运行工作流
+        """Run the workflow.
 
         Args:
-            task_description: 任务描述
-            output_file: 结果保存文件（可选，如果设置了 run_dir 则自动保存到 trajectories/）
-            images: 图片文件路径列表（可选，用于多模态任务）
+            task_description: Task description.
+            output_file: Result save file (optional; if run_dir is set, auto-saves to trajectories/).
+            images: List of image file paths (optional, for multimodal tasks).
+            on_step: Step callback, signature (StepRecord, step_number, max_steps) -> None.
 
         Returns:
-            运行结果
+            Run result.
         """
         try:
-            # 注册当前线程（用于日志过滤）
+            # Register current thread (for log filtering)
             self.register_thread()
 
             self.setup()
 
-            # 设置轨迹文件路径
+            # Set up trajectory file path
             self._setup_trajectory_file(output_file)
 
-            # 创建并运行实验
+            # Create and run experiment
             exp = self._create_exp()
 
             self.logger.info("Running experiment...")
@@ -1143,12 +1266,12 @@ class BasePlayground:
             self.cleanup()
 
     def cleanup(self) -> None:
-        """清理资源
+        """Clean up resources.
 
-        对于 DockerSession，如果 auto_remove=False，则保留容器不关闭 session，
-        以便在后续运行中复用同一个容器。
+        For DockerSession, if auto_remove=False, the container is kept alive and the
+        session is not closed, allowing reuse in subsequent runs.
         """
-        # 清理 Openclaw bridge
+        # Clean up Openclaw bridge
         if self.openclaw_bridge is not None:
             try:
                 self.openclaw_bridge.stop()
@@ -1163,19 +1286,19 @@ class BasePlayground:
                 t = self._mcp_thread
 
                 if loop is not None and not loop.is_closed():
-                    # 1) 先在 MCP loop 里执行异步 cleanup
+                    # 1) First perform async cleanup in the MCP loop
                     fut = asyncio.run_coroutine_threadsafe(self.mcp_manager.cleanup(), loop)
                     fut.result()
 
-                    # 2) 停 loop
+                    # 2) Stop the loop
                     if loop.is_running():
                         loop.call_soon_threadsafe(loop.stop)
 
-                    # 3) 等线程退出 run_forever
+                    # 3) Wait for the thread to exit run_forever
                     if t is not None and t.is_alive():
                         t.join(timeout=5)
 
-                    # 4) 确认 loop 不跑了再 close
+                    # 4) Confirm the loop has stopped before closing
                     if not loop.is_closed():
                         loop.close()
 
@@ -1186,7 +1309,7 @@ class BasePlayground:
                 self.logger.warning(f"Error cleaning up MCP: {e}")
 
 
-        # # 清理 MCP 连接
+        # # Clean up MCP connections
         # if self.mcp_manager:
         #     try:
         #         import asyncio
@@ -1196,7 +1319,7 @@ class BasePlayground:
         #         self.logger.warning(f"Error cleaning up MCP: {e}")
 
         if self.session:
-            # 检查是否是 DockerSession 且配置了保留容器
+            # Check if this is a DockerSession configured to keep the container
             should_keep_session = False
             if isinstance(self.session, DockerSession):
                 if not self.session.config.auto_remove:
@@ -1210,60 +1333,60 @@ class BasePlayground:
                 except Exception as e:
                     self.logger.warning(f"Error closing session: {e}")
             else:
-                # 只标记关闭状态，但不实际关闭 session（容器继续运行）
+                # Only mark as closed, but don't actually close the session (container keeps running)
                 self.logger.debug("Session marked as closed but container kept running")
 
     def execute_parallel_tasks(self, tasks: List[Callable], max_workers: int = 3) -> List[Any]:
-            """通用并行任务执行器
+            """General-purpose parallel task executor
 
             Args:
-                tasks: 这里的每个元素应该是一个可调用的对象。
-                    如果是带参数的函数，请使用 functools.partial 封装。
-                    例如: [partial(exp1.run, task="A"), partial(exp2.run, task="B")]
-                max_workers: 最大并行线程数
+                tasks: Each element should be a callable object.
+                    If the function requires arguments, wrap it with functools.partial.
+                    Example: [partial(exp1.run, task="A"), partial(exp2.run, task="B")]
+                max_workers: Maximum number of parallel worker threads
 
             Returns:
-                List[Any]: 按照输入 tasks 的顺序返回结果列表。
-                        如果任务抛出异常，结果列表中对应位置将是该 Exception 对象。
+                List[Any]: A list of results in the same order as the input tasks.
+                        If a task raises an exception, the corresponding position in the results list will contain that Exception object.
             """
             self.logger.info(f"Starting parallel execution of {len(tasks)} tasks with {max_workers} workers.")
             
             results = [None] * len(tasks)
             
-            # 检查是否启用了并行资源分配
+            # Check if parallel resource allocation is enabled
             session_config = self.config.session.get("local", {})
             parallel_config = session_config.get("parallel", {})
             parallel_enabled = parallel_config.get("enabled", False)
             
-            # 检查是否启用了 split_workspace_for_exp
+            # Check if split_workspace_for_exp is enabled
             split_workspace = parallel_config.get("split_workspace_for_exp", False)
             
-            # 包装任务函数，设置并行索引和独立工作空间
+            # Wrap task functions to set parallel index and independent workspace
             def wrap_task(task_func, parallel_index):
                 def wrapped():
                     try:
-                        # 如果启用了并行资源分配，设置 session 的并行索引
+                        # If parallel resource allocation is enabled, set the session's parallel index
                         if parallel_enabled and self.session is not None:
                             from evomaster.agent.session.local import LocalSession
                             if isinstance(self.session, LocalSession):
                                 self.session.set_parallel_index(parallel_index)
-                                self.logger.debug(f"设置并行索引: {parallel_index}")
+                                self.logger.debug(f"Set parallel index: {parallel_index}")
                                 
-                                # 如果启用了 split_workspace_for_exp，为当前 exp 创建独立工作空间
+                                # If split_workspace_for_exp is enabled, create an independent workspace for the current exp
                                 if split_workspace:
                                     import os
                                     main_workspace = self.session.config.workspace_path
                                     exp_workspace = os.path.join(main_workspace, f"exp_{parallel_index}")
-                                    # 通过 env 创建 exp 工作空间（含软链接）
+                                    # Create exp workspace via env (with symlinks)
                                     self.session._env.setup_exp_workspace(exp_workspace)
-                                    # 设置线程本地的工作空间路径
+                                    # Set thread-local workspace path
                                     self.session.set_workspace_path(exp_workspace)
                                     self.logger.info(
-                                        f"Exp {parallel_index} 使用独立工作空间: {exp_workspace}"
+                                        f"Exp {parallel_index} using independent workspace: {exp_workspace}"
                                     )
                         return task_func()
                     finally:
-                        # 清理线程本地状态
+                        # Clean up thread-local state
                         if parallel_enabled and self.session is not None:
                             from evomaster.agent.session.local import LocalSession
                             if isinstance(self.session, LocalSession):
@@ -1273,20 +1396,20 @@ class BasePlayground:
                 return wrapped
             
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # 提交所有任务，建立 future 到 index 的映射，以保证返回顺序
+                # Submit all tasks, build future-to-index mapping to preserve return order
                 wrapped_tasks = [wrap_task(task, i) for i, task in enumerate(tasks)]
                 future_to_index = {executor.submit(wrapped_task): i for i, wrapped_task in enumerate(wrapped_tasks)}
 
-                # 处理完成的任务
+                # Process completed tasks
                 for future in as_completed(future_to_index):
                     index = future_to_index[future]
                     try:
-                        # 获取返回值
+                        # Get the return value
                         result = future.result()
                         results[index] = result
                     except Exception as exc:
                         self.logger.error(f"Task {index} generated an exception: {exc}")
-                        # 将异常对象作为结果返回，避免打断其他任务
+                        # Store exception object as result to avoid interrupting other tasks
                         results[index] = exc
 
             self.logger.info("Parallel execution completed.")

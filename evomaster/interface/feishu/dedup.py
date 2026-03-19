@@ -1,6 +1,6 @@
-"""消息去重
+"""Message deduplication
 
-内存 dict 实现，支持 TTL 过期和容量上限。
+In-memory dict implementation with TTL expiration and capacity limits.
 """
 
 from __future__ import annotations
@@ -11,14 +11,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# 默认参数
-_DEFAULT_TTL = 30 * 60  # 30 分钟
+# Default parameters
+_DEFAULT_TTL = 30 * 60  # 30 minutes
 _DEFAULT_MAX_SIZE = 1000
-_DEFAULT_CLEANUP_INTERVAL = 5 * 60  # 5 分钟
+_DEFAULT_CLEANUP_INTERVAL = 5 * 60  # 5 minutes
 
 
 class MessageDedup:
-    """消息去重器"""
+    """Message deduplication handler."""
 
     def __init__(
         self,
@@ -34,20 +34,20 @@ class MessageDedup:
         self._last_cleanup = time.monotonic()
 
     def try_record_message(self, message_id: str, scope: str = "default") -> bool:
-        """尝试记录消息
+        """Try to record a message.
 
         Args:
-            message_id: 飞书消息 ID
-            scope: 作用域（如 chat_id），用于隔离不同上下文的去重
+            message_id: Feishu message ID.
+            scope: Scope (e.g. chat_id), used to isolate deduplication across different contexts.
 
         Returns:
-            True 表示是新消息（已记录），False 表示重复消息
+            True if this is a new message (recorded), False if it is a duplicate.
         """
         key = f"{scope}:{message_id}"
         now = time.monotonic()
 
         with self._lock:
-            # 定期清理
+            # Periodic cleanup
             if now - self._last_cleanup > self._cleanup_interval:
                 self._cleanup(now)
 
@@ -57,19 +57,19 @@ class MessageDedup:
 
             self._store[key] = now
 
-            # 容量溢出时强制清理
+            # Force cleanup on capacity overflow
             if len(self._store) > self._max_size:
                 self._cleanup(now)
 
             return True
 
     def _cleanup(self, now: float) -> None:
-        """清理过期条目（调用方需持有 _lock）"""
+        """Clean up expired entries (caller must hold _lock)."""
         expired = [k for k, ts in self._store.items() if now - ts > self._ttl]
         for k in expired:
             del self._store[k]
 
-        # 如果仍然超限，按时间排序删除最旧的
+        # If still over capacity, delete the oldest entries sorted by time
         if len(self._store) > self._max_size:
             sorted_keys = sorted(self._store, key=self._store.get)  # type: ignore[arg-type]
             excess = len(self._store) - self._max_size

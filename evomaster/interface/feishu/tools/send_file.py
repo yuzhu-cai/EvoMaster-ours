@@ -1,6 +1,6 @@
-"""飞书文件/图片发送工具
+"""Feishu file/image sending tool
 
-Agent 调用此工具将 workspace 中的文件（图片、PDF、CSV 等）直接发送到飞书聊天。
+Agent calls this tool to send files (images, PDFs, CSVs, etc.) from the workspace directly to the Feishu chat.
 """
 
 from __future__ import annotations
@@ -45,23 +45,29 @@ class SendFileToolParams(BaseToolParams):
 
 
 class SendFileTool(BaseTool):
-    """飞书文件/图片发送工具
+    """Feishu file/image sending tool.
 
-    在 agent 运行期间将生成的文件发送到飞书聊天。
-    图片走 image 消息（有预览），其他文件走 file 消息（可下载）。
-    由 dispatcher 注入 feishu client 和 chat_id。
+    Sends generated files to the Feishu chat during agent execution.
+    Images use image messages (with preview), other files use file messages (downloadable).
+    The feishu client and chat_id are injected by the dispatcher.
     """
 
     name: ClassVar[str] = "send_file"
     params_class: ClassVar[type[BaseToolParams]] = SendFileToolParams
 
     def __init__(self, client, chat_id: str):
+        """Initialize the file sending tool.
+
+        Args:
+            client: Feishu Client instance.
+            chat_id: Target Feishu chat ID.
+        """
         super().__init__()
         self._client = client
         self._chat_id = chat_id
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """发送文件到飞书聊天"""
+        """Send a file to the Feishu chat."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -71,7 +77,7 @@ class SendFileTool(BaseTool):
         file_path = params.file_path.strip()
         caption = params.caption
 
-        # 验证文件存在
+        # Validate file exists
         p = Path(file_path)
         if not p.exists():
             return f"File not found: {file_path}", {"error": "file_not_found"}
@@ -88,7 +94,7 @@ class SendFileTool(BaseTool):
     def _send_as_image(
         self, p: Path, file_path: str, caption: str | None
     ) -> tuple[str, dict[str, Any]]:
-        """图片走 image 消息（有内联预览）"""
+        """Send as an image message (with inline preview)."""
         from ..messaging.sender import upload_image, send_image_message, send_text_message
 
         self.logger.info("Uploading image to Feishu: %s", file_path)
@@ -120,7 +126,7 @@ class SendFileTool(BaseTool):
     def _send_as_file(
         self, p: Path, file_path: str, caption: str | None
     ) -> tuple[str, dict[str, Any]]:
-        """非图片走 file 消息（可下载附件）"""
+        """Send as a file message (downloadable attachment) for non-image files."""
         from ..messaging.sender import upload_file, send_file_message, send_text_message
 
         self.logger.info("Uploading file to Feishu: %s", file_path)

@@ -105,7 +105,7 @@ playground/minimal_multi_agent/
 │   ├── planning_system_prompt.txt
 │   ├── planning_user_prompt.txt
 │   ├── coding_system_prompt.txt
-│   └── coding_user_prompt.txt           # Working directory
+│   └── coding_user_prompt.txt
 ```
 
 ## Customization

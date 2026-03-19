@@ -1,41 +1,30 @@
 # Skills Module
 
-The Skills module provides the skill system for EvoMaster, enabling knowledge and operator capabilities.
+The Skills module provides the skill system for EvoMaster, enabling reusable capabilities that can be loaded on demand.
 
 ## Overview
 
 ```
 evomaster/skills/
-├── base.py           # BaseSkill, SkillRegistry
-├── knowledge/        # Knowledge skills
-│   └── {skill_name}/
-│       ├── SKILL.md     # Skill definition
-│       └── references/  # Reference documents
-└── rag/              # RAG operator skill
-    ├── SKILL.md
-    ├── scripts/
-    │   ├── database.py
-    │   ├── encode.py
-    │   └── search.py
-    └── references/
+├── base.py           # BaseSkill, Skill, SkillRegistry
+└── {skill_name}/
+    ├── SKILL.md         # Skill definition (frontmatter + body)
+    ├── scripts/         # Optional executable scripts
+    │   ├── main.py
+    │   └── helper.sh
+    └── references/      # Optional reference documents
+        └── api.md
 ```
 
-## Skill Types
+## Unified Skill Model
 
-EvoMaster supports two types of skills:
+In v0.0.2, the previous `KnowledgeSkill` and `OperatorSkill` subclasses have been removed. All skills are now represented by a single unified `Skill` class that supports all three levels of information:
 
-### Knowledge Skills
-
-Knowledge skills contain only information, no executable scripts:
 - **Level 1 (meta_info)**: ~100 tokens, always in context
 - **Level 2 (full_info)**: 500-2000 tokens, loaded on demand
+- **Level 3 (scripts)**: Optional executable code, run via tool call
 
-### Operator Skills
-
-Operator skills include executable scripts:
-- **Level 1 (meta_info)**: ~100 tokens, always in context
-- **Level 2 (full_info)**: 500-2000 tokens, loaded on demand
-- **Level 3 (scripts)**: Executable code, run via tool call
+Whether a skill has scripts depends on whether a `scripts/` directory exists in the skill directory, not on a type field.
 
 ## SkillMetaInfo
 
@@ -50,8 +39,9 @@ class SkillMetaInfo(BaseModel):
     """
     name: str = Field(description="Skill name")
     description: str = Field(description="Skill description with usage scenarios")
-    skill_type: str = Field(description="Skill type: knowledge or operator")
     license: str | None = Field(default=None, description="License info")
+    type: str | None = Field(default=None, description="Skill type, e.g. 'openclaw' for Openclaw plugin skills")
+    tool_name: str | None = Field(default=None, description="Openclaw tool name, e.g. 'feishu_doc'")
 ```
 
 ## BaseSkill
@@ -65,10 +55,8 @@ class BaseSkill(ABC):
     Skills are EvoMaster components containing:
     - Level 1 (meta_info): Skill metadata (~100 tokens), always in context
     - Level 2 (full_info): Complete info (500-2000 tokens), loaded on demand
-    - Level 3 (scripts): Executable code (Operator type only)
+    - Level 3 (scripts): Optional executable scripts
     """
-
-    skill_type: ClassVar[str] = "base"
 
     def __init__(self, skill_path: Path):
         """Initialize Skill
@@ -80,7 +68,7 @@ class BaseSkill(ABC):
     def get_full_info(self) -> str:
         """Get complete info (Level 2)
 
-        Extracted from SKILL.md body, loaded on demand.
+        If job_submit.md exists, returns its content; otherwise extracts from SKILL.md body.
 
         Returns:
             Complete skill info text
@@ -104,41 +92,19 @@ class BaseSkill(ABC):
         """
 ```
 
-## KnowledgeSkill
+## Skill
 
-Knowledge type skill implementation.
-
-```python
-class KnowledgeSkill(BaseSkill):
-    """Knowledge type Skill
-
-    Contains only knowledge info, no executable scripts.
-    - Level 1: meta_info (always in context)
-    - Level 2: full_info (loaded on demand)
-    """
-
-    skill_type: ClassVar[str] = "knowledge"
-
-    def to_context_string(self) -> str:
-        """Returns meta_info description for context"""
-        return f"[Knowledge: {self.meta_info.name}] {self.meta_info.description}"
-```
-
-## OperatorSkill
-
-Operator type skill implementation.
+The unified concrete implementation of `BaseSkill`. Replaces the previous `KnowledgeSkill` and `OperatorSkill` classes.
 
 ```python
-class OperatorSkill(BaseSkill):
-    """Operator type Skill
+class Skill(BaseSkill):
+    """Skill concrete implementation
 
-    Contains executable operation scripts.
+    Contains optional executable scripts:
     - Level 1: meta_info (always in context)
     - Level 2: full_info (loaded on demand)
-    - Level 3: scripts (executable scripts)
+    - Level 3: scripts (optional executable scripts)
     """
-
-    skill_type: ClassVar[str] = "operator"
 
     def __init__(self, skill_path: Path):
         super().__init__(skill_path)
@@ -164,8 +130,8 @@ class OperatorSkill(BaseSkill):
 
     def to_context_string(self) -> str:
         """Returns meta_info with available scripts list"""
-        scripts_info = ", ".join([s.name for s in self.available_scripts])
-        return f"[Operator: {self.meta_info.name}] {self.meta_info.description} (Scripts: {scripts_info})"
+        scripts_info = ", ".join([s.name for s in self.available_scripts]) if self.available_scripts else "No scripts"
+        return f"[Skill: {self.meta_info.name}] {self.meta_info.description} (Scripts: {scripts_info})"
 ```
 
 ## SkillRegistry
@@ -178,18 +144,31 @@ class SkillRegistry:
 
     Manages all available Skills, supporting:
     - Auto-discovery and loading
+    - Filtering by name during loading
     - On-demand retrieval
+    - Subset creation for per-agent skill views
     - Providing meta_info for Agent selection
     """
 
-    def __init__(self, skills_root: Path):
+    def __init__(self, skills_root: Path, skills: list[str] | None = None):
         """Initialize SkillRegistry
 
         Args:
-            skills_root: Skills root directory (contains knowledge/ and operator/ subdirs)
+            skills_root: Skills root directory
+            skills: Optional list of skill directory names to load; None loads all
         """
 
-    def get_skill(self, name: str) -> BaseSkill | None:
+    def load_from_directory(self, directory: Path, skills: list[str] | None = None) -> None:
+        """Load skills from an additional directory
+
+        Can be called multiple times to load skills from multiple directories.
+
+        Args:
+            directory: Additional skills directory
+            skills: Optional list of skill directory names to load; None loads all
+        """
+
+    def get_skill(self, name: str) -> Skill | None:
         """Get skill by name
 
         Args:
@@ -199,14 +178,8 @@ class SkillRegistry:
             Skill object, or None if not exists
         """
 
-    def get_all_skills(self) -> list[BaseSkill]:
+    def get_all_skills(self) -> list[Skill]:
         """Get all skills"""
-
-    def get_knowledge_skills(self) -> list[KnowledgeSkill]:
-        """Get all Knowledge skills"""
-
-    def get_operator_skills(self) -> list[OperatorSkill]:
-        """Get all Operator skills"""
 
     def get_meta_info_context(self) -> str:
         """Get all skills' meta_info for Agent context
@@ -215,7 +188,19 @@ class SkillRegistry:
             String containing all skills' meta_info
         """
 
-    def search_skills(self, query: str) -> list[BaseSkill]:
+    def create_subset(self, skill_names: list[str]) -> SkillRegistry:
+        """Create a subset SkillRegistry containing only specified skills
+
+        Used to create independent, filtered skill views for each Agent.
+
+        Args:
+            skill_names: List of skill names to keep
+
+        Returns:
+            New SkillRegistry instance with only the specified skills
+        """
+
+    def search_skills(self, query: str) -> list[Skill]:
         """Search skills by keyword
 
         Args:
@@ -234,10 +219,11 @@ class SkillRegistry:
 ---
 name: skill-name
 description: Brief description with usage scenarios and trigger conditions
-skill_type: knowledge  # or operator
 license: MIT
 ---
 ```
+
+Note: The `skill_type` field has been removed in v0.0.2. Whether a skill has scripts is determined by the presence of a `scripts/` directory.
 
 ### Body (Markdown)
 
@@ -268,53 +254,67 @@ Technical details, parameters, examples, etc.
 
 ## Directory Structure
 
-### Knowledge Skill
-
-```
-evomaster/skills/knowledge/
-└── my_knowledge_skill/
-    ├── SKILL.md           # Skill definition
-    └── references/        # Optional reference docs
-        ├── guide.md
-        └── examples.md
-```
-
-### Operator Skill
+All skills follow the same directory structure:
 
 ```
 evomaster/skills/
-└── my_operator_skill/
+└── my_skill/
     ├── SKILL.md           # Skill definition
-    ├── scripts/           # Executable scripts
+    ├── scripts/           # Optional executable scripts
     │   ├── main.py
     │   └── helper.sh
     └── references/        # Optional reference docs
         └── api.md
 ```
 
+If the `scripts/` directory exists and contains files, the skill has executable scripts (Level 3). Otherwise, it only provides knowledge (Level 1 and Level 2).
+
 ## Usage Examples
 
-### Loading Skills in Playground
+### Loading Skills in Playground (v0.0.2)
+
+Skills are now configured per-agent in the config file:
 
 ```yaml
 # config.yaml
-skills:
-  enabled: true
-  skills_root: "evomaster/skills"
+agents:
+  search_agent:
+    llm: "openai"
+    skills:            # Load all skills for this agent
+      - "*"
+  summarize_agent:
+    llm: "openai"
+    skills:            # Load specific skills only
+      - "rag"
+      - "pdf"
+  plan_agent:
+    llm: "openai"
+    # No skills key -> no skills loaded for this agent
 ```
 
+### Programmatic Usage
+
 ```python
-from evomaster.skills import SkillRegistry
+from evomaster.skills import SkillRegistry, Skill
 from pathlib import Path
 
-# Load skills
+# Load all skills from root directory
 registry = SkillRegistry(Path("evomaster/skills"))
+
+# Load with name filtering
+registry = SkillRegistry(Path("evomaster/skills"), skills=["rag", "pdf"])
+
+# Load skills from additional directories
+registry.load_from_directory(Path("extra_skills"))
 
 # Get all skills
 all_skills = registry.get_all_skills()
 
 # Get meta_info for Agent context
 context = registry.get_meta_info_context()
+
+# Create a subset for a specific agent
+subset = registry.create_subset(["rag", "pdf"])
 
 # Search skills
 results = registry.search_skills("rag")
@@ -331,7 +331,7 @@ Agent can use skills through the `use_skill` tool:
 # Get reference doc
 {"action": "get_reference", "skill_name": "rag", "reference_name": "api.md"}
 
-# Run script (Operator only)
+# Run script
 {"action": "run_script", "skill_name": "rag", "script_name": "search.py", "script_args": "--query 'search term'"}
 ```
 
@@ -339,7 +339,7 @@ Agent can use skills through the `use_skill` tool:
 
 1. Create skill directory:
 ```bash
-mkdir -p evomaster/skills/knowledge/my_skill
+mkdir -p evomaster/skills/my_skill
 ```
 
 2. Create SKILL.md:
@@ -347,7 +347,7 @@ mkdir -p evomaster/skills/knowledge/my_skill
 ---
 name: my-skill
 description: A skill that helps with XYZ tasks. Use when you need to do ABC.
-skill_type: knowledge
+license: MIT
 ---
 
 # My Skill
@@ -366,10 +366,18 @@ This skill provides knowledge about XYZ...
 Detailed information here...
 ```
 
-3. Add references (optional):
+3. Add scripts (optional):
 ```bash
-mkdir -p evomaster/skills/knowledge/my_skill/references
-echo "# Reference Doc" > evomaster/skills/knowledge/my_skill/references/guide.md
+mkdir -p evomaster/skills/my_skill/scripts
+cat > evomaster/skills/my_skill/scripts/run.py << 'EOF'
+# Your executable script
+EOF
+```
+
+4. Add references (optional):
+```bash
+mkdir -p evomaster/skills/my_skill/references
+echo "# Reference Doc" > evomaster/skills/my_skill/references/guide.md
 ```
 
 ## Related Documentation

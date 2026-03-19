@@ -1,12 +1,12 @@
-# Mat Master Playground 配置文件
-# 材料科学向 agent，支持 LiteLLM 与 Azure，接入 Mat MCP（Structure Generator、Science Navigator、Document Parser、DPA）
-# 鉴权从 .env 读取：LITELLM_PROXY_*、AZURE_*、DEEPSEEK_API_KEY 等，配置中使用 ${变量名} 引用
+# Mat Master Playground Configuration File
+# Materials science agent supporting LiteLLM and Azure, integrated with Mat MCP (Structure Generator, Science Navigator, Document Parser, DPA)
+# Authentication is read from .env: LITELLM_PROXY_*, AZURE_*, DEEPSEEK_API_KEY, etc. Use ${VARIABLE_NAME} to reference in config
 
 # ============================================
-# LLM 配置（必须支持 litellm 与 azure 格式）
+# LLM Configuration (must support litellm and azure formats)
 # ============================================
-# 均使用 provider: "openai"（OpenAI 兼容接口），通过 base_url + model 区分
-# .env 需提供：LITELLM_PROXY_API_BASE, LITELLM_PROXY_API_KEY, AZURE_API_BASE, AZURE_API_KEY
+# All use provider: "openai" (OpenAI-compatible interface), differentiated by base_url + model
+# .env must provide: LITELLM_PROXY_API_BASE, LITELLM_PROXY_API_KEY, AZURE_API_BASE, AZURE_API_KEY
 llm:
   litellm:
     provider: "openai"
@@ -30,7 +30,7 @@ llm:
     max_retries: 3
     retry_delay: 1.0
 
-  # 可选：DeepSeek，.env 提供 DEEPSEEK_API_KEY
+  # Optional: DeepSeek, provide DEEPSEEK_API_KEY in .env
   deepseek:
     provider: "deepseek"
     model: "deepseek-chat"
@@ -45,7 +45,7 @@ llm:
   default: "litellm"
 
 # ============================================
-# 多智能体配置（单 agent）
+# Multi-Agent Configuration (single agent)
 # ============================================
 agents:
   general:
@@ -63,11 +63,11 @@ agents:
     user_prompt_file: "prompts/user_prompt.txt"
 
 # ============================================
-# MCP 配置（仅 mat_master 专用）
+# MCP Configuration (mat_master only)
 # ============================================
-# path_adaptor: calculation 表示对 calculation 类 MCP 做路径解析与 executor/storage 注入（对齐 _tmp/MatMaster）
-# calculation_servers: 仅对这些服务器启用 path adaptor
-# calculation_executors: 每服务器可配置 executor（镜像/机型）与 sync_tools；同步任务传 executor=null，否则传 Bohrium executor（鉴权从 .env BOHRIUM_* 注入）
+# path_adaptor: calculation means performing path resolution and executor/storage injection for calculation-type MCPs (aligned with _tmp/MatMaster)
+# calculation_servers: only enable path adaptor for these servers
+# calculation_executors: each server can configure executor (image/machine_type) and sync_tools; sync tasks use executor=null, otherwise use Bohrium executor (auth injected from .env BOHRIUM_*)
 mcp:
   config_file: "mcp_config.json"
   enabled: true
@@ -124,14 +124,14 @@ mcp:
       sync_tools: []
 
 # ============================================
-# Skills（约束 Mat 工具调用方式，注入 meta 到上下文）
+# Skills (constrain Mat tool invocation and inject meta into context)
 # ============================================
 skills:
   enabled: true
   skills_root: evomaster/skills
 
 # ============================================
-# Session 配置
+# Session Configuration
 # ============================================
 session:
   type: "local"
@@ -158,7 +158,7 @@ session:
     timeout: 300
 
 # ============================================
-# LLM 输出与日志
+# LLM Output and Logging
 # ============================================
 llm_output:
   show_in_console: true

@@ -30,7 +30,7 @@ Browse-Master Playground 实现两个Agent的工作流
 
 ### 1. 配置
 
-编辑 `configs\browse_master\config.yaml`：
+编辑 `configs/browse_master/config.yaml`：
 
 ```yaml
 # ============================================
@@ -111,12 +111,10 @@ Browse-Master 需要两个 MCP 服务：mcp-sandbox（代码执行）和 browse-
 
 ```bash
 cd playground/browse_master/mcp_sandbox
-Usage:
-  ./start_all.sh              # Start all services (default ports)
-  ./start_all.sh stop         # Stop all services
-  ./start_all.sh status       # Check service status
-  ./start_all.sh restart      # Restart all services
-
+./start_all.sh              # 启动所有服务
+./start_all.sh stop         # 停止所有服务
+./start_all.sh status       # 检查服务状态
+./start_all.sh restart      # 重启所有服务
 ```
 
 默认端口：

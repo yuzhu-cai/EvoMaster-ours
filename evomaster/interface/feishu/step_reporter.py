@@ -1,6 +1,6 @@
-"""飞书卡片实时进度报告
+"""Feishu card real-time progress reporter
 
-卡片仅显示执行进度和文档链接，完整轨迹写入飞书文档。
+The card only displays execution progress and a document link; the full trajectory is written to a Feishu document.
 """
 
 from __future__ import annotations
@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class FeishuStepReporter:
-    """维护一张飞书卡片显示执行进度，完整轨迹写入飞书文档。
+    """Maintain a Feishu card showing execution progress; write the full trajectory to a Feishu document.
 
     Usage::
 
         reporter = FeishuStepReporter(client, chat_id, reply_to, document_writer=writer)
-        reporter.send_initial_card("计算 3+5")
+        reporter.send_initial_card("Calculate 3+5")
         playground.run(task_description=text, on_step=reporter.on_step)
         reporter.finalize("completed", "3+5=8")
     """
@@ -45,13 +45,13 @@ class FeishuStepReporter:
         self._start_time: float = 0.0
         self._step_count: int = 0
 
-        # 飞书文档（完整轨迹）
+        # Feishu document (full trajectory)
         self._doc_writer = document_writer
         self._sender_open_id = sender_open_id
         self._document_id: str | None = None
         self._document_url: str | None = None
 
-        # TODO 进度清单
+        # TODO progress checklist
         self._todo_items: list[dict] = []  # [{"label": "...", "done": False}, ...]
 
     # ------------------------------------------------------------------
@@ -60,31 +60,31 @@ class FeishuStepReporter:
 
     @property
     def card_message_id(self) -> str | None:
-        """当前卡片的 message_id（finalize 后可用于外部存储）。"""
+        """The current card's message_id (available after finalize for external storage)."""
         return self._card_message_id
 
     def set_todo_items(self, items: list[str]) -> None:
-        """设置 TODO 列表项目（用于 agent_builder 等支持进度追踪的场景）。"""
+        """Set TODO checklist items (for progress tracking in scenarios like agent_builder)."""
         self._todo_items = [{"label": item, "done": False} for item in items]
 
     def has_incomplete_todos(self) -> bool:
-        """是否有未完成的 TODO 项。"""
+        """Check if there are incomplete TODO items."""
         if not self._todo_items:
             return False
         return any(not item["done"] for item in self._todo_items)
 
     def get_incomplete_todo_labels(self) -> list[str]:
-        """获取未完成的 TODO 标签列表。"""
+        """Get the list of incomplete TODO labels."""
         return [item["label"] for item in self._todo_items if not item["done"]]
 
     def send_initial_card(self, task_text: str) -> bool:
-        """发送初始 "正在处理" 卡片，捕获 message_id 用于后续 PATCH。"""
+        """Send the initial 'processing' card and capture the message_id for subsequent PATCHes."""
         from .messaging.sender import send_card_message
 
         self._task_text = task_text[:200]
         self._start_time = time.time()
 
-        # 创建飞书文档（完整轨迹）
+        # Create Feishu document (full trajectory)
         self._create_trajectory_document(task_text)
 
         content = self._build_progress_content(0, 0, running=True)
@@ -103,16 +103,16 @@ class FeishuStepReporter:
         return False
 
     def on_step(self, step_record: Any, step_number: int, max_steps: int) -> None:
-        """每步回调：更新卡片进度 + 向文档写入完整内容。"""
+        """Per-step callback: update card progress and write full content to the document."""
         if self._card_message_id is None:
             return
 
         self._step_count = step_number
 
-        # 检查 TODO 完成标记（通过 think 工具的 PROGRESS 标记）
+        # Check TODO completion markers (via the think tool's PROGRESS marker)
         self._check_todo_progress(step_record)
 
-        # 卡片：仅更新进度
+        # Card: update progress only
         content = self._build_progress_content(step_number, max_steps, running=True)
         self._patch(
             title=f"🤖 Agent 执行中... (Step {step_number}/{max_steps})",
@@ -120,7 +120,7 @@ class FeishuStepReporter:
             template="wathet",
         )
 
-        # 文档：完整内容（无截断）
+        # Document: full content (no truncation)
         if self._doc_writer and self._document_id:
             try:
                 self._append_step_to_document(step_record, step_number, max_steps)
@@ -130,12 +130,12 @@ class FeishuStepReporter:
     def finalize(
         self, status: str, final_answer: str = "", actions: list[dict] | None = None
     ) -> None:
-        """最终更新卡片（任务完成/失败）。
+        """Final card update (task completed/failed).
 
         Args:
-            status: 完成状态 ("completed", "failed" 等)
-            final_answer: 最终回答文本
-            actions: 可选按钮列表，格式同 build_card_with_actions
+            status: Completion status ("completed", "failed", etc.).
+            final_answer: The final answer text.
+            actions: Optional button list, same format as build_card_with_actions.
         """
         if self._card_message_id is None:
             return
@@ -157,7 +157,7 @@ class FeishuStepReporter:
 
         if final_answer:
             if len(final_answer) > _CARD_ANSWER_PREVIEW:
-                # 卡片内只放预览，完整内容另发
+                # Only show a preview in the card; send full content separately
                 preview = self._sanitize_for_card(
                     final_answer[:_CARD_ANSWER_PREVIEW]
                 )
@@ -184,17 +184,17 @@ class FeishuStepReporter:
         else:
             self._patch(title=title, content=content, template=template)
 
-        # 长回答：额外发一条独立的完整卡片消息
+        # Long answers: send an additional standalone full card message
         if send_full_answer and final_answer:
             self._send_full_answer(final_answer, template)
 
-        # 文档：追加总结
+        # Document: append summary
         self._finalize_document(status, elapsed)
 
     def finalize_as_question(
         self, question_text: str, actions: list[dict] | None = None
     ) -> None:
-        """更新卡片为"等待用户回答"状态。"""
+        """Update the card to a 'waiting for user answer' state."""
         if self._card_message_id is None:
             return
 
@@ -222,7 +222,7 @@ class FeishuStepReporter:
     # ------------------------------------------------------------------
 
     def _send_full_answer(self, answer: str, template: str) -> None:
-        """发送独立的完整回答卡片（当回答超过预览长度时）。"""
+        """Send an independent full-answer card (when the answer exceeds preview length)."""
         from .messaging.sender import send_card_message
 
         full_content = self._sanitize_for_card(answer[:3000])
@@ -245,23 +245,23 @@ class FeishuStepReporter:
 
     @staticmethod
     def _sanitize_for_card(text: str) -> str:
-        """清理 Markdown 格式，避免与飞书卡片结构冲突。
+        """Sanitize Markdown formatting to avoid conflicts with Feishu card structure.
 
-        - 移除 Markdown 标题标记（## → 纯文本）
-        - 移除水平线（---）
-        - 移除表格（| col | col |）
+        - Remove Markdown heading markers (## -> plain text)
+        - Remove horizontal rules (---)
+        - Remove tables (| col | col |)
         """
         lines = text.splitlines()
         cleaned: list[str] = []
         for line in lines:
             stripped = line.strip()
-            # 移除水平线
+            # Remove horizontal rules
             if re.fullmatch(r'-{3,}|_{3,}|\*{3,}', stripped):
                 continue
-            # 移除标题标记，保留文本
+            # Remove heading markers, keep the text
             if stripped.startswith('#'):
                 line = re.sub(r'^#+\s*', '', stripped)
-            # 移除表格分隔行 (|---|---|)
+            # Remove table separator rows (|---|---|)
             if re.fullmatch(r'\|[\s\-:|]+\|', stripped):
                 continue
             cleaned.append(line)
@@ -270,13 +270,13 @@ class FeishuStepReporter:
     def _build_progress_content(
         self, current_step: int, max_steps: int, running: bool
     ) -> str:
-        """构建卡片内容：任务信息 + TODO 清单 + 进度 + 文档链接。"""
+        """Build card content: task info + TODO checklist + progress + document link."""
         parts = [f"**任务:** {self._task_text}"]
 
         if self._document_url:
             parts.append(f"[📄 查看完整轨迹]({self._document_url})")
 
-        # TODO 清单
+        # TODO checklist
         todo_content = self._build_todo_content()
         if todo_content:
             parts.append("---")
@@ -294,7 +294,7 @@ class FeishuStepReporter:
         return "\n\n".join(parts)
 
     def _patch(self, title: str, content: str, template: str) -> None:
-        """执行 PATCH 调用。"""
+        """Execute a PATCH call to update the card."""
         from .messaging.sender import patch_card_message
 
         try:
@@ -311,7 +311,7 @@ class FeishuStepReporter:
     def _patch_with_actions(
         self, title: str, content: str, template: str, actions: list[dict]
     ) -> None:
-        """执行 PATCH 调用（带按钮）。"""
+        """Execute a PATCH call with action buttons."""
         from .messaging.sender import build_card_with_actions, patch_card_message
 
         try:
@@ -334,7 +334,7 @@ class FeishuStepReporter:
     # ------------------------------------------------------------------
 
     def _build_todo_content(self) -> str:
-        """构建 TODO 清单的 markdown 内容。"""
+        """Build markdown content for the TODO checklist."""
         if not self._todo_items:
             return ""
         lines = ["**构建进度:**"]
@@ -346,7 +346,7 @@ class FeishuStepReporter:
         return "\n".join(lines)
 
     def _check_todo_progress(self, step_record: Any) -> None:
-        """检测 builder 是否通过 think 工具上报了 PROGRESS 标记。"""
+        """Detect whether the builder reported PROGRESS markers via the think tool."""
         if not self._todo_items:
             return
 
@@ -375,7 +375,7 @@ class FeishuStepReporter:
                     self._fuzzy_mark_done(label)
 
     def _fuzzy_mark_done(self, completed_label: str) -> None:
-        """模糊匹配并标记完成的 TODO 项。"""
+        """Fuzzy match and mark a TODO item as done."""
         completed_lower = completed_label.lower()
         for item in self._todo_items:
             if not item["done"]:
@@ -392,7 +392,7 @@ class FeishuStepReporter:
     # ------------------------------------------------------------------
 
     def _create_trajectory_document(self, task_text: str) -> None:
-        """创建飞书文档用于存放完整轨迹。失败时静默降级。"""
+        """Create a Feishu document for storing the full trajectory. Silently degrades on failure."""
         if not self._doc_writer:
             return
 
@@ -407,11 +407,11 @@ class FeishuStepReporter:
             self._doc_writer.set_public_readable(doc_id)
             self._document_url = self._doc_writer.get_document_url(doc_id)
 
-            # 转移文档所有权给发送消息的用户
+            # Transfer document ownership to the message sender
             if self._sender_open_id:
                 self._doc_writer.transfer_ownership(doc_id, self._sender_open_id)
 
-            # 写入文档标题和任务描述
+            # Write document title and task description
             self._doc_writer.append_heading(doc_id, f"Task: {task_text[:500]}", level=1)
             self._doc_writer.append_text(
                 doc_id,
@@ -424,7 +424,7 @@ class FeishuStepReporter:
     def _append_step_to_document(
         self, step_record: Any, step_num: int, max_steps: int
     ) -> None:
-        """向飞书文档追加完整步骤内容（无截断）。"""
+        """Append full step content to the Feishu document (no truncation)."""
         from .messaging.document import (
             _build_code_block,
             _build_divider_block,
@@ -448,7 +448,7 @@ class FeishuStepReporter:
         content = getattr(assistant_msg, "content", "") or ""
         tool_calls = getattr(assistant_msg, "tool_calls", None) or []
         if content.strip():
-            # 有 tool_calls 时，content 是 thinking；否则是最终文本回答
+            # When tool_calls exist, content is thinking; otherwise it's the final text answer
             if tool_calls:
                 blocks.append(_build_text_block("Thinking:", bold=True))
             else:
@@ -480,11 +480,11 @@ class FeishuStepReporter:
 
         blocks.append(_build_divider_block())
 
-        # 批量追加（单次 API 调用）
+        # Batch append (single API call)
         self._doc_writer.append_blocks(self._document_id, blocks)
 
     def _finalize_document(self, status: str, elapsed: float) -> None:
-        """向文档追加总结。"""
+        """Append a summary to the document."""
         if not self._doc_writer or not self._document_id:
             return
 

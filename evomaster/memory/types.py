@@ -1,4 +1,4 @@
-"""记忆系统数据类型定义"""
+"""Memory system data type definitions."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ MemoryCategory = Literal["preference", "fact", "decision", "entity", "other"]
 
 @dataclass
 class MemoryEntry:
-    """一条记忆记录"""
+    """A single memory record."""
 
     id: str
     user_id: str
@@ -22,9 +22,9 @@ class MemoryEntry:
     created_at: float = 0.0
     updated_at: float = 0.0
     access_count: int = 0
-    score: float = 0.0  # 搜索时的匹配分数（不持久化）
+    score: float = 0.0  # Match score during search (not persisted)
 
-    # 类别显示名（中文）
+    # Category display names (Chinese)
     _CATEGORY_LABELS: dict[str, str] = field(
         default_factory=lambda: {
             "preference": "偏好",
@@ -39,4 +39,5 @@ class MemoryEntry:
 
     @property
     def category_label(self) -> str:
+        """Get the display label for the memory category."""
         return self._CATEGORY_LABELS.get(self.category, self.category)

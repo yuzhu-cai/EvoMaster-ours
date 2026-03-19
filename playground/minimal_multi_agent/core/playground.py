@@ -1,14 +1,14 @@
-"""多智能体 Playground 实现
+"""Multi-Agent Playground Implementation
 
-展示如何使用多个Agent协作完成任务。
-包含Planning Agent和Coding Agent的工作流。
+Demonstrates how to use multiple Agents collaborating on tasks.
+Contains the workflow for Planning Agent and Coding Agent.
 """
 
 import logging
 import sys
 from pathlib import Path
 
-# 确保可以导入evomaster模块
+# Ensure evomaster module can be imported
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -24,39 +24,40 @@ from .exp import MultiAgentExp
 
 @register_playground("minimal_multi_agent")
 class MultiAgentPlayground(BasePlayground):
-    """多智能体 Playground
+    """Multi-Agent Playground
 
-    实现Planning Agent和Coding Agent的协作工作流：
-    1. Planning Agent分析任务并制定计划
-    2. Coding Agent根据计划执行代码任务
+    Implements the collaborative workflow of Planning Agent and Coding Agent:
+    1. Planning Agent analyzes the task and formulates a plan
+    2. Coding Agent executes code tasks based on the plan
 
-    使用方式：
-        # 通过统一入口
-        python run.py --agent minimal_multi_agent --task "任务描述"
+    Usage:
+        # Via the unified entry point
+        python run.py --agent minimal_multi_agent --task "task description"
 
-        # 或使用独立入口
+        # Or via the standalone entry point
         python playground/minimal_multi_agent/main.py
     """
 
     def __init__(self, config_dir: Path = None, config_path: Path = None):
-        """初始化多智能体 Playground
+        """Initialize Multi-Agent Playground.
 
         Args:
-            config_dir: 配置目录路径，默认为 configs/minimal_multi_agent/
-            config_path: 配置文件完整路径（如果提供，会覆盖 config_dir）
+            config_dir: Configuration directory path, defaults to configs/minimal_multi_agent/
+            config_path: Full path to config file (overrides config_dir if provided)
         """
         if config_path is None and config_dir is None:
-            # 默认配置目录
+            # Default configuration directory
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "agent" / "minimal_multi_agent"
 
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.agents.declare("planning_agent", "coding_agent")
         
-        # 初始化mcp_manager（BasePlayground.cleanup需要）
+        # Initialize mcp_manager (required by BasePlayground.cleanup)
         self.mcp_manager = None
 
     def setup(self) -> None:
+        """Initialize all components."""
         self.logger.info("Setting up minimal multi-agent playground...")
 
         self._setup_session()
@@ -66,44 +67,44 @@ class MultiAgentPlayground(BasePlayground):
 
 
     def _create_exp(self):
-        """创建多智能体实验实例
+        """Create a multi-agent experiment instance.
 
-        覆盖基类方法，创建 MultiAgentExp 实例。
+        Overrides the base class method to create a MultiAgentExp instance.
 
         Returns:
-            MultiAgentExp 实例
+            MultiAgentExp instance
         """
         exp = MultiAgentExp(
             planning_agent=self.agents.planning_agent,
             coding_agent=self.agents.coding_agent,
             config=self.config
         )
-        # 传递 run_dir 给 Exp
+        # Pass run_dir to Exp
         if self.run_dir:
             exp.set_run_dir(self.run_dir)
         return exp
 
     def run(self, task_description: str, output_file: str | None = None) -> dict:
-        """运行工作流（覆盖基类方法）
+        """Run the workflow (overrides base class method).
 
         Args:
-            task_description: 任务描述
-            output_file: 结果保存文件（可选，如果设置了 run_dir 则自动保存到 trajectories/）
+            task_description: Task description
+            output_file: Result save file (optional; automatically saves to trajectories/ if run_dir is set)
 
         Returns:
-            运行结果
+            Run result
         """
         try:
             self.setup()
 
-            # 设置轨迹文件路径
+            # Set trajectory file path
             self._setup_trajectory_file(output_file)
 
-            # 创建并运行实验
+            # Create and run experiment
             exp = self._create_exp()
 
             self.logger.info("Running experiment...")
-            # 如果有 task_id，传递给 exp.run()
+            # If task_id exists, pass to exp.run()
             task_id = getattr(self, 'task_id', None)
             if task_id:
                 result = exp.run(task_description, task_id=task_id)

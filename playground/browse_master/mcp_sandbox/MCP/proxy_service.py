@@ -12,7 +12,7 @@ START_PORT = int(os.getenv("START_PORT"))
 NUM_WORKERS = int(os.getenv("NUM_WORKERS"))
 
 app = FastAPI()
-BACKEND_PORTS = range(START_PORT, START_PORT + NUM_WORKERS )  # 16个后端实例
+BACKEND_PORTS = range(START_PORT, START_PORT + NUM_WORKERS )  # Backend instances
 
 PROXY_TIMEOUT = 36000
 

@@ -1,7 +1,7 @@
-"""飞书文档写入工具
+"""Feishu Document Write Tool
 
-封装 FeishuDocumentWriter 为 Agent 可调用的 tool，
-支持创建文档、追加标题/文本/代码/分割线等操作。
+Wraps FeishuDocumentWriter as an Agent-callable tool,
+supporting creating documents, appending headings/text/code/dividers, etc.
 """
 
 from __future__ import annotations
@@ -104,10 +104,10 @@ class FeishuDocWriteToolParams(BaseToolParams):
 
 
 class FeishuDocWriteTool(BaseTool):
-    """飞书文档写入工具
+    """Feishu Document Write Tool
 
-    在 agent 运行期间动态创建飞书文档并写入结构化内容。
-    由 dispatcher 注入 FeishuDocumentWriter 实例。
+    Dynamically creates Feishu documents and writes structured content during agent execution.
+    The FeishuDocumentWriter instance is injected by the dispatcher.
     """
 
     name: ClassVar[str] = "feishu_doc_write"
@@ -121,12 +121,12 @@ class FeishuDocWriteTool(BaseTool):
         super().__init__()
         self._writer = document_writer
         self._sender_open_id = sender_open_id
-        # 当前活跃文档（create 后设置）
+        # Currently active document (set after create)
         self._current_doc_id: str | None = None
         self._current_doc_url: str | None = None
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """执行文档写入操作"""
+        """Execute document write operation."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -163,7 +163,7 @@ class FeishuDocWriteTool(BaseTool):
             return f"Failed to execute {action}: {e}", {"error": str(e)}
 
     def _do_create(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """创建新文档"""
+        """Create a new document."""
         title = params.title or params.content
         if not title:
             return "Title is required for 'create' action.", {"error": "missing_title"}
@@ -172,10 +172,10 @@ class FeishuDocWriteTool(BaseTool):
         if not doc_id:
             return "Failed to create document.", {"error": "create_failed"}
 
-        # 设置公开可读
+        # Set public readable
         self._writer.set_public_readable(doc_id)
 
-        # 转移所有权给发送者
+        # Transfer ownership to the sender
         if self._sender_open_id:
             self._writer.transfer_ownership(doc_id, self._sender_open_id)
 
@@ -192,7 +192,7 @@ class FeishuDocWriteTool(BaseTool):
         )
 
     def _require_doc(self) -> tuple[str, dict[str, Any]] | None:
-        """检查是否已创建文档"""
+        """Check whether a document has been created."""
         if not self._current_doc_id:
             return (
                 "No active document. Please use 'create' action first.",
@@ -201,7 +201,7 @@ class FeishuDocWriteTool(BaseTool):
         return None
 
     def _do_append_heading(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """追加标题"""
+        """Append a heading."""
         err = self._require_doc()
         if err:
             return err
@@ -217,7 +217,7 @@ class FeishuDocWriteTool(BaseTool):
         return f"Heading (level {level}) appended.", {"action": "append_heading"}
 
     def _do_append_text(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """追加文本"""
+        """Append text."""
         err = self._require_doc()
         if err:
             return err
@@ -232,7 +232,7 @@ class FeishuDocWriteTool(BaseTool):
         return "Text appended.", {"action": "append_text"}
 
     def _do_append_code(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """追加代码块"""
+        """Append a code block."""
         err = self._require_doc()
         if err:
             return err
@@ -248,7 +248,7 @@ class FeishuDocWriteTool(BaseTool):
         return f"Code block ({language}) appended.", {"action": "append_code"}
 
     def _do_append_divider(self) -> tuple[str, dict[str, Any]]:
-        """追加分割线"""
+        """Append a divider."""
         err = self._require_doc()
         if err:
             return err
@@ -259,7 +259,7 @@ class FeishuDocWriteTool(BaseTool):
         return "Divider appended.", {"action": "append_divider"}
 
     def _do_append_image(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """追加图片"""
+        """Append an image."""
         err = self._require_doc()
         if err:
             return err
@@ -279,7 +279,7 @@ class FeishuDocWriteTool(BaseTool):
     # ---- Block editing handlers ----
 
     def _do_list_blocks(self) -> tuple[str, dict[str, Any]]:
-        """列出文档所有 blocks"""
+        """List all blocks in the document."""
         err = self._require_doc()
         if err:
             return err
@@ -307,7 +307,7 @@ class FeishuDocWriteTool(BaseTool):
         return "\n".join(lines), {"blocks": content_blocks}
 
     def _do_update_block(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """更新指定 block 的文本内容"""
+        """Update the text content of a specified block."""
         err = self._require_doc()
         if err:
             return err
@@ -325,7 +325,7 @@ class FeishuDocWriteTool(BaseTool):
         return f"Block {params.block_id} updated successfully.", {"action": "update_block"}
 
     def _do_delete_blocks(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """删除指定范围的 blocks"""
+        """Delete a specified range of blocks."""
         err = self._require_doc()
         if err:
             return err
@@ -350,7 +350,7 @@ class FeishuDocWriteTool(BaseTool):
         )
 
     def _do_insert_blocks(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
-        """在指定位置插入 block"""
+        """Insert a block at a specified position."""
         err = self._require_doc()
         if err:
             return err

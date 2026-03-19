@@ -1,7 +1,7 @@
-"""飞书文档写入器
+"""Feishu document writer
 
-封装 Feishu docx.v1 API，提供创建文档、追加内容块的简洁接口。
-用于将 Agent 完整轨迹写入飞书文档（无截断）。
+Wraps Feishu docx.v1 API, providing a concise interface for creating documents and appending content blocks.
+Used to write the full Agent trajectory to a Feishu document (no truncation).
 """
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ _BLOCK_TYPE_NAMES = {
 
 
 class FeishuDocumentWriter:
-    """飞书文档写入器：创建文档并追加内容块"""
+    """Feishu document writer: create documents and append content blocks."""
 
     def __init__(
         self,
@@ -84,6 +84,13 @@ class FeishuDocumentWriter:
         folder_token: str | None = None,
         domain: str = "https://open.feishu.cn",
     ):
+        """Initialize the document writer.
+
+        Args:
+            client: Feishu Client instance.
+            folder_token: Optional folder token for document placement.
+            domain: Feishu API domain.
+        """
         self._client = client
         self._folder_token = folder_token
         # Extract base domain for URL construction
@@ -94,10 +101,10 @@ class FeishuDocumentWriter:
         self._base_domain = host
 
     def create_document(self, title: str) -> str | None:
-        """创建飞书文档
+        """Create a Feishu document.
 
         Returns:
-            document_id on success, None on failure
+            document_id on success, None on failure.
         """
         body_builder = CreateDocumentRequestBody.builder().title(title[:800])
         if self._folder_token:
@@ -125,7 +132,7 @@ class FeishuDocumentWriter:
             return None
 
     def set_public_readable(self, document_id: str) -> bool:
-        """设置文档链接可读权限"""
+        """Set the document to link-readable permission."""
         request = (
             PatchPermissionPublicRequest.builder()
             .token(document_id)
@@ -153,17 +160,17 @@ class FeishuDocumentWriter:
             return False
 
     def get_document_url(self, document_id: str) -> str:
-        """构建文档 URL"""
+        """Build the document URL."""
         return f"https://{self._base_domain}/docx/{document_id}"
 
     def transfer_ownership(self, document_id: str, user_open_id: str) -> bool:
-        """将文档所有权转移给指定用户
+        """Transfer document ownership to the specified user.
 
-        转移后用户可以自行管理（编辑、删除）该文档。
+        After transfer, the user can manage (edit, delete) the document themselves.
 
         Args:
-            document_id: 文档 ID
-            user_open_id: 目标用户的 open_id
+            document_id: Document ID.
+            user_open_id: Target user's open_id.
         """
         request = (
             TransferOwnerPermissionMemberRequest.builder()
@@ -196,7 +203,7 @@ class FeishuDocumentWriter:
             return False
 
     def append_blocks(self, document_id: str, blocks: list[Block]) -> bool:
-        """批量追加 blocks 到文档末尾"""
+        """Batch append blocks to the end of the document."""
         if not blocks:
             return True
 
@@ -230,37 +237,37 @@ class FeishuDocumentWriter:
     def append_heading(
         self, document_id: str, text: str, level: int = 3
     ) -> bool:
-        """追加标题块 (level 1-9)"""
+        """Append a heading block (level 1-9)."""
         block = _build_heading_block(text, level)
         return self.append_blocks(document_id, [block])
 
     def append_text(
         self, document_id: str, text: str, bold: bool = False
     ) -> bool:
-        """追加文本段落"""
+        """Append a text paragraph."""
         block = _build_text_block(text, bold=bold)
         return self.append_blocks(document_id, [block])
 
     def append_code_block(
         self, document_id: str, code: str, language: str = "plaintext"
     ) -> bool:
-        """追加代码块"""
+        """Append a code block."""
         if len(code) > _MAX_CODE_BLOCK_CHARS:
             code = code[:_MAX_CODE_BLOCK_CHARS] + "\n... (content truncated)"
         block = _build_code_block(code, language)
         return self.append_blocks(document_id, [block])
 
     def append_divider(self, document_id: str) -> bool:
-        """追加分割线"""
+        """Append a divider line."""
         block = _build_divider_block()
         return self.append_blocks(document_id, [block])
 
     def append_image(self, document_id: str, file_token: str) -> bool:
-        """追加图片块
+        """Append an image block.
 
         Args:
-            document_id: 文档 ID
-            file_token: 已上传的图片 file_token（从 upload_media_for_doc 获取）
+            document_id: Document ID.
+            file_token: Uploaded image file_token (obtained from upload_media_for_doc).
         """
         block = _build_image_block(file_token)
         return self.append_blocks(document_id, [block])
@@ -268,19 +275,19 @@ class FeishuDocumentWriter:
     def insert_image(
         self, document_id: str, file_token: str, index: int
     ) -> bool:
-        """在指定位置插入图片块"""
+        """Insert an image block at the specified position."""
         block = _build_image_block(file_token)
         return self.insert_blocks(document_id, [block], index)
 
     def upload_and_append_image(self, document_id: str, file_path: str) -> str | None:
-        """上传图片并追加到文档末尾
+        """Upload an image and append it to the end of the document.
 
         Args:
-            document_id: 文档 ID
-            file_path: 本地图片文件路径
+            document_id: Document ID.
+            file_path: Local image file path.
 
         Returns:
-            成功返回 file_token，失败返回 None
+            file_token on success, None on failure.
         """
         file_token = upload_media_for_doc(self._client, file_path, document_id)
         if not file_token:
@@ -293,7 +300,7 @@ class FeishuDocumentWriter:
     # ---- Block editing methods ----
 
     def list_blocks(self, document_id: str) -> list[dict] | None:
-        """列出文档所有 blocks，返回简化的结构列表。
+        """List all blocks in a document and return a simplified structure list.
 
         Returns:
             A list of dicts: {index, block_id, block_type, block_type_name, text_content}
@@ -346,9 +353,9 @@ class FeishuDocumentWriter:
     def update_block_text(
         self, document_id: str, block_id: str, new_text: str
     ) -> bool:
-        """更新指定 block 的文本内容（替换全部 TextElements）
+        """Update the text content of a specified block (replaces all TextElements).
 
-        适用于 text、heading、code 类型的 block。
+        Applicable to text, heading, and code block types.
         """
         request = (
             PatchDocumentBlockRequest.builder()
@@ -385,7 +392,7 @@ class FeishuDocumentWriter:
     def delete_blocks(
         self, document_id: str, start_index: int, end_index: int
     ) -> bool:
-        """删除文档根 block 下 [start_index, end_index) 范围的子 block"""
+        """Delete child blocks in the range [start_index, end_index) under the document root block."""
         request = (
             BatchDeleteDocumentBlockChildrenRequest.builder()
             .document_id(document_id)
@@ -419,7 +426,7 @@ class FeishuDocumentWriter:
     def insert_blocks(
         self, document_id: str, blocks: list[Block], index: int
     ) -> bool:
-        """在文档指定位置插入 blocks"""
+        """Insert blocks at the specified position in the document."""
         if not blocks:
             return True
 
@@ -457,28 +464,28 @@ class FeishuDocumentWriter:
     def insert_heading(
         self, document_id: str, text: str, index: int, level: int = 3
     ) -> bool:
-        """在指定位置插入标题块"""
+        """Insert a heading block at the specified position."""
         block = _build_heading_block(text, level)
         return self.insert_blocks(document_id, [block], index)
 
     def insert_text(
         self, document_id: str, text: str, index: int, bold: bool = False
     ) -> bool:
-        """在指定位置插入文本段落"""
+        """Insert a text paragraph at the specified position."""
         block = _build_text_block(text, bold=bold)
         return self.insert_blocks(document_id, [block], index)
 
     def insert_code_block(
         self, document_id: str, code: str, index: int, language: str = "plaintext"
     ) -> bool:
-        """在指定位置插入代码块"""
+        """Insert a code block at the specified position."""
         if len(code) > _MAX_CODE_BLOCK_CHARS:
             code = code[:_MAX_CODE_BLOCK_CHARS] + "\n... (content truncated)"
         block = _build_code_block(code, language)
         return self.insert_blocks(document_id, [block], index)
 
     def insert_divider(self, document_id: str, index: int) -> bool:
-        """在指定位置插入分割线"""
+        """Insert a divider line at the specified position."""
         block = _build_divider_block()
         return self.insert_blocks(document_id, [block], index)
 
@@ -486,7 +493,7 @@ class FeishuDocumentWriter:
 # ---- Block builder helpers ----
 
 def _build_text_run(content: str, bold: bool = False) -> TextElement:
-    """构建 TextElement (TextRun)"""
+    """Build a TextElement (TextRun)."""
     style_builder = TextElementStyle.builder()
     if bold:
         style_builder = style_builder.bold(True)
@@ -504,7 +511,7 @@ def _build_text_run(content: str, bold: bool = False) -> TextElement:
 
 
 def _build_text_block(content: str, bold: bool = False) -> Block:
-    """构建文本段落 Block"""
+    """Build a text paragraph Block."""
     return (
         Block.builder()
         .block_type(_BT_TEXT)
@@ -518,7 +525,7 @@ def _build_text_block(content: str, bold: bool = False) -> Block:
 
 
 def _build_heading_block(content: str, level: int = 3) -> Block:
-    """构建标题 Block (level 1-9)"""
+    """Build a heading Block (level 1-9)."""
     level = max(1, min(9, level))
     block_type = _BT_HEADING1 + level - 1  # heading1=3, heading2=4, ...
 
@@ -540,7 +547,7 @@ def _build_heading_block(content: str, level: int = 3) -> Block:
 
 
 def _build_code_block(code: str, language: str = "plaintext") -> Block:
-    """构建代码块 Block"""
+    """Build a code block Block."""
     lang_id = _LANG_MAP.get(language, _LANG_PLAIN)
 
     return (
@@ -557,15 +564,15 @@ def _build_code_block(code: str, language: str = "plaintext") -> Block:
 
 
 def _build_divider_block() -> Block:
-    """构建分割线 Block"""
+    """Build a divider Block."""
     return Block.builder().block_type(_BT_DIVIDER).divider(Divider.builder().build()).build()
 
 
 def _build_image_block(file_token: str) -> Block:
-    """构建图片 Block
+    """Build an image Block.
 
     Args:
-        file_token: 通过 upload_media_for_doc 上传后获取的 file_token
+        file_token: The file_token obtained from upload_media_for_doc.
     """
     from lark_oapi.api.docx.v1 import Image as DocImage
 
@@ -578,15 +585,15 @@ def _build_image_block(file_token: str) -> Block:
 
 
 def upload_media_for_doc(client, file_path: str, doc_id: str) -> str | None:
-    """上传文件到飞书 Drive（用于文档图片），返回 file_token
+    """Upload a file to Feishu Drive (for document images) and return the file_token.
 
     Args:
-        client: 飞书 Client 实例
-        file_path: 本地文件路径
-        doc_id: 目标文档 ID
+        client: Feishu Client instance.
+        file_path: Local file path.
+        doc_id: Target document ID.
 
     Returns:
-        成功返回 file_token，失败返回 None
+        file_token on success, None on failure.
     """
     from lark_oapi.api.drive.v1 import UploadAllMediaRequest, UploadAllMediaRequestBody
 
@@ -632,7 +639,7 @@ def upload_media_for_doc(client, file_path: str, doc_id: str) -> str | None:
 
 
 def _extract_block_text(block) -> str:
-    """从 Block 对象中提取纯文本内容"""
+    """Extract plain text content from a Block object."""
     text_obj = getattr(block, "text", None)
     if text_obj is None:
         for level in range(1, 10):

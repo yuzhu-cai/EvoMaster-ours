@@ -1,6 +1,6 @@
-"""FeishuBot 主类
+"""FeishuBot main class
 
-生命周期管理：初始化 → 接收事件 → 解析 → 去重 → 调度 → 返回结果。
+Lifecycle management: initialization -> receive events -> parse -> deduplicate -> dispatch -> return results.
 """
 
 from __future__ import annotations
@@ -30,10 +30,10 @@ from .step_reporter import FeishuStepReporter
 
 logger = logging.getLogger(__name__)
 
-# 超过此长度使用卡片消息（支持更长内容和 Markdown）
+# Use card messages for content exceeding this length (supports longer content and Markdown)
 _CARD_THRESHOLD = 2000
 
-# /agent <name> <task> 命令正则
+# Regex for the /agent <name> <task> command
 _COMMAND_RE = re.compile(r"^/agent\s+(\S+)\s+(.+)$", re.DOTALL)
 
 
@@ -121,7 +121,7 @@ _patch_ws_client_for_card_actions()
 
 
 class FeishuBot:
-    """飞书 Bot 主类"""
+    """Feishu Bot main class."""
 
     def __init__(
         self,
@@ -130,26 +130,26 @@ class FeishuBot:
     ):
         """
         Args:
-            config: 飞书 Bot 配置
-            project_root: EvoMaster 项目根目录
+            config: Feishu Bot configuration.
+            project_root: EvoMaster project root directory.
         """
         self._config = config
         self._project_root = Path(project_root)
 
-        # 创建飞书 Client
+        # Create Feishu Client
         self._client = create_feishu_client(
             app_id=config.app_id,
             app_secret=config.app_secret,
             domain=config.domain,
         )
 
-        # 消息去重
+        # Message deduplication
         self._dedup = MessageDedup()
 
-        # 获取 bot 自己的 open_id（用于群聊 @mention 过滤）
+        # Get the bot's own open_id (used for group chat @mention filtering)
         self._bot_open_id = self._fetch_bot_open_id()
 
-        # 实时进度报告工厂
+        # Real-time progress report factory
         client = self._client
         doc_writer = FeishuDocumentWriter(
             client,
@@ -158,9 +158,10 @@ class FeishuBot:
         )
 
         def _create_step_reporter(chat_id: str, reply_to_message_id: str | None = None, sender_open_id: str | None = None):
+            """Create a FeishuStepReporter for the given chat."""
             return FeishuStepReporter(client, chat_id, reply_to_message_id, document_writer=doc_writer, sender_open_id=sender_open_id)
 
-        # 任务调度器
+        # Task dispatcher
         self._dispatcher = TaskDispatcher(
             project_root=self._project_root,
             default_agent=config.default_agent,
@@ -179,17 +180,17 @@ class FeishuBot:
         self._ws_client: Optional[lark.ws.Client] = None
 
     def _handle_message_event(self, data: P2ImMessageReceiveV1) -> None:
-        """处理收到的消息事件"""
+        """Handle a received message event."""
         ctx = parse_event(data.event)
         if ctx is None:
             logger.warning("Failed to parse event, skipping")
             return
 
-        # 去重
+        # Deduplicate
         if not self._dedup.try_record_message(ctx.message_id, scope=ctx.chat_id):
             return
 
-        # 权限检查
+        # Permission check
         if self._config.allow_from and ctx.sender_open_id not in self._config.allow_from:
             logger.info("Message from unauthorized user: %s", ctx.sender_open_id)
             send_text_message(
@@ -200,18 +201,18 @@ class FeishuBot:
             )
             return
 
-        # 群聊场景：仅处理 @Bot 的消息
+        # Group chat: only process messages that @mention the bot
         if ctx.chat_type == "group":
             if not ctx.mentions or self._bot_open_id not in ctx.mentions:
                 logger.debug("Ignoring group message not mentioning bot: %s", ctx.message_id)
                 return
 
-        # 忽略非文本消息
+        # Ignore non-text messages
         if ctx.message_type not in ("text", "post"):
             logger.debug("Ignoring non-text message: %s", ctx.message_type)
             return
 
-        # 解析命令
+        # Parse command
         agent_name, task_text = self._parse_command(ctx.content)
 
         if not task_text.strip():
@@ -223,7 +224,7 @@ class FeishuBot:
             )
             return
 
-        # 特殊命令直接 dispatch，不发确认消息
+        # Special commands are dispatched directly without sending a confirmation message
         stripped = task_text.strip()
         if stripped in ("/new", "/shutdown"):
             self._dispatcher.dispatch(
@@ -233,7 +234,7 @@ class FeishuBot:
             )
             return
 
-        # 调度任务
+        # Dispatch task
         self._dispatcher.dispatch(
             chat_id=ctx.chat_id,
             message_id=ctx.message_id,
@@ -243,15 +244,15 @@ class FeishuBot:
         )
 
     def _handle_message_read_event(self, data: P2ImMessageMessageReadV1) -> None:
-        """处理消息已读事件（忽略，仅注册以避免 SDK 报错）"""
+        """Handle message-read events (ignored; registered only to prevent SDK errors)."""
         pass
 
     def _handle_message_recalled_event(self, data: P2ImMessageRecalledV1) -> None:
-        """处理消息撤回事件（忽略，仅注册以避免 SDK 报错）"""
+        """Handle message-recalled events (ignored; registered only to prevent SDK errors)."""
         pass
 
     def _handle_card_action(self, data: P2CardActionTrigger) -> P2CardActionTriggerResponse:
-        """处理卡片按钮点击事件"""
+        """Handle card button click events."""
         resp = P2CardActionTriggerResponse()
 
         try:
@@ -291,7 +292,7 @@ class FeishuBot:
                     original_answer=original_answer,
                 )
 
-                # 通过回调响应原地更新卡片：保留原始内容，移除按钮，追加状态行
+                # Update the card in-place via callback response: keep original content, remove buttons, append status line
                 import json
                 from .messaging.sender import _build_card_json
                 content_parts = []
@@ -325,7 +326,7 @@ class FeishuBot:
                     self._dispatcher._session_manager.remove(session_key)
                     logger.info("Cancelled and removed session: %s", session_key)
 
-                # 通过回调响应原地更新卡片：保留原始内容，移除按钮，追加取消状态
+                # Update the card in-place via callback response: keep original content, remove buttons, append cancellation status
                 import json
                 from .messaging.sender import _build_card_json
                 original_answer = action_value.get("original_answer", "")
@@ -368,7 +369,7 @@ class FeishuBot:
                         action_type="answer_question",
                     )
 
-                # 即时更新卡片：移除按钮，显示已选择的选项（保留原始问题）
+                # Immediately update card: remove buttons, show selected option (keep original question)
                 import json
                 from .messaging.sender import _build_card_json
 
@@ -414,11 +415,11 @@ class FeishuBot:
             return resp
 
     def _parse_command(self, text: str) -> tuple[Optional[str], str]:
-        """解析命令前缀
+        """Parse the command prefix.
 
-        支持格式：
-            /agent <name> <task>    → (name, task)
-            <task>                  → (None, task)
+        Supported formats:
+            /agent <name> <task>    -> (name, task)
+            <task>                  -> (None, task)
 
         Returns:
             (agent_name, task_text)
@@ -429,7 +430,7 @@ class FeishuBot:
         return None, text
 
     def _fetch_bot_open_id(self) -> str:
-        """启动时获取 bot 自己的 open_id（用于群聊 @mention 过滤）。"""
+        """Fetch the bot's own open_id at startup (used for group chat @mention filtering)."""
         import json as _json
         try:
             from lark_oapi.core.model import BaseRequest
@@ -454,12 +455,12 @@ class FeishuBot:
             return ""
 
     def _send_result(self, chat_id: str, message_id: str, result_text: str) -> None:
-        """结果回调：发送结果到飞书
+        """Result callback: send result to Feishu.
 
-        短文本用普通文本消息，长文本用卡片消息（支持 Markdown）。
+        Short text uses plain text messages; long text uses card messages (supports Markdown).
         """
         if len(result_text) > _CARD_THRESHOLD:
-            # 超长内容使用卡片消息
+            # Use card message for long content
             send_card_message(
                 self._client,
                 chat_id,
@@ -476,9 +477,9 @@ class FeishuBot:
             )
 
     def start(self) -> None:
-        """启动 Bot（阻塞式）
+        """Start the bot (blocking).
 
-        当前支持 WebSocket 模式。
+        Currently supports WebSocket mode.
         """
         logger.info(
             "Starting FeishuBot: agent=%s, mode=%s",
@@ -486,7 +487,7 @@ class FeishuBot:
             self._config.connection_mode,
         )
 
-        # 构建事件处理器
+        # Build event handler
         event_handler = (
             lark.EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(self._handle_message_event)
@@ -514,17 +515,17 @@ class FeishuBot:
             )
 
     def stop(self) -> None:
-        """停止 Bot
+        """Stop the bot.
 
-        等待正在执行的任务完成后再关闭（最多等 task_timeout 秒）。
+        Waits for active tasks to complete before shutting down (up to task_timeout seconds).
         """
         logger.info("Stopping FeishuBot, waiting for active tasks to finish...")
         self._dispatcher.shutdown(wait=True)
 
         if self._ws_client is not None:
             try:
-                # lark-oapi ws.Client 底层是 daemon 线程，进程退出时自动终止
-                # 如果未来 SDK 提供 stop/close 方法，在此调用
+                # lark-oapi ws.Client uses daemon threads, which terminate automatically on process exit.
+                # If the SDK provides a stop/close method in the future, call it here.
                 logger.debug("WebSocket client reference cleared")
             except Exception as e:
                 logger.warning("Error cleaning up WebSocket client: %s", e)

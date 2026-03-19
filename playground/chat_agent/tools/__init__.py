@@ -1,4 +1,4 @@
-"""Chat Agent 专用工具"""
+"""Chat Agent specific tools."""
 
 from .ai_search import AISearchTool, AISearchToolParams
 from .google_search import GoogleSearchTool, GoogleSearchToolParams

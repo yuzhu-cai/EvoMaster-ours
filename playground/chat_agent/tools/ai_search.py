@@ -1,7 +1,7 @@
-"""Chat Agent AI Search 工具
+"""Chat Agent AI Search Tool
 
-通过 Perplexity (或其他 OpenAI 兼容搜索 API) 进行 AI 综合搜索。
-返回基于多个网页内容合成的答案，而非原始搜索结果列表。
+Performs AI-powered comprehensive search via Perplexity (or other OpenAI-compatible search APIs).
+Returns synthesized answers based on multiple web pages, rather than raw search result lists.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class AISearchToolParams(BaseToolParams):
 
 
 class AISearchTool(BaseTool):
-    """AI 综合搜索工具（Perplexity 风格）"""
+    """AI-powered comprehensive search tool (Perplexity-style)."""
 
     name: ClassVar[str] = "ai_search"
     params_class: ClassVar[type[BaseToolParams]] = AISearchToolParams
@@ -45,7 +45,7 @@ class AISearchTool(BaseTool):
         super().__init__()
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """执行 AI 综合搜索"""
+        """Execute AI-powered comprehensive search."""
         api_key = os.environ.get("WEB_SEARCH_API_KEY")
         base_url = os.environ.get("WEB_SEARCH_BASE_URL")
         model = os.environ.get("WEB_SEARCH_MODEL")
@@ -83,7 +83,7 @@ class AISearchTool(BaseTool):
             )
             result = response.choices[0].message.content or ""
 
-            # Perplexity 通过 OpenRouter 返回的 citations 在 response 顶层字段
+            # Perplexity returns citations in a top-level field when via OpenRouter
             citations = getattr(response, "citations", None)
             if citations and isinstance(citations, list):
                 refs = "\n".join(

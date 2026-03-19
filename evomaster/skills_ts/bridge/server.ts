@@ -18,16 +18,17 @@ import { createInterface } from "node:readline";
 import { createWriteStream } from "node:fs";
 
 // ---------------------------------------------------------------------------
-// stdout 保护：SDK（如 Lark）可能通过 console.log 向 stdout 写非 JSON 内容，
-// 污染 JSON-RPC 协议通道。在 import 任何插件之前，将 stdout.write 保存为
-// 专用 RPC 通道，并重定向 console.log / process.stdout.write 到 stderr。
+// stdout protection: SDKs (e.g. Lark) may write non-JSON content to stdout
+// via console.log, polluting the JSON-RPC protocol channel. Before importing
+// any plugins, save stdout.write as a dedicated RPC channel and redirect
+// console.log / process.stdout.write to stderr.
 // ---------------------------------------------------------------------------
 const _rpcWrite = process.stdout.write.bind(process.stdout);
 
-// 将 process.stdout.write 重定向到 stderr（捕获 SDK 的 console.log 输出）
+// Redirect process.stdout.write to stderr (capture SDK's console.log output)
 process.stdout.write = process.stderr.write.bind(process.stderr) as any;
 
-// console.log/info/warn/error 全部走 stderr
+// console.log/info/warn/error all go to stderr
 console.log = (...args: any[]) => process.stderr.write(args.map(String).join(" ") + "\n");
 console.info = console.log;
 console.warn = (...args: any[]) => process.stderr.write("[warn] " + args.map(String).join(" ") + "\n");
@@ -53,13 +54,19 @@ const PLUGINS_DIR = resolve(__dirname, "..", "plugins");
 const tools = new Map<string, AnyAgentTool>();
 
 // ---------------------------------------------------------------------------
-// JSON-RPC I/O helpers — 使用保存的 _rpcWrite 直接写入真正的 stdout
+// JSON-RPC I/O helpers — use the saved _rpcWrite to write directly to real stdout
 // ---------------------------------------------------------------------------
 
+/**
+ * Send a JSON-RPC response to stdout.
+ */
 function send(response: BridgeResponse): void {
   _rpcWrite(JSON.stringify(response) + "\n");
 }
 
+/**
+ * Send a JSON-RPC error response.
+ */
 function sendError(id: number, code: number, message: string): void {
   send({ id, error: { code, message } });
 }
@@ -68,6 +75,9 @@ function sendError(id: number, code: number, message: string): void {
 // Method handlers
 // ---------------------------------------------------------------------------
 
+/**
+ * Handle the "init" method: load specified plugins and register their tools.
+ */
 async function handleInit(id: number, params: InitParams): Promise<void> {
   const pluginNames = params.plugins ?? [];
   if (pluginNames.length === 0) {
@@ -114,6 +124,9 @@ async function handleInit(id: number, params: InitParams): Promise<void> {
   send({ id, result });
 }
 
+/**
+ * Handle the "execute" method: execute a registered tool by name with the given arguments.
+ */
 async function handleExecute(id: number, params: ExecuteParams): Promise<void> {
   const { tool_name, args } = params;
 
@@ -140,6 +153,9 @@ async function handleExecute(id: number, params: ExecuteParams): Promise<void> {
   }
 }
 
+/**
+ * Handle the "shutdown" method: send acknowledgment and exit the process.
+ */
 function handleShutdown(id: number): void {
   send({ id, result: "ok" });
   process.exit(0);

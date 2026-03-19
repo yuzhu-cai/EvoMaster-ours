@@ -1,6 +1,6 @@
-"""EvoMaster Finish 工具
+"""EvoMaster Finish tool.
 
-用于标记任务完成。
+Used to mark task completion.
 """
 
 from __future__ import annotations
@@ -40,13 +40,13 @@ class FinishToolParams(BaseToolParams):
 
 
 class FinishTool(BaseTool):
-    """完成工具"""
+    """Finish tool."""
     
     name: ClassVar[str] = "finish"
     params_class: ClassVar[type[BaseToolParams]] = FinishToolParams
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """标记任务完成"""
+        """Mark the task as complete."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -54,7 +54,7 @@ class FinishTool(BaseTool):
         
         assert isinstance(params, FinishToolParams)
         
-        # 记录完成信息
+        # Log completion information
         self.logger.info(f"Task finished. Completed: {params.task_completed}")
         self.logger.info(f"Final message: {params.message[:200]}...")
         

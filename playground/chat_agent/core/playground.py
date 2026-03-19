@@ -1,6 +1,6 @@
 """Chat Agent Playground
 
-面向对话式交互的 Agent，适用于飞书等即时通讯场景。
+A conversation-oriented Agent for instant messaging scenarios such as Feishu.
 """
 
 import logging
@@ -13,21 +13,28 @@ from evomaster.core import BasePlayground, register_playground
 class ChatAgentPlayground(BasePlayground):
     """Chat Agent Playground
 
-    面向对话式 Q&A 的 playground，默认用于飞书 Bot 交互。
+    A conversation-oriented Q&A playground, used by default for Feishu Bot interactions.
     """
 
     def __init__(self, config_dir: Path = None, config_path: Path = None):
+        """Initialize ChatAgentPlayground.
+
+        Args:
+            config_dir: Configuration directory path, defaults to configs/chat_agent/
+            config_path: Full path to config file (overrides config_dir if provided)
+        """
         if config_path is None and config_dir is None:
             config_dir = Path(__file__).parent.parent.parent.parent / "configs" / "chat_agent"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
 
     def setup(self):
+        """Set up the playground and initialize memory."""
         super().setup()
         self._setup_memory()
 
     def _setup_memory(self):
-        """初始化记忆系统（如果在 config 中启用）。"""
+        """Initialize the memory system (if enabled in config)."""
         memory_cfg = self.config_manager.get("memory") or {}
         if not memory_cfg.get("enabled", False):
             self._memory_manager = None
@@ -40,7 +47,7 @@ class ChatAgentPlayground(BasePlayground):
         db_path = memory_cfg.get("db_path", "./data/memory/memories.db")
         store = MemoryStore(db_path)
 
-        # 可选：用 LLM 做 compaction 时的记忆提取
+        # Optional: use LLM for memory extraction during compaction
         llm = None
         if memory_cfg.get("capture_with_llm", False):
             from evomaster.utils.llm import LLMConfig, create_llm
