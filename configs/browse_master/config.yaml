@@ -67,16 +67,6 @@ agents:
     user_prompt_file: "prompts/executor_user.txt"
 
 # ============================================
-# MCP Configuration
-# ============================================
-mcp:
-  # MCP configuration file path (relative to config_dir or absolute path)
-  config_file: "mcp_config.json"
-
-  # Whether to enable MCP (optional, default true)
-  enabled: true
-
-# ============================================
 # Session Configuration
 # ============================================
 session:
@@ -155,37 +145,6 @@ session:
     timeout: 300
 
 # ============================================
-# Env Configuration (Environment Management)
-# ============================================
-env:
-  # Cluster configuration (local mode, minimal)
-  cluster:
-    debug_pool:
-      type: "cpu"
-      max_concurrent: 1
-    train_pool:
-      type: "cpu"
-      max_concurrent: 1
-
-  # Docker configuration (local mode)
-  docker:
-    base_image: "python:3.11-slim"
-    registry: "docker.io"
-    pull_policy: "if_not_present"
-
-  # Job scheduling configuration
-  scheduler:
-    type: "local"
-    queue_timeout: 300
-    retry_failed: false
-    max_retries: 1
-
-# ============================================
-# System Prompt Configuration
-# ============================================
-system_prompt_file: "../../../playground/browse_master/prompts/system_prompt.txt"
-
-# ============================================
 # LLM Output Display Configuration
 # ============================================
 llm_output:
@@ -204,15 +163,4 @@ logging:
   file: null
   console: true
   
-  # Log file save path (saved after program execution completes)
-  # If null, no log file will be saved
-  # If a path is set, logs will be saved to this path after program execution completes
-  log_path: "./logs/evomaster.log"
 
-# ============================================
-# Other Configuration
-# ============================================
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false

@@ -1,3 +1,8 @@
+"""Draft experiment implementation for Kaggle competitions.
+
+Manages the draft-debug-metric workflow for generating and validating code solutions.
+"""
+
 import logging
 from typing import Any
 from evomaster.core.exp import BaseExp
@@ -10,7 +15,22 @@ import os
 from evomaster.agent import BaseAgent
 
 class DraftExp(BaseExp):
+    """Draft experiment class for Kaggle competitions.
+
+    Orchestrates draft, debug, and metric agents to generate, validate,
+    and fix code solutions for competition tasks.
+    """
+
     def __init__(self, draft_agent, debug_agent, metric_agent, config,exp_index):
+        """Initialize the draft experiment.
+
+        Args:
+            draft_agent: Agent responsible for drafting code solutions
+            debug_agent: Agent responsible for debugging failed code
+            metric_agent: Agent responsible for extracting validation scores
+            config: EvoMasterConfig instance
+            exp_index: Experiment index for identification
+        """
         super().__init__(draft_agent, config)
         self.draft_agent = draft_agent
         self.debug_agent = debug_agent
@@ -24,10 +44,22 @@ class DraftExp(BaseExp):
         self.exp_index = exp_index
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the experiment phase name."""
         return f"Draft_{self.exp_index}"
 
     def run(self, task_description: str, data_preview: str, data_knowledge: str, model_knowledge: str, task_id: str = "exp_001") -> dict:
+        """Run the draft experiment workflow.
+
+        Args:
+            task_description: Description of the task
+            data_preview: Preview of the dataset
+            data_knowledge: Knowledge about the data
+            model_knowledge: Knowledge about the model
+            task_id: Task ID
+
+        Returns:
+            Tuple of (is_success, validation_score, uid, code)
+        """
 
         self.logger.info("Starting draft task execution")
         self.logger.info(f"Task: {task_description}")
@@ -57,117 +89,6 @@ class DraftExp(BaseExp):
 
                     draft_trajectory = self.draft_agent.run(draft_task)
                     draft_result = self._extract_agent_response(draft_trajectory)
-                    # for debugging
-#                     draft_result = f"""
-# ```python
-# import pandas as pd
-# import numpy as np
-# import os
-# import warnings
-# from sklearn.model_selection import train_test_split
-# from sklearn.feature_extraction.text import TfidfVectorizer
-# from sklearn.linear_model import LogisticRegression
-# from sklearn.metrics import roc_auc_score
-
-# warnings.filterwarnings('ignore')
-
-# print("Starting fast execution script...")
-
-# # 1. Load data
-# # ---------------------------------------------------------
-# print("Loading data...")
-# train_df = pd.read_csv('./input/train.csv')
-# test_df = pd.read_csv('./input/test.csv')
-
-# # 2. Clean text
-# # ---------------------------------------------------------
-# def clean_text(text):
-#     if isinstance(text, str):
-#         # Remove surrounding quotes if present
-#         text = text.strip('"')
-#         # Handle escaped characters
-#         try:
-#             text = bytes(text, 'utf-8').decode('unicode_escape', errors='ignore')
-#         except:
-#             pass
-#         # Basic cleaning
-#         text = ' '.join(text.split())  # Remove extra whitespace
-#     else:
-#         text = "" # Handle NaN
-#     return text
-
-# print("Cleaning text...")
-# train_df['clean_comment'] = train_df['Comment'].apply(clean_text)
-# test_df['clean_comment'] = test_df['Comment'].apply(clean_text)
-
-# # 3. Vectorization (TF-IDF) - This replaces the BERT Tokenizer
-# # ---------------------------------------------------------
-# print("Vectorizing text (TF-IDF)...")
-# # max_features=10000 限制特征数量，保证速度极快
-# vectorizer = TfidfVectorizer(
-#     stop_words='english', 
-#     max_features=10000, 
-#     ngram_range=(1, 2)
-# )
-
-# # Fit on train, transform train and test
-# X_train_all = vectorizer.fit_transform(train_df['clean_comment'])
-# X_test = vectorizer.transform(test_df['clean_comment'])
-# y_train_all = train_df['Insult'].values
-
-# # 4. Split train data for validation
-# # ---------------------------------------------------------
-# X_train, X_val, y_train, y_val = train_test_split(
-#     X_train_all,
-#     y_train_all,
-#     test_size=0.2,
-#     random_state=42,
-#     stratify=y_train_all
-# )
-
-# # 5. Model Training (Logistic Regression) - Replaces BERT Model
-# # ---------------------------------------------------------
-# print("Training Logistic Regression model...")
-# # n_jobs=-1 uses all CPU cores
-# model = LogisticRegression(C=1.0, solver='liblinear', random_state=42)
-# model.fit(X_train, y_train)
-
-# # 6. Validation
-# # ---------------------------------------------------------
-# print("Validating...")
-# val_preds = model.predict_proba(X_val)[:, 1] # Get probability for class 1
-# auc_score = roc_auc_score(y_val, val_preds)
-# print(f'Validation AUC: {{auc_score:.4f}}')
-
-# # 7. Prediction on Test Set
-# # ---------------------------------------------------------
-# print("Predicting on test set...")
-# test_preds = model.predict_proba(X_test)[:, 1]
-
-# # 8. Create submission file
-# # ---------------------------------------------------------
-# submission_df = pd.DataFrame({{
-#     'Insult': test_preds
-# }})
-
-# # Ensure predictions are in [0, 1] range (Logic Regression implies this, but good practice)
-# submission_df['Insult'] = submission_df['Insult'].clip(0, 1)
-
-# # Save submission
-# os.makedirs('./submission', exist_ok=True)
-# submission_path = './submission/submission_932a1df2-c350-4a4c-a23a-9d94f7f53bb7.csv'
-# submission_df.to_csv(submission_path, index=False)
-# print(f"Submission saved to {{submission_path}} with {{len(submission_df)}} predictions")
-
-# # Also save to working directory for backup
-# os.makedirs('./working', exist_ok=True)
-# submission_df.to_csv('./working/submission_932a1df2-c350-4a4c-a23a-9d94f7f53bb7.csv', index=False)
-
-# print("Sample predictions (first 5):")
-# print(submission_df.head())
-# print("Done! Execution completed in seconds.")
-# ```
-# """
                     draft_code,self.code = read_code(draft_result, self.uid)
                     save_code_to_file(self.workspace_path, "run.py", draft_code)
                     tool_call_obj = ChatCompletionMessageToolCall(

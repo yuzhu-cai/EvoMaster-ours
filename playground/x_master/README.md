@@ -228,7 +228,7 @@ playground/x_master/
 
 ## Customization
 
-## Use Different LLMs for Different Phases
+### Use Different LLMs for Different Phases
 
 ```yaml
 agents:

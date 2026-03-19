@@ -1,23 +1,23 @@
-"""本地环境使用示例
+"""Local environment usage examples
 
-演示如何使用 LocalSession 在本地执行命令和作业。
+Demonstrates how to use LocalSession to execute commands and jobs locally.
 """
 
 from evomaster.agent.session import LocalSession, LocalSessionConfig
 
 
 def example_basic_session():
-    """示例 1: 基础 Session 使用"""
+    """Example 1: Basic Session usage"""
     print("\n" + "=" * 60)
-    print("示例 1: 基础 Session 使用")
+    print("Example 1: Basic Session Usage")
     print("=" * 60)
 
     with LocalSession() as session:
-        # 执行简单命令
+        # Execute a simple command
         result = session.exec_bash("python --version")
-        print(f"Python 版本: {result['stdout'].strip()}")
+        print(f"Python version: {result['stdout'].strip()}")
 
-        # 执行多行命令
+        # Execute a multi-line command
         cmd = """
 cat > /tmp/test.txt << 'EOF'
 Hello, World!
@@ -26,38 +26,38 @@ EOF
 cat /tmp/test.txt
 """
         result = session.exec_bash(cmd)
-        print(f"\n文件内容:\n{result['stdout']}")
+        print(f"\nFile content:\n{result['stdout']}")
 
-        # 查看退出码
-        print(f"退出码: {result['exit_code']}")
+        # Check exit code
+        print(f"Exit code: {result['exit_code']}")
 
 
 def example_job_submission():
-    """示例 2: 命令执行"""
+    """Example 2: Command execution"""
     print("\n" + "=" * 60)
-    print("示例 2: 命令执行")
+    print("Example 2: Command Execution")
     print("=" * 60)
 
     with LocalSession() as session:
-        # 执行多个命令
-        print("\n执行命令中...")
+        # Execute multiple commands
+        print("\nExecuting commands...")
 
         for i in range(3):
             command = f"echo 'Job {i+1}' && sleep 1 && echo 'Job {i+1} completed'"
             result = session.exec_bash(command)
-            print(f"  命令 {i+1}:")
-            print(f"    退出码: {result['exit_code']}")
-            print(f"    输出: {result['stdout'].strip()[:50]}")
+            print(f"  Command {i+1}:")
+            print(f"    Exit code: {result['exit_code']}")
+            print(f"    Output: {result['stdout'].strip()[:50]}")
 
 
 def example_file_operations():
-    """示例 3: 文件上传/下载"""
+    """Example 3: File upload/download"""
     print("\n" + "=" * 60)
-    print("示例 3: 文件上传/下载")
+    print("Example 3: File Upload/Download")
     print("=" * 60)
 
     with LocalSession() as session:
-        # 创建本地文件
+        # Create a local file
         import tempfile
         from pathlib import Path
 
@@ -66,29 +66,29 @@ def example_file_operations():
             f.write("Hello from local file!\n")
             f.write("This is test content.")
 
-        print(f"\n创建本地文件: {local_file}")
+        print(f"\nCreated local file: {local_file}")
 
-        # 上传文件
+        # Upload file
         remote_file = "/tmp/uploaded_test.txt"
         session.upload(local_file, remote_file)
-        print(f"上传到: {remote_file}")
+        print(f"Uploaded to: {remote_file}")
 
-        # 读取上传的文件
+        # Read the uploaded file
         content = session.read_file(remote_file)
-        print(f"\n上传文件的内容:\n{content}")
+        print(f"\nContent of uploaded file:\n{content}")
 
-        # 下载文件
+        # Download file
         data = session.download(remote_file)
-        print(f"下载成功: {len(data)} 字节")
+        print(f"Download successful: {len(data)} bytes")
 
-        # 清理
+        # Cleanup
         Path(local_file).unlink()
 
 
 def example_environment_variables():
-    """示例 4: 环境变量和工作目录"""
+    """Example 4: Environment variables and working directory"""
     print("\n" + "=" * 60)
-    print("示例 4: 环境变量和工作目录")
+    print("Example 4: Environment Variables and Working Directory")
     print("=" * 60)
 
     config = LocalSessionConfig(
@@ -97,23 +97,23 @@ def example_environment_variables():
     )
 
     with LocalSession(config) as session:
-        # 在指定的工作目录执行命令
+        # Execute commands in the specified working directory
         result = session.exec_bash("pwd && ls -la | head -5")
-        print(f"\n工作目录内容:\n{result['stdout']}")
+        print(f"\nWorking directory contents:\n{result['stdout']}")
 
-        # 设置环境变量并使用
+        # Set environment variables and use them
         cmd = """
 export MY_VAR="Hello from Environment"
 echo "Variable: $MY_VAR"
 """
         result = session.exec_bash(cmd)
-        print(f"\n环境变量测试:\n{result['stdout']}")
+        print(f"\nEnvironment variable test:\n{result['stdout']}")
 
 
 def main():
-    """运行所有示例"""
+    """Run all examples."""
     print("\n" + "=" * 60)
-    print("本地 Session (LocalSession) 使用示例")
+    print("Local Session (LocalSession) Usage Examples")
     print("=" * 60)
 
     example_basic_session()
@@ -122,7 +122,7 @@ def main():
     example_environment_variables()
 
     print("\n" + "=" * 60)
-    print("所有示例运行完成")
+    print("All examples completed")
     print("=" * 60)
 
 

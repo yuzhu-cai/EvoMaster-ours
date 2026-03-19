@@ -1,15 +1,15 @@
-# EvoMaster 核心依赖
+# EvoMaster core dependencies
 
-# 配置和数据验证
+# Configuration and data validation
 pydantic
 PyYAML
 
-# LLM API 客户端
+# LLM API clients
 openai
 anthropic
 google-genai
 
-# MCP (Model Context Protocol) - 用于技能系统
+# MCP (Model Context Protocol)
 mcp
 
 # viewer
@@ -21,3 +21,4 @@ genson
 
 # Feishu (Lark) Bot interface
 lark-oapi>=1.3.0
+jieba

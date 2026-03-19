@@ -1,6 +1,6 @@
-"""Docker 环境实现
+"""Docker environment implementation.
 
-提供 Docker 容器的底层操作接口。
+Provides the low-level operations interface for Docker containers.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ from evomaster.agent.session.base import SessionConfig
 
 
 class DockerEnvConfig(EnvConfig):
-    """Docker 环境配置"""
+    """Docker environment configuration."""
     session_config: SessionConfig = Field(
         ...,
-        description="Session 配置"
+        description="Session configuration"
     )
 
 
-# PS1 Prompt 配置，用于解析 bash 输出
+# PS1 Prompt configuration used for parsing bash output
 PS1_BEGIN = "\n===PS1JSONBEGIN===\n"
 PS1_END = "\n===PS1JSONEND===\n"
 PS1_PATTERN = re.compile(
@@ -38,7 +38,7 @@ PS1_PATTERN = re.compile(
 
 
 class BashMetadata:
-    """Bash 执行元数据"""
+    """Bash execution metadata."""
     
     def __init__(
         self,
@@ -52,7 +52,7 @@ class BashMetadata:
 
     @classmethod
     def to_ps1_prompt(cls) -> str:
-        """生成 PS1 提示符配置"""
+        """Generate the PS1 prompt configuration."""
         prompt = "===PS1JSONBEGIN==="
         json_str = json.dumps({
             "pid": "$!",
@@ -65,7 +65,7 @@ class BashMetadata:
 
     @classmethod
     def from_json(cls, json_str: str) -> BashMetadata:
-        """从 JSON 解析元数据"""
+        """Parse metadata from a JSON string."""
         try:
             data = json.loads(json_str)
             return cls(
@@ -78,20 +78,20 @@ class BashMetadata:
 
 
 class DockerEnv(BaseEnv):
-    """Docker 环境实现
+    """Docker environment implementation.
 
-    提供 Docker 容器的底层操作接口：
-    - 容器生命周期管理
-    - 命令执行
-    - 文件操作
-    - tmux 会话管理
+    Provides the low-level operations interface for Docker containers:
+    - Container lifecycle management
+    - Command execution
+    - File operations
+    - Tmux session management
     """
 
     def __init__(self, config: DockerEnvConfig | None = None):
-        """初始化 Docker 环境
+        """Initialize the Docker environment.
 
         Args:
-            config: Docker 环境配置
+            config: Docker environment configuration.
         """
         if config is None:
             raise ValueError("DockerEnv requires DockerEnvConfig with session_config")
@@ -102,7 +102,7 @@ class DockerEnv(BaseEnv):
         self._tmux_log_path: str | None = None
 
     def setup(self) -> None:
-        """初始化 Docker 环境"""
+        """Initialize the Docker environment."""
         if self._is_ready:
             self.logger.warning("Environment already setup")
             return
@@ -114,7 +114,7 @@ class DockerEnv(BaseEnv):
         self.logger.info("Docker environment setup complete")
 
     def teardown(self) -> None:
-        """清理 Docker 环境资源"""
+        """Clean up Docker environment resources."""
         if not self._is_ready:
             return
 
@@ -123,7 +123,7 @@ class DockerEnv(BaseEnv):
         if self._container_id:
             session_config = self.config.session_config
             if session_config.auto_remove:
-                # 自动删除模式：停止并删除容器
+                # Auto-remove mode: stop and remove the container
                 self.logger.info(f"Stopping and removing container: {self._container_id[:12]}")
                 try:
                     subprocess.run(
@@ -140,14 +140,14 @@ class DockerEnv(BaseEnv):
                     self.logger.warning(f"Error stopping/removing container: {e}")
                 self._container_id = None
             else:
-                # 保留容器模式：只标记关闭，容器继续运行
+                # Keep-container mode: only mark as closed; container keeps running
                 self.logger.info(f"Environment closed (container {self._container_id[:12]} kept running for reuse)")
 
         self._is_ready = False
         self.logger.info("Docker environment teardown complete")
 
     def get_session(self) -> Any:
-        """获取 Session（DockerEnv 不直接提供 Session，由调用方管理）"""
+        """Get a Session (DockerEnv does not provide Sessions directly; managed by the caller)."""
         raise NotImplementedError("DockerEnv does not provide session directly")
 
     def submit_job(
@@ -156,29 +156,29 @@ class DockerEnv(BaseEnv):
         job_type: str = "debug",
         **kwargs: Any,
     ) -> str:
-        """提交作业（DockerEnv 不直接支持作业调度）"""
+        """Submit a job (DockerEnv does not support job scheduling directly)."""
         raise NotImplementedError("DockerEnv does not support job submission")
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
-        """查询作业状态（DockerEnv 不直接支持作业调度）"""
+        """Query job status (DockerEnv does not support job scheduling directly)."""
         raise NotImplementedError("DockerEnv does not support job status")
 
     def cancel_job(self, job_id: str) -> None:
-        """取消作业（DockerEnv 不直接支持作业调度）"""
+        """Cancel a job (DockerEnv does not support job scheduling directly)."""
         raise NotImplementedError("DockerEnv does not support job cancellation")
 
     @property
     def container_id(self) -> str | None:
-        """获取容器 ID"""
+        """Get the container ID."""
         return self._container_id
 
     def _create_or_get_container(self) -> None:
-        """创建或获取 Docker 容器"""
+        """Create or obtain a Docker container."""
         session_config = self.config.session_config
 
-        # 如果容器 ID 已存在（之前打开过但关闭了），检查容器状态
+        # If container ID already exists (previously opened then closed), check container status
         if self._container_id:
-            # 检查容器是否还在运行
+            # Check if the container is still running
             result = subprocess.run(
                 ["docker", "ps", "--filter", f"id={self._container_id}", "--format", "{{.ID}}"],
                 capture_output=True,
@@ -186,11 +186,11 @@ class DockerEnv(BaseEnv):
                 timeout=10,
             )
             if result.returncode == 0 and result.stdout.strip():
-                # 容器正在运行，直接复用
+                # Container is running; reuse it
                 self.logger.info(f"Reusing existing running container: {self._container_id[:12]}")
                 return
             else:
-                # 容器已停止，尝试启动
+                # Container is stopped; try to start it
                 self.logger.info(f"Starting existing stopped container: {self._container_id[:12]}")
                 try:
                     result = subprocess.run(
@@ -200,22 +200,22 @@ class DockerEnv(BaseEnv):
                         timeout=30,
                     )
                     if result.returncode == 0:
-                        # 等待容器完全启动
+                        # Wait for the container to fully start
                         time.sleep(1)
                         return
                     else:
                         self.logger.warning(f"Failed to start container: {result.stderr}")
-                        # 继续创建新容器
+                        # Continue to create a new container
                         self._container_id = None
                 except Exception as e:
                     self.logger.warning(f"Error starting container: {e}")
-                    # 继续创建新容器
+                    # Continue to create a new container
                     self._container_id = None
 
-        # 如果指定使用已存在的容器
+        # If configured to use an existing container
         if session_config.use_existing_container:
             self.logger.info(f"Using existing container: {session_config.use_existing_container}")
-            # 检查容器是否存在且运行中
+            # Check if the container exists and is running
             result = subprocess.run(
                 ["docker", "ps", "--filter", f"name={session_config.use_existing_container}", "--format", "{{.ID}}"],
                 capture_output=True,
@@ -226,7 +226,7 @@ class DockerEnv(BaseEnv):
                 self._container_id = result.stdout.strip()
                 self.logger.info(f"Found running container: {self._container_id[:12]}")
             else:
-                # 尝试查找停止的容器
+                # Try to find a stopped container
                 result = subprocess.run(
                     ["docker", "ps", "-a", "--filter", f"name={session_config.use_existing_container}", "--format", "{{.ID}}"],
                     capture_output=True,
@@ -235,7 +235,7 @@ class DockerEnv(BaseEnv):
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     container_id = result.stdout.strip()
-                    # 启动容器
+                    # Start the container
                     subprocess.run(
                         ["docker", "start", container_id],
                         capture_output=True,
@@ -249,10 +249,10 @@ class DockerEnv(BaseEnv):
 
         self.logger.info(f"Starting Docker container with image: {session_config.image}")
 
-        # 容器名
+        # Container name
         container_name = session_config.container_name or f"evomaster-{os.getpid()}-{int(time.time())}"
 
-        # 如果指定了容器名，检查容器是否已存在
+        # If a container name is specified, check if the container already exists
         if session_config.container_name:
             result = subprocess.run(
                 ["docker", "ps", "-a", "--filter", f"name={container_name}", "--format", "{{.ID}}"],
@@ -262,7 +262,7 @@ class DockerEnv(BaseEnv):
             )
             if result.returncode == 0 and result.stdout.strip():
                 container_id = result.stdout.strip()
-                # 容器已存在，检查是否运行中
+                # Container already exists; check if it is running
                 result_running = subprocess.run(
                     ["docker", "ps", "--filter", f"id={container_id}", "--format", "{{.ID}}"],
                     capture_output=True,
@@ -270,12 +270,12 @@ class DockerEnv(BaseEnv):
                     timeout=10,
                 )
                 if result_running.returncode == 0 and result_running.stdout.strip():
-                    # 容器正在运行，直接复用
+                    # Container is running; reuse it
                     self.logger.info(f"Reusing existing running container: {container_id[:12]}")
                     self._container_id = container_id
                     return
                 else:
-                    # 容器已停止，启动它
+                    # Container is stopped; start it
                     self.logger.info(f"Starting existing stopped container: {container_id[:12]}")
                     subprocess.run(
                         ["docker", "start", container_id],
@@ -286,15 +286,15 @@ class DockerEnv(BaseEnv):
                     self._container_id = container_id
                     return
 
-        # 构建 docker run 命令
+        # Build docker run command
         cmd = ["docker", "run", "-d"]
         cmd.extend(["--name", container_name])
 
-        # 资源限制
+        # Resource limits
         cmd.extend(["--memory", session_config.memory_limit])
         cmd.extend(["--cpus", str(session_config.cpu_limit)])
 
-        # GPU 设备
+        # GPU devices
         if session_config.gpu_devices is not None:
             if isinstance(session_config.gpu_devices, str):
                 if session_config.gpu_devices.lower() == "all":
@@ -305,25 +305,25 @@ class DockerEnv(BaseEnv):
                 devices_str = ",".join(session_config.gpu_devices)
                 cmd.extend(["--gpus", f"device={devices_str}"])
 
-        # 网络
+        # Network
         cmd.extend(["--network", session_config.network_mode])
 
-        # 工作目录
+        # Working directory
         cmd.extend(["-w", session_config.working_dir])
 
-        # 挂载卷
+        # Volume mounts
         for host_path, container_path in session_config.volumes.items():
             cmd.extend(["-v", f"{host_path}:{container_path}"])
 
-        # 环境变量
+        # Environment variables
         for key, value in session_config.env_vars.items():
             cmd.extend(["-e", f"{key}={value}"])
 
-        # 自动删除
+        # Auto-remove
         if session_config.auto_remove:
             cmd.append("--rm")
 
-        # 镜像和命令（使用 tail -f 保持容器运行）
+        # Image and command (use tail -f to keep the container running)
         cmd.extend([session_config.image, "tail", "-f", "/dev/null"])
 
         try:
@@ -340,7 +340,7 @@ class DockerEnv(BaseEnv):
             self._container_id = result.stdout.strip()
             self.logger.info(f"Container started: {self._container_id[:12]}")
 
-            # 初始化工作目录权限，确保可以写入文件
+            # Initialize workspace directory permissions to ensure files can be written
             try:
                 self.docker_exec(f"mkdir -p {session_config.working_dir} && chmod 777 {session_config.working_dir}")
             except Exception as e:
@@ -353,7 +353,7 @@ class DockerEnv(BaseEnv):
             raise
 
     def _setup_tmux(self) -> None:
-        """设置 tmux 会话"""
+        """Set up the tmux session."""
         if not self._container_id:
             raise RuntimeError("Container not started")
 
@@ -363,21 +363,21 @@ class DockerEnv(BaseEnv):
         self._tmux_session = session_name
         self._tmux_log_path = log_path
 
-        # 安装 tmux（如果需要）
+        # Install tmux (if needed)
         self.docker_exec("apt-get update && apt-get install -y tmux || true", timeout=120)
 
-        # 创建 tmux 会话
+        # Create tmux session
         self.docker_exec(f"tmux new-session -d -s {session_name} 'bash -i'")
 
-        # 设置管道日志
+        # Set up pipe logging
         self.docker_exec(f"tmux pipe-pane -o -t {session_name} 'cat >> {log_path}'")
 
-        # 设置 PS1 提示符
+        # Set PS1 prompt
         ps1 = BashMetadata.to_ps1_prompt()
         init_cmd = f"PROMPT_COMMAND='PS1=\"{ps1}\"'"
         self.tmux_send_keys(init_cmd, enter=True)
 
-        # 触发第一个提示符
+        # Trigger the first prompt
         self.tmux_send_keys("", enter=True)
         time.sleep(0.5)
 
@@ -389,19 +389,19 @@ class DockerEnv(BaseEnv):
         timeout: int | None = None,
         workdir: str | None = None,
     ) -> dict[str, Any]:
-        """在容器中执行命令（直接执行，非 tmux）
+        """Execute a command in the container (direct execution, not via tmux).
 
         Args:
-            command: 要执行的命令
-            timeout: 超时时间（秒）
-            workdir: 工作目录
+            command: Command to execute.
+            timeout: Timeout in seconds.
+            workdir: Working directory.
 
         Returns:
-            执行结果字典，包含：
-            - stdout: 标准输出
-            - stderr: 标准错误
-            - exit_code: 退出码
-            - output: stdout + stderr 的组合
+            Result dictionary containing:
+            - stdout: Standard output
+            - stderr: Standard error
+            - exit_code: Exit code
+            - output: Combined stdout + stderr
         """
         if not self._container_id:
             raise RuntimeError("Container not started")
@@ -435,16 +435,16 @@ class DockerEnv(BaseEnv):
             }
 
     def tmux_send_keys(self, keys: str, enter: bool = False) -> None:
-        """向 tmux 发送按键
+        """Send keys to the tmux session.
 
         Args:
-            keys: 要发送的按键
-            enter: 是否按回车
+            keys: Keys to send.
+            enter: Whether to press Enter.
         """
         if not self._tmux_session:
             raise RuntimeError("Tmux session not initialized")
 
-        # 转义单引号
+        # Escape single quotes
         escaped = keys.replace("'", "'\\''")
         cmd = f"tmux send-keys -t {self._tmux_session} '{escaped}'"
         if enter:
@@ -453,10 +453,10 @@ class DockerEnv(BaseEnv):
         self.docker_exec(cmd)
 
     def get_tmux_logs(self) -> str:
-        """获取 tmux 日志
+        """Get the tmux session logs.
 
         Returns:
-            tmux 日志内容
+            Tmux log content.
         """
         if not self._tmux_log_path:
             return ""
@@ -465,79 +465,80 @@ class DockerEnv(BaseEnv):
         return result.get("stdout", "")
 
     def is_mounted_path(self, container_path: str) -> tuple[bool, str | None]:
-        """检查路径是否在挂载的卷中
+        """Check if the path is within a mounted volume.
 
         Args:
-            container_path: 容器内的路径（应该是绝对路径）
+            container_path: Path inside the container (should be an absolute path).
 
         Returns:
-            (is_mounted, host_path): 是否在挂载卷中，以及对应的宿主机路径（如果存在）
+            (is_mounted, host_path): Whether the path is in a mounted volume,
+            and the corresponding host path (if it exists).
         """
         session_config = self.config.session_config
         if not session_config.volumes:
             return False, None
 
-        # 规范化容器路径（确保是绝对路径，去除末尾的斜杠）
+        # Normalize the container path (ensure it is absolute, remove trailing slash)
         container_path = str(Path(container_path).as_posix())
         if not container_path.startswith("/"):
-            # 如果不是绝对路径，可能需要先解析，但这里我们假设已经是绝对路径
-            # 如果不是，返回 False
+            # If not an absolute path, it may need resolution first, but here we assume it is absolute
+            # If it is not, return False
             return False, None
 
-        # 检查每个挂载卷
+        # Check each mounted volume
         for host_path, mount_point in session_config.volumes.items():
-            # 规范化挂载点路径
+            # Normalize the mount point path
             mount_point_norm = str(Path(mount_point).as_posix())
 
-            # 检查容器路径是否以挂载点开头
-            # 需要确保是精确匹配（避免 /workspace 匹配 /workspace2）
+            # Check if the container path starts with the mount point
+            # Ensure exact matching (avoid /workspace matching /workspace2)
             if container_path == mount_point_norm:
-                # 完全匹配挂载点本身
+                # Exact match with the mount point itself
                 return True, str(Path(host_path))
             elif container_path.startswith(mount_point_norm + "/"):
-                # 是挂载点的子路径
-                # 计算相对路径
+                # Is a sub-path of the mount point
+                # Compute the relative path
                 relative_path = container_path[len(mount_point_norm):].lstrip("/")
-                # 构建宿主机路径
+                # Build the host path
                 host_path_obj = Path(host_path) / relative_path
                 return True, str(host_path_obj)
 
         return False, None
 
     def upload_file(self, local_path: str, remote_path: str) -> None:
-        """上传文件到容器
+        """Upload a file to the container.
 
-        如果目标路径在挂载的卷中，直接在宿主机复制文件。
+        If the target path is within a mounted volume, copies the file directly on the host.
 
         Args:
-            local_path: 本地文件路径
-            remote_path: 远程文件路径（容器内路径）
+            local_path: Local file path.
+            remote_path: Remote file path (path inside the container).
         """
         if not self._container_id:
             raise RuntimeError("Container not started")
 
-        # 检查是否在挂载卷中
+        # Check if the path is within a mounted volume
         is_mounted, host_path = self.is_mounted_path(remote_path)
 
         if is_mounted and host_path:
-            # 直接在宿主机复制文件
+            # Copy the file directly on the host
             try:
                 import shutil
 
-                # 确保目标目录存在
+                # Ensure the target directory exists
                 host_path_obj = Path(host_path)
                 host_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-                # 复制文件
+                # Copy the file
                 shutil.copy2(local_path, host_path)
             except Exception as e:
                 raise RuntimeError(f"Failed to upload file {local_path} to host path {host_path}: {e}")
             return
 
-        # 不在挂载卷中，使用 docker cp
-        # 确保远程目录存在并设置正确权限
+        # Not in a mounted volume; use docker cp
+        # Ensure the remote directory exists and has correct permissions
         remote_dir = str(Path(remote_path).parent)
-        # 创建目录并设置权限（777 确保所有用户都可以写入）
+        # Create the directory and set permissions (777 ensures all users can write)
         self.docker_exec(f"mkdir -p {remote_dir} && chmod 777 {remote_dir}")
 
         cmd = ["docker", "cp", local_path, f"{self._container_id}:{remote_path}"]
@@ -546,31 +547,31 @@ class DockerEnv(BaseEnv):
         if result.returncode != 0:
             raise RuntimeError(f"Failed to upload file: {result.stderr}")
 
-        # 上传后设置文件权限，确保可读写执行
+        # Set file permissions after upload to ensure read/write/execute access
         self.docker_exec(f"chmod 777 {remote_path}")
 
     def download_file(self, remote_path: str, timeout: int | None = None) -> bytes:
-        """从容器下载文件
+        """Download a file from the container.
 
-        如果路径在挂载的卷中，直接在宿主机读取。
+        If the path is within a mounted volume, reads directly from the host.
 
         Args:
-            remote_path: 远程文件路径（容器内路径）
-            timeout: 超时时间
+            remote_path: Remote file path (path inside the container).
+            timeout: Timeout in seconds.
 
         Returns:
-            文件内容（字节）
+            File content (bytes).
         """
         if not self._container_id:
             raise RuntimeError("Container not started")
 
-        # 检查是否在挂载卷中
+        # Check if the path is within a mounted volume
         is_mounted, host_path = self.is_mounted_path(remote_path)
 
         if is_mounted and host_path:
-            # 直接在宿主机读取
+            # Read directly from the host
             try:
-                # 检查是否是目录
+                # Check if it is a directory
                 if os.path.isdir(host_path):
                     raise RuntimeError(f"Cannot download directory: {remote_path}. Use exec_bash to list directory contents instead.")
 
@@ -581,8 +582,8 @@ class DockerEnv(BaseEnv):
             except Exception as e:
                 raise RuntimeError(f"Failed to download file {remote_path} from host: {e}")
 
-        # 不在挂载卷中，使用 docker cp
-        # 检查路径是否是目录，docker cp 不能复制目录
+        # Not in a mounted volume; use docker cp
+        # Check if the path is a directory; docker cp cannot copy directories
         if self.is_directory(remote_path):
             raise RuntimeError(f"Cannot download directory: {remote_path}. Use exec_bash to list directory contents instead.")
 
@@ -596,7 +597,7 @@ class DockerEnv(BaseEnv):
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
             if result.returncode != 0:
-                # 检查错误信息中是否包含目录相关的错误
+                # Check if the error message contains a directory-related error
                 error_msg = result.stderr.strip()
                 if "cannot copy directory" in error_msg.lower() or "is a directory" in error_msg.lower():
                     raise RuntimeError(f"Cannot download directory: {remote_path}. Use exec_bash to list directory contents instead.")
@@ -609,21 +610,21 @@ class DockerEnv(BaseEnv):
                 os.unlink(temp_path)
 
     def read_file_content(self, remote_path: str, encoding: str = "utf-8") -> str:
-        """读取远程文件内容（文本）
+        """Read remote file content (text).
 
-        如果路径在挂载的卷中，直接在宿主机读取。
+        If the path is within a mounted volume, reads directly from the host.
 
         Args:
-            remote_path: 远程文件路径（容器内路径）
-            encoding: 文件编码
+            remote_path: Remote file path (path inside the container).
+            encoding: File encoding.
 
         Returns:
-            文件内容（字符串）
+            File content (string).
         """
         is_mounted, host_path = self.is_mounted_path(remote_path)
 
         if is_mounted and host_path:
-            # 直接在宿主机读取
+            # Read directly from the host
             try:
                 with open(host_path, "r", encoding=encoding) as f:
                     return f.read()
@@ -632,37 +633,37 @@ class DockerEnv(BaseEnv):
             except Exception as e:
                 raise RuntimeError(f"Failed to read file {remote_path} from host: {e}")
 
-        # 不在挂载卷中，使用 download_file
+        # Not in a mounted volume; use download_file
         content = self.download_file(remote_path)
         return content.decode(encoding)
 
     def write_file_content(self, remote_path: str, content: str, encoding: str = "utf-8") -> None:
-        """写入内容到远程文件
+        """Write content to a remote file.
 
-        如果路径在挂载的卷中，直接在宿主机写入。
+        If the path is within a mounted volume, writes directly on the host.
 
         Args:
-            remote_path: 远程文件路径（容器内路径）
-            content: 文件内容
-            encoding: 文件编码
+            remote_path: Remote file path (path inside the container).
+            content: File content.
+            encoding: File encoding.
         """
         is_mounted, host_path = self.is_mounted_path(remote_path)
 
         if is_mounted and host_path:
-            # 直接在宿主机写入
+            # Write directly on the host
             try:
-                # 确保目录存在
+                # Ensure the directory exists
                 host_path_obj = Path(host_path)
                 host_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
-                # 写入文件
+                # Write the file
                 with open(host_path, "w", encoding=encoding) as f:
                     f.write(content)
             except Exception as e:
                 raise RuntimeError(f"Failed to write file {remote_path} to host: {e}")
             return
 
-        # 不在挂载卷中，使用 upload_file
+        # Not in a mounted volume; use upload_file
         import tempfile
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as f:
             f.write(content.encode(encoding))
@@ -674,64 +675,64 @@ class DockerEnv(BaseEnv):
             os.unlink(temp_path)
 
     def path_exists(self, remote_path: str) -> bool:
-        """检查远程路径是否存在
+        """Check if a remote path exists.
 
-        如果路径在挂载的卷中，直接在宿主机检查。
+        If the path is within a mounted volume, checks directly on the host.
 
         Args:
-            remote_path: 远程路径（容器内路径）
+            remote_path: Remote path (path inside the container).
 
         Returns:
-            是否存在
+            Whether the path exists.
         """
         is_mounted, host_path = self.is_mounted_path(remote_path)
 
         if is_mounted and host_path:
             return os.path.exists(host_path)
 
-        # 不在挂载卷中，使用 docker exec
+        # Not in a mounted volume; use docker exec
         result = self.docker_exec(f'test -e "{remote_path}" && echo "exists" || echo "not_exists"')
         stdout = result.get("stdout", "").strip()
         return stdout == "exists"
 
     def is_file(self, remote_path: str) -> bool:
-        """检查远程路径是否是文件
+        """Check if a remote path is a file.
 
-        如果路径在挂载的卷中，直接在宿主机检查。
+        If the path is within a mounted volume, checks directly on the host.
 
         Args:
-            remote_path: 远程路径（容器内路径）
+            remote_path: Remote path (path inside the container).
 
         Returns:
-            是否是文件
+            Whether the path is a file.
         """
         is_mounted, host_path = self.is_mounted_path(remote_path)
 
         if is_mounted and host_path:
             return os.path.isfile(host_path)
 
-        # 不在挂载卷中，使用 docker exec
+        # Not in a mounted volume; use docker exec
         result = self.docker_exec(f'test -f "{remote_path}" && echo "file" || echo "not_file"')
         stdout = result.get("stdout", "").strip()
         return stdout == "file"
 
     def is_directory(self, remote_path: str) -> bool:
-        """检查远程路径是否是目录
+        """Check if a remote path is a directory.
 
-        如果路径在挂载的卷中，直接在宿主机检查。
+        If the path is within a mounted volume, checks directly on the host.
 
         Args:
-            remote_path: 远程路径（容器内路径）
+            remote_path: Remote path (path inside the container).
 
         Returns:
-            是否是目录
+            Whether the path is a directory.
         """
         is_mounted, host_path = self.is_mounted_path(remote_path)
 
         if is_mounted and host_path:
             return os.path.isdir(host_path)
 
-        # 不在挂载卷中，使用 docker exec
+        # Not in a mounted volume; use docker exec
         result = self.docker_exec(f'test -d "{remote_path}" && echo "dir" || echo "not_dir"')
         stdout = result.get("stdout", "").strip()
         return stdout == "dir"

@@ -1,0 +1,153 @@
+# Chat Agent Configuration File
+# Agent for conversational interaction, suitable for instant messaging scenarios such as Feishu
+
+# ============================================
+# LLM Configuration
+# ============================================
+llm:
+  openai:
+    provider: "openai"
+    model: "${GPT_CHAT_MODEL}"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    temperature: 0.7
+    max_tokens: 16384
+    timeout: 60
+    max_retries: 3
+    retry_delay: 1.0
+
+  anthropic:
+    provider: "anthropic"
+    model: "${ANTHROPIC_MODEL}"
+    api_key: "${ANTHROPIC_API_KEY}"
+    base_url: "${ANTHROPIC_BASE_URL}"
+    temperature: 0.7
+    max_tokens: 16384
+    timeout: 60
+    max_retries: 3
+    retry_delay: 1.0
+  
+  local_sglang:
+    provider: "deepseek"
+    model: "deepseek-v3.2"
+    api_key: "${DEEPSEEK_API_KEY}"  # Placeholder can be used for local deployment
+    base_url: "${DEEPSEEK_API_BASE}"
+    temperature: 0.7
+    max_tokens: 16384
+    timeout: 300  
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "local_sglang"
+
+# ============================================
+# Agent Configuration
+# ============================================
+agents:
+  general:
+    llm: "local_sglang"
+    max_turns: 50
+    finish_on_text_response: true
+    tools:
+      builtin: ["*"]
+      mcp: "mcp_config.json"
+      google_search: "google_search"   # Custom tool: google_search or ai_search
+      ai_search: "ai_search"   # Custom tool: google_search or ai_search
+      web_fetch: "web_fetch"  # Web scraping tool (optional)
+      ask_user: "ask_user"  # User inquiry tool (optional)
+      delegate_to_agent: "delegate_to_agent"  # Delegate to other agent tool (optional)
+      feishu_doc_read: "feishu_doc_read"  # Feishu document reading tool (optional)
+      send_file: "send_file"
+      memory_search: "memory_search"
+      memory_save: "memory_save"
+      memory_forget: "memory_forget"
+
+    skills:
+      - "bohrium-oss"
+      
+    context:
+      max_tokens: 128000
+      truncation_strategy: "summary"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+
+    system_prompt_file: "prompts/system_prompt.txt"
+    user_prompt_file: "prompts/user_prompt.txt"
+
+# ============================================
+# AI Search Configuration (Perplexity-style comprehensive search)
+# ============================================
+ai_search:
+  provider: "perplexity"
+  api_key: "${WEB_SEARCH_API_KEY}"
+  base_url: "${WEB_SEARCH_BASE_URL}"
+  model: "${WEB_SEARCH_MODEL}"
+
+# ============================================
+# Google Search Configuration (Serper API)
+# ============================================
+google_search:
+  api_key: "${SERPER_KEY_ID}"
+
+# ============================================
+# Web Fetch Configuration (Jina Reader API, LLM summary reuses default LLM)
+# ============================================
+web_fetch:
+  api_key: "${JINA_API_KEY}"
+
+# ============================================
+# Memory Configuration (cross-session persistent memory)
+# ============================================
+memory:
+  enabled: true
+  db_path: "./data/memory/memories.db"
+  auto_capture: true          # Automatically extract memories from conversations (rule matching)
+  auto_recall: true           # Automatically inject relevant memories at the start of a conversation
+  recall_limit: 5             # Maximum number of auto-recalled memories
+  max_memories_per_user: 500  # Maximum number of memories per user
+  capture_with_llm: false     # Whether to use LLM for more precise memory extraction
+
+# ============================================
+# Session Configuration
+# ============================================
+session:
+  type: "local"
+
+  local:
+    working_dir: "./playground/chat_agent/workspace"
+    timeout: 60
+    gpu_devices: "0"
+    cpu_devices: "0-15"
+    symlinks: {}
+
+  docker:
+    image: "evomaster/base:latest"
+    container_name: null
+    use_existing_container: null
+    working_dir: "/workspace"
+    memory_limit: "64g"
+    cpu_limit: 16.0
+    gpu_devices: "0"
+    network_mode: "host"
+    volumes: {"./playground/chat_agent/workspace": "/workspace"}
+    env_vars: {}
+    auto_remove: false
+    timeout: 300
+
+# ============================================
+# LLM Output Display Configuration
+# ============================================
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+# ============================================
+# Logging Configuration
+# ============================================
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+
+

@@ -1,6 +1,6 @@
-"""EvoMaster 本地 Session 实现
+"""EvoMaster Local Session implementation.
 
-在本地直接执行命令，无需容器。
+Executes commands directly on the local machine without containers.
 """
 
 from __future__ import annotations
@@ -16,86 +16,91 @@ from .base import BaseSession, SessionConfig
 
 
 class LocalSessionConfig(SessionConfig):
-    """本地 Session 配置"""
-    encoding: str = Field(default="utf-8", description="文件编码")
+    """Local Session configuration."""
+    encoding: str = Field(default="utf-8", description="File encoding")
     symlinks: dict[str, str] = Field(
         default_factory=dict,
-        description="软链接配置，格式：{源目录路径: 工作空间内的目标路径}"
+        description="Symlink configuration, format: {source_directory_path: target_path_within_workspace}"
     )
     config_dir: str | None = Field(
         default=None,
-        description="配置文件所在目录，用于解析 symlinks 中的相对路径"
+        description="Directory where config files reside, used for resolving relative paths in symlinks"
     )
     gpu_devices: str | list[str] | None = Field(
         default=None,
-        description="GPU 设备，如 '2' 或 ['0', '1']，None 表示不使用 GPU 限制"
+        description="GPU devices, e.g. '2' or ['0', '1']; None means no GPU restriction"
     )
     cpu_devices: str | list[int] | None = Field(
         default=None,
-        description="CPU 设备，如 '0-15' 或 [0, 1, 2, 3]，None 表示不使用 CPU 限制"
+        description="CPU devices, e.g. '0-15' or [0, 1, 2, 3]; None means no CPU restriction"
     )
     parallel: dict[str, Any] | None = Field(
         default=None,
-        description="并行执行配置，包含 enabled 和 max_parallel 字段"
+        description="Parallel execution configuration, containing 'enabled' and 'max_parallel' fields"
     )
 
 
 class LocalSession(BaseSession):
-    """本地 Session 实现
-    
-    在本地直接执行 bash 命令，无需容器。
-    内部使用 LocalEnv 来完成底层操作。
+    """Local Session implementation.
+
+    Executes bash commands directly on the local machine without containers.
+    Internally uses LocalEnv for underlying operations.
     """
-    
-    # 线程本地存储，用于跟踪每个线程的并行索引
+
+    # Thread-local storage for tracking parallel index per thread
     _thread_local = threading.local()
 
     def __init__(self, config: LocalSessionConfig | None = None):
+        """Initialize the local session.
+
+        Args:
+            config: Local session configuration.
+        """
         super().__init__(config)
         self.config: LocalSessionConfig = config or LocalSessionConfig()
-        # 创建 LocalEnv 实例
+        # Create LocalEnv instance
         env_config = LocalEnvConfig(session_config=self.config)
         self._env = LocalEnv(env_config)
-    
+
     def set_parallel_index(self, parallel_index: int | None) -> None:
-        """设置当前线程的并行索引
-        
+        """Set the parallel index for the current thread.
+
         Args:
-            parallel_index: 并行索引（从 0 开始），None 表示不使用并行资源分配
+            parallel_index: Parallel index (starting from 0); None means no parallel resource allocation.
         """
         self._thread_local.parallel_index = parallel_index
     
     def get_parallel_index(self) -> int | None:
-        """获取当前线程的并行索引
-        
+        """Get the parallel index for the current thread.
+
         Returns:
-            并行索引，如果未设置则返回 None
+            Parallel index, or None if not set.
         """
         return getattr(self._thread_local, 'parallel_index', None)
     
     def set_workspace_path(self, workspace_path: str | None) -> None:
-        """设置当前线程的工作空间路径（用于 split_workspace_for_exp）
-        
+        """Set the workspace path for the current thread (used by split_workspace_for_exp).
+
         Args:
-            workspace_path: 工作空间路径，None 表示使用默认工作空间
+            workspace_path: Workspace path; None means use the default workspace.
         """
         self._thread_local.workspace_path = workspace_path
     
     def get_workspace_path(self) -> str | None:
-        """获取当前线程的工作空间路径
-        
+        """Get the workspace path for the current thread.
+
         Returns:
-            工作空间路径，如果未设置则返回 None（使用默认工作空间）
+            Workspace path, or None if not set (uses the default workspace).
         """
         return getattr(self._thread_local, 'workspace_path', None)
         
     def open(self) -> None:
-        """打开本地会话"""
+        """Open the local session."""
         if self._is_open:
             self.logger.warning("Session already open")
             return
         
-        # 使用 LocalEnv 来设置环境
+        # Use LocalEnv to set up the environment
         if not self._env.is_ready:
             self._env.setup()
         
@@ -103,11 +108,11 @@ class LocalSession(BaseSession):
         self.logger.info("Local session opened")
 
     def close(self) -> None:
-        """关闭本地会话"""
+        """Close the local session."""
         if not self._is_open:
             return
         
-        # 使用 LocalEnv 来清理环境
+        # Use LocalEnv to clean up the environment
         if self._env.is_ready:
             self._env.teardown()
         
@@ -121,15 +126,15 @@ class LocalSession(BaseSession):
         is_input: bool = False,
         parallel_index: int | None = None,
     ) -> dict[str, Any]:
-        """执行 bash 命令
-        
-        提供本地命令执行能力。
-        
+        """Execute a bash command.
+
+        Provides local command execution capability.
+
         Args:
-            command: 要执行的命令
-            timeout: 超时时间（秒）
-            is_input: 是否是向正在运行的进程发送输入（本地不支持）
-            parallel_index: 并行索引（可选，如果未提供则从线程本地存储获取）
+            command: The command to execute.
+            timeout: Timeout in seconds.
+            is_input: Whether this is input sent to a running process (not supported locally).
+            parallel_index: Parallel index (optional; if not provided, obtained from thread-local storage).
         """
         if not self._is_open:
             raise RuntimeError("Session not open")
@@ -137,7 +142,7 @@ class LocalSession(BaseSession):
         timeout = timeout or self.config.timeout
         command = command.strip()
         
-        # 本地环境不支持 is_input 模式
+        # Local environment does not support is_input mode
         if is_input:
             return {
                 "stdout": "ERROR: Local session does not support is_input mode.",
@@ -145,24 +150,24 @@ class LocalSession(BaseSession):
                 "exit_code": 1,
             }
         
-        # 获取并行索引（优先使用参数，否则从线程本地存储获取）
+        # Get parallel index (prefer argument; otherwise retrieve from thread-local storage)
         if parallel_index is None:
             parallel_index = self.get_parallel_index()
         
-        # 获取线程本地的工作空间路径（用于 split_workspace_for_exp）
+        # Get thread-local workspace path (used by split_workspace_for_exp)
         workspace_override = self.get_workspace_path()
         
-        # 使用 LocalEnv 执行命令
+        # Execute command using LocalEnv
         result = self._env.local_exec(
             command, timeout=timeout,
             workdir=workspace_override,
             parallel_index=parallel_index,
         )
         
-        # 获取工作目录（优先使用线程本地的工作空间路径）
+        # Get working directory (prefer thread-local workspace path)
         workspace = workspace_override or self.config.workspace_path
         
-        # 构建结果
+        # Build result
         return {
             "stdout": result.get("stdout", ""),
             "stderr": result.get("stderr", ""),
@@ -172,49 +177,49 @@ class LocalSession(BaseSession):
         }
 
     def upload(self, local_path: str, remote_path: str) -> None:
-        """上传文件到本地环境"""
+        """Upload a file to the local environment."""
         if not self._is_open:
             raise RuntimeError("Session not open")
         
         self._env.upload_file(local_path, remote_path)
 
     def read_file(self, remote_path: str, encoding: str = "utf-8") -> str:
-        """读取远程文件内容（文本）"""
+        """Read remote file content as text."""
         if not self._is_open:
             raise RuntimeError("Session not open")
         
         return self._env.read_file_content(remote_path, encoding)
     
     def write_file(self, remote_path: str, content: str, encoding: str = "utf-8") -> None:
-        """写入内容到远程文件"""
+        """Write content to a remote file."""
         if not self._is_open:
             raise RuntimeError("Session not open")
         
         self._env.write_file_content(remote_path, content, encoding)
     
     def download(self, remote_path: str, timeout: int | None = None) -> bytes:
-        """从本地环境下载文件"""
+        """Download a file from the local environment."""
         if not self._is_open:
             raise RuntimeError("Session not open")
         
         return self._env.download_file(remote_path, timeout)
     
     def path_exists(self, remote_path: str) -> bool:
-        """检查远程路径是否存在"""
+        """Check whether a remote path exists."""
         if not self._is_open:
             raise RuntimeError("Session not open")
         
         return self._env.path_exists(remote_path)
     
     def is_file(self, remote_path: str) -> bool:
-        """检查远程路径是否是文件"""
+        """Check whether a remote path is a file."""
         if not self._is_open:
             raise RuntimeError("Session not open")
         
         return self._env.is_file(remote_path)
     
     def is_directory(self, remote_path: str) -> bool:
-        """检查远程路径是否是目录"""
+        """Check whether a remote path is a directory."""
         if not self._is_open:
             raise RuntimeError("Session not open")
         

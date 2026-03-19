@@ -46,6 +46,7 @@ def __init__(
     output_config: dict[str, Any] | None = None,
     config_dir: Path | str | None = None,
     enable_tools: bool = True,
+    enabled_tool_names: list[str] | None = None,
 )
 ```
 
@@ -57,20 +58,39 @@ def __init__(
 - `skill_registry`：可选的技能注册表
 - `output_config`：输出显示配置
 - `config_dir`：用于加载提示词文件的配置目录路径
-- `enable_tools`：是否在提示词中包含工具信息
+- `enable_tools`：是否在提示词中包含工具信息（默认 `True`）。如果为 `False`，工具仍然注册但不会暴露给 LLM
+- `enabled_tool_names`：启用的工具名称列表（可选）。`None` 或 `["*"]` 表示所有已注册工具都启用。仅影响暴露给 LLM 的工具列表，不影响代码中手动调用工具
 
 ### 关键方法
 
-#### run(task)
+#### run(task, on_step)
 ```python
-def run(self, task: TaskInstance) -> Trajectory:
+def run(self, task: TaskInstance, on_step=None) -> Trajectory:
     """执行任务
 
     Args:
         task: 任务实例
+        on_step: 可选的步骤回调，签名 (StepRecord, step_number, max_steps) -> None
 
     Returns:
         执行轨迹
+    """
+```
+
+#### continue_run(user_message, on_step)
+```python
+def continue_run(self, user_message: str, on_step=None) -> Trajectory:
+    """在已有对话上追加用户消息，继续执行
+
+    与 run() 的区别：不调用 _initialize()，保留已有对话上下文。
+    适用于多轮对话场景。
+
+    Args:
+        user_message: 新的用户消息
+        on_step: 可选的步骤回调
+
+    Returns:
+        本轮执行轨迹
     """
 ```
 
@@ -116,16 +136,18 @@ def _get_user_prompt(self, task: TaskInstance) -> str:
     """获取任务的用户提示词"""
 ```
 
-### 类方法
+### 实例和类方法
 
 ```python
-@classmethod
-def set_trajectory_file_path(cls, trajectory_file_path: str | Path) -> None:
-    """设置轨迹文件路径（所有 Agent 实例共享）"""
+def set_trajectory_file_path(self, trajectory_file_path: str | Path) -> None:
+    """设置轨迹文件路径（实例级别，每个 agent 独立）"""
 
 @classmethod
 def set_exp_info(cls, exp_name: str, exp_index: int) -> None:
-    """设置当前 exp 信息用于轨迹记录"""
+    """设置当前 exp 信息用于轨迹记录（类级别，所有实例共享）"""
+
+def set_agent_name(self, name: str) -> None:
+    """设置 Agent 名称（用于在轨迹文件中标识不同的 agent）"""
 ```
 
 ## Agent
@@ -148,6 +170,7 @@ def __init__(
     output_config: dict[str, Any] | None = None,
     config_dir: Path | str | None = None,
     enable_tools: bool = True,
+    enabled_tool_names: list[str] | None = None,
 )
 ```
 
@@ -160,6 +183,10 @@ class AgentConfig(BaseModel):
     context_config: ContextConfig = Field(
         default_factory=ContextConfig,
         description="上下文管理配置"
+    )
+    finish_on_text_response: bool = Field(
+        default=False,
+        description="当 LLM 回复纯文本（无 tool call）时直接视为任务完成，适用于对话场景"
     )
 ```
 
@@ -291,7 +318,7 @@ class DockerSessionConfig(SessionConfig):
 ### 基本 Agent 使用
 
 ```python
-from evomaster.agent import Agent, AgentConfig, create_default_registry
+from evomaster.agent import Agent, AgentConfig, create_registry
 from evomaster.agent.session import LocalSession, LocalSessionConfig
 from evomaster.utils import LLMConfig, create_llm
 from evomaster.utils.types import TaskInstance
@@ -299,7 +326,7 @@ from evomaster.utils.types import TaskInstance
 # 创建组件
 llm = create_llm(LLMConfig(provider="openai", model="gpt-4", api_key="..."))
 session = LocalSession(LocalSessionConfig(workspace_path="./workspace"))
-tools = create_default_registry()
+tools = create_registry()  # 创建默认注册表，包含所有内置工具
 
 # 创建 agent
 agent = Agent(

@@ -24,7 +24,7 @@ Browse-Master Playground implements a two-Agent workflow:
 
 ## Quick Start
 ### 1. Configuration
-Edit `configs\browse_master\config.yaml`:
+Edit `configs/browse_master/config.yaml`:
 ```yaml
 # ============================================
 # Agent Configuration

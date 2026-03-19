@@ -1,6 +1,7 @@
 # ML-Master 1.0
 
-**ML-Master** is a novel AI4AI (AI-for-AI) agent that integrates exploration and reasoning into a coherent iterative methodology, facilitated by an adaptive memory mechanism that selectively captures and summarizes relevant insights and outcomes, ensuring each component mutually reinforces the other without compromising either.
+**ML-Master** 是一个创新的 AI4AI（AI-for-AI）智能体，将探索与推理融合为一种连贯的迭代方法论，借助自适应记忆机制，选择性地捕获和总结相关洞察与结果，确保各组件相互强化而不互相妥协。
+
 在这里，我们基于EvoMaster框架重新实现了ML-Master 1.0的代码。为了方便运行，我们提供了一个可以快速运行的示例任务`detecting-insults-in-social-commentary`。
 
 ## 架构
@@ -167,7 +168,7 @@ python -m playground.ml_master.vis.app --run_dir runs/ml_master_xxx
 
 ## ✍️ Citation
 
-如果认为这对你有帮助，欢迎引用以下文章
+如果认为这对你有帮助，欢迎引用以下文章：
 
 ```bibtex
 @misc{zhu2026ultralonghorizonagenticsciencecognitive,

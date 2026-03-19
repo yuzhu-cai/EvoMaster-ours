@@ -1,0 +1,134 @@
+# Agent Builder Configuration File
+# Meta-level Agent for creating new EvoMaster Agents based on user requirements
+
+# ============================================
+# LLM Configuration
+# ============================================
+llm:
+  openai:
+    provider: "openai"
+    model: "${GPT_CHAT_MODEL}"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    temperature: 0.3
+    max_tokens: 16384
+    timeout: 120
+    max_retries: 3
+    retry_delay: 1.0
+
+  anthropic:
+    provider: "anthropic"
+    model: "${ANTHROPIC_MODEL}"
+    api_key: "${ANTHROPIC_API_KEY}"
+    base_url: "${ANTHROPIC_BASE_URL}"
+    temperature: 0.3
+    max_tokens: 16384
+    timeout: 120
+    max_retries: 3
+    retry_delay: 1.0
+  
+  local_sglang:
+    provider: "deepseek"
+    model: "deepseek-v3.2"
+    api_key: "${DEEPSEEK_API_KEY}"  # Placeholder can be used for local deployment
+    base_url: "${DEEPSEEK_API_BASE}"
+    temperature: 0.7
+    max_tokens: 16384
+    timeout: 300  
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "local_sglang"
+
+# ============================================
+# Agent Configuration (dual agent system: planner + builder)
+# ============================================
+agents:
+  planner:
+    llm: "local_sglang"
+    max_turns: 100
+    finish_on_text_response: false
+    tools:
+      builtin: ["*"]
+      ask_user: "ask_user"
+      feishu_doc_read: "feishu_doc_read"
+      feishu_doc_write: "feishu_doc_write"
+      send_file: "send_file"
+      ask_user: "ask_user"
+
+    context:
+      max_tokens: 128000
+      truncation_strategy: "summary"
+      preserve_system_messages: true
+      preserve_recent_turns: 10
+
+    system_prompt_file: "prompts/planner_system_prompt.txt"
+    user_prompt_file: "prompts/user_prompt.txt"
+
+  builder:
+    llm: "local_sglang"
+    max_turns: 100
+    finish_on_text_response: false
+    tools:
+      builtin: ["*"]
+      feishu_doc_read: "feishu_doc_read"
+      feishu_doc_write: "feishu_doc_write"
+      send_file: "send_file" 
+      
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+
+    system_prompt_file: "prompts/builder_system_prompt.txt"
+    user_prompt_file: "prompts/builder_user_prompt.txt"
+
+
+# ============================================
+# Session Configuration
+# ============================================
+session:
+  type: "local"
+
+  local:
+    working_dir: "./playground/agent_builder/workspace"
+    timeout: 120
+    gpu_devices: "0"
+    cpu_devices: "0-15"
+    symlinks:
+      "playground": "playground"
+      "configs": "configs"
+      "evomaster": "evomaster"
+
+  docker:
+    image: "evomaster/base:latest"
+    container_name: null
+    use_existing_container: null
+    working_dir: "/workspace"
+    memory_limit: "64g"
+    cpu_limit: 16.0
+    gpu_devices: "0"
+    network_mode: "host"
+    volumes: {"./playground/agent_builder/workspace": "/workspace"}
+    env_vars: {}
+    auto_remove: false
+    timeout: 300
+
+
+# ============================================
+# LLM Output Display Configuration
+# ============================================
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+# ============================================
+# Logging Configuration
+# ============================================
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+

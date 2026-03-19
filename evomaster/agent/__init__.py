@@ -1,11 +1,11 @@
-"""EvoMaster Agent 模块
+"""EvoMaster Agent module
 
-Agent 是 EvoMaster 的智能体组件，包含：
-- 类型定义（Message, Dialog, Trajectory）- 从 utils 导入
-- 上下文管理（ContextManager）
-- Agent 基类和实现
-- Session（与 Env 交互的介质）
-- Tools（工具系统）
+Agent is the intelligent agent component of EvoMaster, including:
+- Type definitions (Message, Dialog, Trajectory) - imported from utils
+- Context management (ContextManager)
+- Agent base class and implementations
+- Session (interface for interacting with Env)
+- Tools (tool system)
 """
 
 from evomaster.utils.types import (
@@ -27,7 +27,7 @@ from evomaster.utils.types import (
 from .context import ContextManager, ContextConfig, TruncationStrategy
 from .agent import BaseAgent, Agent, AgentConfig
 
-# Session 子模块
+# Session submodule
 from .session import (
     BaseSession,
     SessionConfig,
@@ -35,7 +35,7 @@ from .session import (
     DockerSessionConfig,
 )
 
-# Tools 子模块
+# Tools submodule
 from .tools import (
     BaseTool,
     ToolRegistry,

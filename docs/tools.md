@@ -124,11 +124,31 @@ class ToolRegistry:
         """Get all MCP server names"""
 ```
 
-### Factory Function
+### Factory Functions
 
 ```python
+def create_registry(
+    builtin_names: list[str] | None = None,
+    skill_registry: SkillRegistry | None = None,
+    openclaw_bridge: object | None = None,
+    enabled_skills: list[str] | None = None,
+) -> ToolRegistry:
+    """Create tool registry with selective builtin tool registration
+
+    Args:
+        builtin_names: List of builtin tool names to register.
+            - None or ["*"] -> register all builtin tools
+            - [] -> register no builtins (skills/MCP only)
+            - ["execute_bash", "finish"] -> register only specified tools
+        skill_registry: Optional SkillRegistry, if provided registers SkillTool
+        openclaw_bridge: Optional OpenclawBridge instance, passed to SkillTool
+        enabled_skills: Optional list of skill names to expose to agent
+    """
+
 def create_default_registry(skill_registry: SkillRegistry | None = None) -> ToolRegistry:
     """Create default tool registry with all builtin tools
+
+    Convenience wrapper around create_registry(builtin_names=["*"], ...).
 
     Args:
         skill_registry: Optional SkillRegistry, if provided registers SkillTool
@@ -372,7 +392,15 @@ class MyTool(BaseTool):
         return result, {"status": "success"}
 
 # Register tool
-registry = create_default_registry()
+registry = create_registry()
+registry.register(MyTool())
+```
+
+You can also create a registry with only specific builtin tools:
+
+```python
+# Only register bash and finish tools, plus custom tool
+registry = create_registry(builtin_names=["execute_bash", "finish"])
 registry.register(MyTool())
 ```
 
@@ -393,7 +421,7 @@ await manager.add_server(
 )
 
 # Register to ToolRegistry
-registry = create_default_registry()
+registry = create_registry()
 manager.register_tools(registry)
 
 # Now all MCP tools are available as github_* tools

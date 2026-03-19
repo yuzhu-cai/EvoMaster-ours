@@ -1,6 +1,6 @@
-"""飞书事件解析
+"""Feishu event parsing
 
-解析 im.message.receive_v1 事件，提取消息上下文。
+Parse im.message.receive_v1 events and extract message context.
 """
 
 from __future__ import annotations
@@ -15,25 +15,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FeishuMessageContext:
-    """解析后的飞书消息上下文"""
+    """Parsed Feishu message context."""
 
     chat_id: str
     message_id: str
     sender_open_id: str
-    chat_type: str  # "p2p" 或 "group"
-    content: str  # 纯文本内容
-    message_type: str  # "text", "post", 等
-    mentions: list[str] | None = None  # 被 @ 的 open_id 列表
+    chat_type: str  # "p2p" or "group"
+    content: str  # Plain text content
+    message_type: str  # "text", "post", etc.
+    mentions: list[str] | None = None  # List of @mentioned open_ids
 
 
 def parse_event(event_data) -> Optional[FeishuMessageContext]:
-    """从飞书 SDK 事件对象中提取消息上下文
+    """Extract message context from a Feishu SDK event object.
 
     Args:
-        event_data: lark_oapi 事件 data (P2ImMessageReceiveV1Data)
+        event_data: lark_oapi event data (P2ImMessageReceiveV1Data).
 
     Returns:
-        FeishuMessageContext 或 None（解析失败时）
+        A FeishuMessageContext instance, or None on parse failure.
     """
     try:
         message = event_data.message
@@ -48,7 +48,7 @@ def parse_event(event_data) -> Optional[FeishuMessageContext]:
 
         content = parse_message_content(message.content, message_type)
 
-        # 提取 @mention 列表
+        # Extract @mention list
         mentions = []
         if hasattr(message, "mentions") and message.mentions:
             for mention in message.mentions:
@@ -72,14 +72,14 @@ def parse_event(event_data) -> Optional[FeishuMessageContext]:
 
 
 def parse_message_content(raw_content: str, message_type: str) -> str:
-    """解析消息内容为纯文本
+    """Parse message content into plain text.
 
     Args:
-        raw_content: 飞书消息 content JSON 字符串
-        message_type: 消息类型
+        raw_content: Feishu message content JSON string.
+        message_type: Message type.
 
     Returns:
-        纯文本内容
+        Plain text content.
     """
     try:
         data = json.loads(raw_content)
@@ -90,9 +90,9 @@ def parse_message_content(raw_content: str, message_type: str) -> str:
         return data.get("text", "").strip()
 
     if message_type == "post":
-        # post 类型是富文本，提取所有 text 段
+        # post type is rich text; extract all text segments
         parts: list[str] = []
-        # 尝试中英文标题
+        # Try to extract the title (Chinese or English)
         title = data.get("title", "")
         if title:
             parts.append(title)
@@ -106,9 +106,9 @@ def parse_message_content(raw_content: str, message_type: str) -> str:
                 elif tag == "a":
                     parts.append(element.get("text", element.get("href", "")))
                 elif tag == "at":
-                    # @人的标记，跳过
+                    # @mention tag, skip
                     pass
         return "\n".join(parts).strip()
 
-    # 其他类型（图片、文件等）返回类型提示
+    # Other types (image, file, etc.) return a type hint
     return f"[{message_type}]"
