@@ -3,27 +3,23 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
 from evomaster.core import BasePlayground, register_playground
 
+from ..tools import build_frontier_tools
 from .reflect_exp import ReflectExp
 from .solve_exp import SolveExp
-from ..tools import build_frontier_tools
+
+TASK_META_START = "[frontierscience_task_meta]"
+TASK_META_END = "[/frontierscience_task_meta]"
+EXTERNAL_TOOL_NAMES = {"search_web", "google_scholar", "visit_web"}
 
 
 @register_playground("frontierscience")
 class FrontierSciencePlayground(BasePlayground):
-    """A minimal playground specialized for science QA with web/scholar tools."""
-
-    _TASK_MODE_OPEN = "open_book"
-    _TASK_MODE_CLOSED = "closed_book"
-    _TASK_MODE_CLOSED_STRICT = "closed_book_strict"
-
-    _EXTERNAL_RETRIEVAL_TOOLS = {"search_web", "google_scholar", "visit_web"}
-    _SKILL_ENTRY_TOOL = "use_skill"
+    """Two-stage science QA playground with solve and reflect agents."""
 
     def __init__(self, config_dir: Path | None = None, config_path: Path | None = None):
         if config_path is None and config_dir is None:
@@ -35,10 +31,10 @@ class FrontierSciencePlayground(BasePlayground):
         self._base_enabled_tool_names: dict[str, list[str] | None] = {}
 
     def setup(self) -> None:
-        self.logger.info("Setting up minimal FrontierScience playground...")
+        self.logger.info("Setting up FrontierScience playground")
         self._setup_session()
         self._setup_agents()
-        self.logger.info("Minimal FrontierScience playground setup complete")
+        self.logger.info("FrontierScience playground setup complete")
 
     def _setup_tools(
         self,
@@ -52,11 +48,7 @@ class FrontierSciencePlayground(BasePlayground):
             self.tools.register(tool)
 
         self._frontier_tool_names = [tool.name for tool in custom_tools]
-        self.logger.info(
-            "Registered FrontierScience tools (%d): %s",
-            len(self._frontier_tool_names),
-            self._frontier_tool_names,
-        )
+        self.logger.info("Registered FrontierScience tools: %s", self._frontier_tool_names)
 
     def _setup_agents(self) -> None:
         super()._setup_agents()
@@ -66,167 +58,78 @@ class FrontierSciencePlayground(BasePlayground):
         for slot_name, agent in self.agents.items():
             if agent is None:
                 continue
-            if agent.enabled_tool_names is None:
-                agent.enabled_tool_names = []
-            added_names: list[str] = []
+            enabled_tool_names = list(agent.enabled_tool_names or [])
             for tool_name in self._frontier_tool_names:
-                if tool_name not in agent.enabled_tool_names:
-                    agent.enabled_tool_names.append(tool_name)
-                    added_names.append(tool_name)
-            self.logger.info(
-                "Agent '%s' tool setup complete, newly added=%s, total=%d",
-                slot_name,
-                added_names if added_names else "[]",
-                len(agent.enabled_tool_names),
-            )
-            self.logger.debug(
-                "Agent '%s' final enabled tools: %s",
-                slot_name,
-                agent.enabled_tool_names,
-            )
-            self._base_enabled_tool_names[slot_name] = (
-                list(agent.enabled_tool_names) if agent.enabled_tool_names is not None else None
-            )
+                if tool_name not in enabled_tool_names:
+                    enabled_tool_names.append(tool_name)
+            agent.enabled_tool_names = enabled_tool_names
+            self._base_enabled_tool_names[slot_name] = list(enabled_tool_names)
+            self.logger.debug("Agent %s enabled tools: %s", slot_name, enabled_tool_names)
 
-    def _route_task_mode(self, task_description: str, task_meta: dict[str, str]) -> tuple[str, str]:
-        raw_mode = str(task_meta.get("task_mode", "")).strip().lower()
-        mode_alias_map = {
-            self._TASK_MODE_OPEN: self._TASK_MODE_OPEN,
-            "open": self._TASK_MODE_OPEN,
-            "retrieval": self._TASK_MODE_OPEN,
-            "research": self._TASK_MODE_OPEN,
-            "open_book": self._TASK_MODE_OPEN,
-            self._TASK_MODE_CLOSED: self._TASK_MODE_CLOSED,
-            "closed": self._TASK_MODE_CLOSED,
-            "closed_book": self._TASK_MODE_CLOSED,
-            self._TASK_MODE_CLOSED_STRICT: self._TASK_MODE_CLOSED_STRICT,
-            "strict_closed": self._TASK_MODE_CLOSED_STRICT,
-            "no_retrieval": self._TASK_MODE_CLOSED_STRICT,
-            "no_research": self._TASK_MODE_CLOSED_STRICT,
-        }
-        mapped_mode = mode_alias_map.get(raw_mode)
-        if mapped_mode is not None:
-            return mapped_mode, f"task_meta_override:{raw_mode}"
-
-        text = (task_description or "").lower()
-
-        strict_closed_markers = [
-            "without external",
-            "no external sources",
-            "do not use external",
-            "do not search the web",
-            "no web search",
-            "using only the provided context",
-            "from the provided context only",
-            "self-contained question",
-            "closed-book",
-        ]
-        for marker in strict_closed_markers:
-            if marker in text:
-                return self._TASK_MODE_CLOSED_STRICT, f"strict_closed_marker:{marker}"
-
-        open_keywords = [
-            "latest",
-            "recent",
-            "state-of-the-art",
-            "literature",
-            "review",
-            "survey",
-            "citation",
-            "cite",
-            "arxiv",
-            "pubmed",
-            "google scholar",
-            "web search",
-            "find papers",
-            "latest work",
-            "references",
-            "bibliography",
-            "citation needed",
-            "find source",
-            "look up",
-            "clinical trial",
-            "trial phase",
-            "gaia dr3",
-        ]
-        for keyword in open_keywords:
-            if keyword in text:
-                return self._TASK_MODE_OPEN, f"open_keyword:{keyword}"
-
-        if "doi:" in text or "arxiv:" in text:
-            return self._TASK_MODE_OPEN, "open_reference_marker:doi_or_arxiv"
-        if re.search(r"\[[0-9]{1,3}\]", text):
-            return self._TASK_MODE_OPEN, "open_reference_marker:bracket_citation"
-
-        return self._TASK_MODE_OPEN, "default_open_book"
-
-    def _apply_task_routing(self, task_mode: str) -> None:
-        if task_mode not in {self._TASK_MODE_OPEN, self._TASK_MODE_CLOSED, self._TASK_MODE_CLOSED_STRICT}:
-            task_mode = self._TASK_MODE_OPEN
-
+    def _configure_retrieval_tools(self, allow_external_retrieval: bool) -> None:
         for slot_name, agent in self.agents.items():
             if agent is None:
                 continue
-            base_names = self._base_enabled_tool_names.get(slot_name)
-            if base_names is None:
+            base_enabled = self._base_enabled_tool_names.get(slot_name)
+            if base_enabled is None:
                 continue
-
-            routed_names = list(base_names)
-            if task_mode == self._TASK_MODE_CLOSED_STRICT:
-                routed_names = [
-                    name
-                    for name in routed_names
-                    if name not in self._EXTERNAL_RETRIEVAL_TOOLS and name != self._SKILL_ENTRY_TOOL
+            if allow_external_retrieval:
+                agent.enabled_tool_names = list(base_enabled)
+            else:
+                agent.enabled_tool_names = [
+                    tool_name for tool_name in base_enabled if tool_name not in EXTERNAL_TOOL_NAMES
                 ]
-
-            agent.enabled_tool_names = routed_names
-            self.logger.info(
-                "Task routing applied to '%s': mode=%s, enabled_tools=%s",
-                slot_name,
-                task_mode,
-                agent.enabled_tool_names,
-            )
 
     def _create_exp(self, name: str):
         if name == "solve_exp":
-            agent = self.agents.get("solve_agent")
-            if agent is None:
-                raise RuntimeError("No available agent for SolveExp.")
+            agent = self.agents["solve_agent"]
             exp = SolveExp(agent, self.config)
         elif name == "reflect_exp":
-            agent = self.agents.get("reflect_agent")
-            if agent is None:
-                raise RuntimeError("No available agent for ReflectExp.")
+            agent = self.agents["reflect_agent"]
             exp = ReflectExp(agent, self.config)
         else:
-            raise RuntimeError(f"Unknown experiment name: {name}")
+            raise ValueError(f"Unknown experiment: {name}")
 
-        if self.run_dir:
-            exp.set_run_dir(self.run_dir)
+        exp.set_run_dir(self.run_dir)
         return exp
 
     def _extract_task_meta(self, task_description: str) -> tuple[str, dict[str, str]]:
-        pattern = re.compile(
-            r"^\s*\[frontierscience_task_meta\]\s*\n(?P<body>.*?)\n\s*\[/frontierscience_task_meta\]\s*\n?",
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        match = pattern.match(task_description or "")
-        if match is None:
-            return task_description, {}
+        text = task_description or ""
+        if not text.lstrip().startswith(TASK_META_START):
+            return text, {}
 
-        body = match.group("body")
+        lines = text.splitlines()
+        if not lines:
+            return text, {}
+
         meta: dict[str, str] = {}
-        for raw_line in body.splitlines():
+        inside_meta = False
+        body_start = 0
+
+        for index, raw_line in enumerate(lines):
             line = raw_line.strip()
+            if not inside_meta:
+                if line == TASK_META_START:
+                    inside_meta = True
+                elif line:
+                    return text, {}
+                continue
+
+            if line == TASK_META_END:
+                body_start = index + 1
+                break
+
             if not line or "=" not in line:
                 continue
-            key, val = line.split("=", 1)
+            key, value = line.split("=", 1)
             key = key.strip()
-            val = val.strip()
+            value = value.strip()
             if key:
-                meta[key] = val
+                meta[key] = value
+        else:
+            return text, {}
 
-        cleaned_description = (task_description[match.end() :]).lstrip()
+        cleaned_description = "\n".join(lines[body_start:]).lstrip()
         return cleaned_description, meta
 
     def run(
@@ -239,33 +142,33 @@ class FrontierSciencePlayground(BasePlayground):
         cleaned_description, task_meta = self._extract_task_meta(task_description)
         runtime_task_id = task_meta.get("task_id", default_task_id) or default_task_id
         runtime_task_type = task_meta.get("task_type", "frontier_science") or "frontier_science"
-        task_input_data = {k: v for k, v in task_meta.items() if k not in {"task_id", "task_type"}}
-        task_mode, routing_reason = self._route_task_mode(cleaned_description, task_meta)
-        task_input_data["task_mode"] = task_mode
-        task_input_data["routing_reason"] = routing_reason
-
-        if task_mode == self._TASK_MODE_OPEN:
-            retrieval_policy = "conditional_external_research"
-        elif task_mode == self._TASK_MODE_CLOSED:
-            retrieval_policy = "prefer_local_reasoning_allow_external_if_required"
-        else:
-            retrieval_policy = "no_external_retrieval"
-        task_input_data["retrieval_policy"] = retrieval_policy
+        allow_external_retrieval = task_meta.get("allow_external_retrieval", "true").strip().lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        task_input_data = {
+            key: value
+            for key, value in task_meta.items()
+            if key not in {"task_id", "task_type", "allow_external_retrieval"}
+        }
+        task_input_data["allow_external_retrieval"] = allow_external_retrieval
 
         self.task_id = runtime_task_id
         try:
             self.setup()
-            self._apply_task_routing(task_mode)
+            self._configure_retrieval_tools(allow_external_retrieval)
             self._setup_trajectory_file(output_file)
 
-            image_count = len(images or [])
+            solve_workspace = None
+            if self.run_dir:
+                solve_workspace = self.run_dir / "workspaces" / runtime_task_id
+
             self.logger.info(
-                "Stage 1: Running SolveExp (task_id=%s, task_type=%s, mode=%s, reason=%s, image_count=%d)",
+                "Running SolveExp (task_id=%s, task_type=%s, image_count=%d)",
                 runtime_task_id,
                 runtime_task_type,
-                task_mode,
-                routing_reason,
-                image_count,
+                len(images or []),
             )
             solve_exp = self._create_exp("solve_exp")
             solve_result = solve_exp.run(
@@ -276,25 +179,24 @@ class FrontierSciencePlayground(BasePlayground):
                 images=images,
             )
             initial_answer = solve_result.get("final_answer", "")
-            self.logger.info(
-                "Stage 1: SolveExp finished (task_id=%s, status=%s, steps=%s)",
-                runtime_task_id,
-                solve_result.get("status"),
-                solve_result.get("steps"),
-            )
 
-            self.logger.info("Stage 2: Running ReflectExp (task_id=%s)", runtime_task_id)
+            self.logger.info("Running ReflectExp (task_id=%s)", runtime_task_id)
+            if solve_workspace is not None:
+                self.config.session["local"]["workspace_path"] = str(solve_workspace.absolute())
+                self.config.session["local"]["working_dir"] = str(solve_workspace.absolute())
+                reflect_trajectory_dir = self.run_dir / "trajectories" / f"{runtime_task_id}_reflect"
+                reflect_trajectory_dir.mkdir(parents=True, exist_ok=True)
+                reflect_trajectory_file = reflect_trajectory_dir / "trajectory.json"
+                reflect_agent = self.agents.get("reflect_agent")
+                if reflect_agent is not None:
+                    reflect_agent.set_trajectory_file_path(reflect_trajectory_file)
+
             reflect_exp = self._create_exp("reflect_exp")
             reflect_result = reflect_exp.run(
                 task_description=cleaned_description,
                 task_id=runtime_task_id,
                 initial_answer=initial_answer,
-            )
-            self.logger.info(
-                "Stage 2: ReflectExp finished (task_id=%s, status=%s, steps=%s)",
-                runtime_task_id,
-                reflect_result.get("status"),
-                reflect_result.get("steps"),
+                input_data=task_input_data,
             )
 
             return {
@@ -309,12 +211,7 @@ class FrontierSciencePlayground(BasePlayground):
                 "reflect_trajectory": reflect_result.get("trajectory"),
             }
         except Exception as exc:
-            self.logger.error(
-                "Minimal FrontierScience playground failed (task_id=%s): %s",
-                runtime_task_id,
-                exc,
-                exc_info=True,
-            )
+            self.logger.error("FrontierScience playground failed (task_id=%s): %s", runtime_task_id, exc, exc_info=True)
             return {
                 "task_id": runtime_task_id,
                 "task_type": runtime_task_type,

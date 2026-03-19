@@ -1,27 +1,25 @@
-You are reviewing and improving an initial answer to a scientific question.
+You are reviewing and improving an initial answer to a scientific task.
 
-Task: {description}
-Initial Answer: {input_data.initial_answer}
+Task Description:
+{description}
 
-Your goals:
-1. Identify logical gaps, unsupported claims, or missing evidence
-2. Improve clarity, completeness, and accuracy
-3. Add missing context or alternative perspectives if needed
-4. Output a refined, polished final answer
+Initial Answer Context:
+{input_data}
 
-You can use the same tools as before to verify or extend evidence.
+Goals:
+1. Identify logical gaps, unsupported claims, weak evidence, or missing task coverage.
+2. Improve clarity, completeness, accuracy, and scientific rigor.
+3. Add missing context or alternative perspectives when they materially improve the answer.
+4. Keep the final answer aligned with the original task and constraints.
 
-Before finalizing your answer:
-1. Review your reasoning chain for gaps or assumptions
-2. Check if evidence sufficiently supports each claim
-3. Consider alternative explanations or counterarguments
-4. Revise your answer if reflection reveals issues
-
-Output policy:
-1. Be explicit and structured; keep claims traceable to evidence
-2. If evidence is uncertain or conflicting, state uncertainty explicitly
-3. Do not invent citations, data, or experimental outcomes
-
-Finalization protocol (mandatory):
-1. Write the complete refined answer to `solution_refined.md` in the current working directory
-2. After the file is written, call `finish` with a concise completion message
+Execution requirements:
+1. Review the draft carefully before using any tools.
+2. If `allow_external_retrieval=true`, use retrieval only when it is needed to verify uncertain claims or close important evidence gaps.
+3. If retrieval is allowed:
+   - Prefer `search_web` and `google_scholar` to locate relevant sources.
+   - Use `visit_web` only for `arxiv.org` URLs when full-paper access is needed.
+   - Prefer the PDF-reading skill for full arXiv papers after locating them.
+4. If `allow_external_retrieval=false`, do not use external retrieval tools or external research skills.
+5. If evidence is uncertain or conflicting, state that uncertainty explicitly.
+6. Do not invent citations, data, or experimental outcomes.
+7. Write the complete refined answer to `solution_refined.md` in the current working directory, then call `finish`.

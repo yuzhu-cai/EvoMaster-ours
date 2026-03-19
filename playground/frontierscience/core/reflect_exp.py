@@ -1,15 +1,13 @@
-"""Reflect experiment for FrontierScience."""
+"""Reflection stage for FrontierScience."""
 
 from __future__ import annotations
 
-from typing import Any
-
-from evomaster.core.exp import BaseExp
 from evomaster import TaskInstance
+from evomaster.core.exp import BaseExp, extract_agent_response
 
 
 class ReflectExp(BaseExp):
-    """ReflectExp - 对初始答案进行反思和改进"""
+    """Run the reflection agent to improve an initial answer."""
 
     @property
     def exp_name(self) -> str:
@@ -20,30 +18,45 @@ class ReflectExp(BaseExp):
         task_description: str,
         task_id: str = "exp_001",
         initial_answer: str = "",
-    ) -> dict[str, Any]:
+        input_data: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         self.logger.info("ReflectExp started (task_id=%s)", task_id)
 
-        task = TaskInstance(
-            task_id=f"{task_id}_reflect",
-            task_type="reflect",
-            description=task_description,
-            input_data={"initial_answer": initial_answer},
-        )
+        try:
+            task = TaskInstance(
+                task_id=f"{task_id}_reflect",
+                task_type="reflect",
+                description=task_description,
+                input_data={
+                    "initial_answer": initial_answer,
+                    **(input_data or {}),
+                },
+            )
 
-        trajectory = self.agent.run(task)
-        status = str(getattr(trajectory, "status", "unknown"))
-        steps = len(getattr(trajectory, "steps", []) or [])
-        refined_answer = self._extract_agent_response(trajectory)
+            trajectory = self.agent.run(task)
+            status = str(getattr(trajectory, "status", "unknown"))
+            steps = len(getattr(trajectory, "steps", []) or [])
+            refined_answer = (extract_agent_response(trajectory) or "").strip()
 
-        self.logger.info("ReflectExp completed (task_id=%s, status=%s)", task_id, status)
-
-        result = {
-            "task_id": task_id,
-            "status": status,
-            "steps": steps,
-            "trajectory": trajectory,
-            "initial_answer": initial_answer,
-            "refined_answer": refined_answer,
-        }
-        self.results.append(result)
-        return result
+            result = {
+                "task_id": task_id,
+                "status": status,
+                "steps": steps,
+                "trajectory": trajectory,
+                "initial_answer": initial_answer,
+                "refined_answer": refined_answer,
+            }
+            self.results.append(result)
+            return result
+        except Exception as exc:
+            self.logger.error("ReflectExp failed (task_id=%s): %s", task_id, exc, exc_info=True)
+            result = {
+                "task_id": task_id,
+                "status": "failed",
+                "steps": 0,
+                "error": str(exc),
+                "initial_answer": initial_answer,
+                "refined_answer": "",
+            }
+            self.results.append(result)
+            return result

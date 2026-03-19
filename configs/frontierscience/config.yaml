@@ -14,7 +14,7 @@ llm:
 
   local_sglang:
     provider: "deepseek"
-    model: "DeepSeek/DeepSeek-V3-0324"
+    model: "deepseek-v3.2"
     api_key: "${DEEPSEEK_API_KEY}"
     base_url: "${DEEPSEEK_API_BASE}"
     temperature: 0.5

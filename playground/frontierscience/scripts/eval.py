@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument(
         "--model",
-        default=os.getenv("JUDGE_MODEL", "Vendor2/GPT-5"),
+        default="Vendor2/GPT-5",
         help="Judge model name.",
     )
     parser.add_argument(
@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         default="009njbjuxu4q9001000degiwa1xfovvi008wbdqe",
         help="Judge API key.",
     )
-    parser.add_argument("--workers", type=int, default=10, help="Parallel worker count.")
+    parser.add_argument("--workers", type=int, default=20, help="Parallel worker count.")
     parser.add_argument("--max-tokens", type=int, default=128000, help="Max tokens for judge response.")
     parser.add_argument("--timeout", type=int, default=600, help="Judge request timeout in seconds.")
     parser.add_argument("--retries", type=int, default=2, help="Retry count per sample on API errors.")
@@ -84,12 +84,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--rubric-keys",
-        default="rubric,answer,gt",
+        default="answer",
         help="Comma-separated candidate keys for rubric text.",
     )
     parser.add_argument(
         "--answer-keys",
-        default="solution,raw_answer,raw_response,response,final_answer",
+        default="solution,solution_refined",
         help="Comma-separated candidate keys for attempted answer text.",
     )
     return parser.parse_args()
