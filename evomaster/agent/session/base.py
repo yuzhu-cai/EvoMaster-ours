@@ -6,6 +6,7 @@ Session 是 Agent 与集群 Env 交互的介质，提供命令执行、文件操
 from __future__ import annotations
 
 import logging
+import threading
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -31,6 +32,16 @@ class BaseSession(ABC):
         self.config = config or SessionConfig()
         self.logger = logging.getLogger(self.__class__.__name__)
         self._is_open = False
+        self._cancel_event: threading.Event | None = None
+
+    @property
+    def cancel_event(self) -> threading.Event | None:
+        """外部取消信号，由 Agent 注入，exec_bash 轮询中检查。"""
+        return self._cancel_event
+
+    @cancel_event.setter
+    def cancel_event(self, event: threading.Event | None) -> None:
+        self._cancel_event = event
 
     @property
     def is_open(self) -> bool:

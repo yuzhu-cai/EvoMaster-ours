@@ -141,6 +141,9 @@ class BaseAgent(ABC):
         # 实例级别的轨迹文件路径（每个agent实例独立）
         self._trajectory_file_path: Path | None = None
 
+        # Cancellation event (set from external thread to request graceful stop)
+        self._cancel_event = threading.Event()
+
     def run(self, task: TaskInstance, on_step=None):
         """执行任务
 
@@ -161,6 +164,14 @@ class BaseAgent(ABC):
         try:
             # 执行循环
             for turn in range(self.config.max_turns):
+                # 检查外部取消信号
+                if self._cancel_event.is_set():
+                    self.logger.info("=" * 80)
+                    self.logger.info("🛑 Agent cancelled by user")
+                    self.logger.info("=" * 80)
+                    self.trajectory.finish("cancelled")
+                    break
+
                 # 清晰显示当前步骤
                 self.logger.info("=" * 80)
                 self.logger.info(f"📍 Step [{turn + 1}/{self.config.max_turns}]")
@@ -244,6 +255,14 @@ class BaseAgent(ABC):
 
         try:
             for turn in range(self.config.max_turns):
+                # 检查外部取消信号
+                if self._cancel_event.is_set():
+                    self.logger.info("=" * 80)
+                    self.logger.info("🛑 Agent cancelled by user")
+                    self.logger.info("=" * 80)
+                    self.trajectory.finish("cancelled")
+                    break
+
                 self.logger.info("=" * 80)
                 self.logger.info(f"📍 Step [{turn + 1}/{self.config.max_turns}]")
                 self.logger.info("=" * 80)
@@ -325,6 +344,10 @@ class BaseAgent(ABC):
 
         self.trajectory.dialogs.append(self.current_dialog)
         self._step_count = 0
+
+        # Link cancel event to session for cancel-aware tool execution
+        if self.session is not None:
+            self.session.cancel_event = self._cancel_event
 
     def _step(self) -> bool:
         """执行一步
@@ -812,7 +835,17 @@ class BaseAgent(ABC):
             name: Agent名称
         """
         self._agent_name = name
-    
+
+    def cancel(self) -> None:
+        """Request graceful cancellation. The agent will stop at the next step boundary."""
+        self._cancel_event.set()
+        self.logger.info("Cancellation requested for agent %s", self._agent_name or self.__class__.__name__)
+
+    @property
+    def is_cancelled(self) -> bool:
+        """Check if cancellation has been requested."""
+        return self._cancel_event.is_set()
+
     def _append_trajectory_entry(self, dialog_for_query: Dialog, step_record: "StepRecord") -> None:
         """追加轨迹条目到轨迹文件
 

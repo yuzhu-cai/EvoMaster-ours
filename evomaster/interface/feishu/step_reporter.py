@@ -61,6 +61,11 @@ class FeishuStepReporter:
         # TODO 进度清单
         self._todo_items: list[dict] = []  # [{"label": "...", "done": False}, ...]
 
+        # 停止按钮
+        self._stop_actions: list[dict] | None = None  # 进度卡片上的停止按钮配置
+        self._stopping = False  # True 时抑制进度 patch（finalize 仍生效）
+        self._finalized = False  # 防止重复 finalize
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -84,6 +89,15 @@ class FeishuStepReporter:
         """获取未完成的 TODO 标签列表。"""
         return [item["label"] for item in self._todo_items if not item["done"]]
 
+    def set_stop_actions(self, actions: list[dict]) -> None:
+        """设置停止按钮，在所有进度 patch 中包含该按钮。"""
+        self._stop_actions = actions
+
+    def mark_stopping(self) -> None:
+        """标记为"正在停止"，抑制后续进度 patch（finalize 仍正常执行）。"""
+        self._stopping = True
+        self.stop_heartbeat()
+
     def send_initial_card(self, task_text: str) -> bool:
         """发送初始 "正在处理" 卡片，捕获 message_id 用于后续 PATCH。"""
         from .messaging.sender import send_card_message
@@ -106,6 +120,14 @@ class FeishuStepReporter:
         )
         if message_id:
             self._card_message_id = message_id
+            # 若已配置停止按钮，立即 patch 加上按钮
+            if self._stop_actions:
+                self._patch_with_actions(
+                    title="🤖 Agent 执行中...",
+                    content=content,
+                    template="wathet",
+                    actions=self._stop_actions,
+                )
             return True
         return False
 
@@ -130,7 +152,7 @@ class FeishuStepReporter:
     def _heartbeat_loop(self) -> None:
         """心跳循环：每 interval 秒 patch 一次卡片更新 elapsed。"""
         while not self._heartbeat_stop.wait(self._heartbeat_interval):
-            if self._card_message_id is None:
+            if self._card_message_id is None or self._stopping:
                 continue
             try:
                 content = self._build_progress_content(
@@ -141,11 +163,14 @@ class FeishuStepReporter:
                     if self._step_count > 0
                     else "..."
                 )
-                self._patch(
-                    title=f"🤖 Agent 执行中... ({step_info})",
-                    content=content,
-                    template="wathet",
-                )
+                title = f"🤖 Agent 执行中... ({step_info})"
+                if self._stop_actions:
+                    self._patch_with_actions(
+                        title=title, content=content, template="wathet",
+                        actions=self._stop_actions,
+                    )
+                else:
+                    self._patch(title=title, content=content, template="wathet")
             except Exception:
                 logger.debug("Heartbeat patch failed", exc_info=True)
 
@@ -160,13 +185,18 @@ class FeishuStepReporter:
         # 检查 TODO 完成标记（通过 think 工具的 PROGRESS 标记）
         self._check_todo_progress(step_record)
 
-        # 卡片：仅更新进度
-        content = self._build_progress_content(step_number, max_steps, running=True)
-        self._patch(
-            title=f"🤖 Agent 执行中... (Step {step_number}/{max_steps})",
-            content=content,
-            template="wathet",
-        )
+        # 停止中：跳过卡片 patch，但仍写入文档
+        if not self._stopping:
+            # 卡片：更新进度
+            content = self._build_progress_content(step_number, max_steps, running=True)
+            title = f"🤖 Agent 执行中... (Step {step_number}/{max_steps})"
+            if self._stop_actions:
+                self._patch_with_actions(
+                    title=title, content=content, template="wathet",
+                    actions=self._stop_actions,
+                )
+            else:
+                self._patch(title=title, content=content, template="wathet")
 
         # 文档：完整内容（无截断）
         if self._doc_writer and self._document_id:
@@ -185,6 +215,10 @@ class FeishuStepReporter:
             final_answer: 最终回答文本
             actions: 可选按钮列表，格式同 build_card_with_actions
         """
+        if self._finalized:
+            return
+        self._finalized = True
+
         self.stop_heartbeat()
 
         if self._card_message_id is None:
@@ -222,6 +256,8 @@ class FeishuStepReporter:
 
         if status == "completed":
             template, title = "green", "✅ 任务完成"
+        elif status == "cancelled":
+            template, title = "grey", "🛑 已停止"
         else:
             template, title = "red", f"❌ 任务{status}"
 

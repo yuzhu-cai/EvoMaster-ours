@@ -254,6 +254,11 @@ class TaskDispatcher:
             self._send_list_card(chat_id, message_id)
             return
 
+        # /stop 命令：停止当前 chat 的所有运行中任务
+        if stripped == "/stop":
+            self._handle_stop_command(chat_id, message_id)
+            return
+
         # 白名单校验：/agent 指定的 agent 必须在允许列表中
         if agent_name and agent_name != self._default_agent:
             allowed = self._get_allowed_agent_names()
@@ -411,10 +416,17 @@ class TaskDispatcher:
                     reporter = self._step_reporter_factory(
                         chat_id, message_id, sender_open_id
                     )
+                    # 添加停止按钮
+                    reporter.set_stop_actions(
+                        self._build_stop_actions(chat_id, target="orchestrator")
+                    )
                     reporter.send_initial_card(task_text)
                     on_step = reporter.on_step
                 except Exception:
                     logger.exception("Failed to create step reporter")
+
+            # 跟踪当前 reporter 和 running agent（供停止按钮使用）
+            session.current_reporter = reporter
 
             try:
                 # 子任务模式：/agent 指定了非默认 agent
@@ -588,6 +600,8 @@ class TaskDispatcher:
                         session.agent, memory_manager, memory_config, user_id, task_text,
                     )
 
+                    session.current_running_agent = session.agent
+                    session.agent._cancel_event.clear()
                     trajectory = session.agent.run(task, on_step=on_step)
                     session.initialized = True
 
@@ -606,12 +620,27 @@ class TaskDispatcher:
                         session.agent, memory_manager, memory_config, user_id, task_text,
                     )
 
+                    session.current_running_agent = session.agent
+                    session.agent._cancel_event.clear()
                     trajectory = session.agent.continue_run(
                         task_text, on_step=on_step
                     )
 
                     # 自动从用户消息中提取记忆
                     self._memory_auto_capture(memory_manager, memory_config, user_id, task_text)
+
+                # === 取消检测 ===
+                if trajectory and trajectory.status == "cancelled":
+                    logger.info("Task cancelled by user in chat_id=%s", chat_id)
+                    if reporter:
+                        try:
+                            reporter.finalize("cancelled", "任务已被用户停止。")
+                        except Exception:
+                            logger.exception("Failed to finalize cancelled reporter")
+                    session.current_reporter = None
+                    session.current_running_agent = None
+                    session.dispatched_delegation_keys.clear()
+                    return None
 
                 # === ask_user 检测 ===
                 # magiclaw 调用了 ask_user，逐个展示问题卡片
@@ -681,6 +710,8 @@ class TaskDispatcher:
                     self._process_pending_reviews(session, chat_id, message_id, sender_open_id)
                     # 重置追踪集合（为下一轮用户消息做准备）
                     session.dispatched_delegation_keys.clear()
+                    session.current_reporter = None
+                    session.current_running_agent = None
                     return None
 
                 # 无委派：正常返回
@@ -698,16 +729,22 @@ class TaskDispatcher:
                         reporter.finalize("completed", answer)
                         # 处理待审阅的后台任务（在仍持有 lock 时）
                         self._process_pending_reviews(session, chat_id, message_id, sender_open_id)
+                        session.current_reporter = None
+                        session.current_running_agent = None
                         return None  # 卡片已包含回答，不需要额外消息
                     except Exception:
                         logger.exception("Failed to finalize step reporter")
 
                 # 处理待审阅的后台任务（在仍持有 lock 时）
                 self._process_pending_reviews(session, chat_id, message_id, sender_open_id)
+                session.current_reporter = None
+                session.current_running_agent = None
                 return answer
 
             except Exception as e:
                 logger.exception("Task failed in session chat_id=%s", chat_id)
+                session.current_reporter = None
+                session.current_running_agent = None
                 if reporter:
                     try:
                         reporter.finalize("failed")
@@ -720,8 +757,14 @@ class TaskDispatcher:
     def _run_subtask(
         self, agent_name: str, task_text: str, on_step: Optional[Callable] = None,
         chat_id: Optional[str] = None, sender_open_id: Optional[str] = None,
+        on_agent_ready: Optional[Callable] = None,
     ) -> str:
-        """独立运行指定 agent 的子任务，不复用会话上下文。"""
+        """独立运行指定 agent 的子任务，不复用会话上下文。
+
+        Args:
+            on_agent_ready: 可选回调，在 agent 创建后、run() 前调用，签名 (agent) -> None。
+                用于外部保存 agent 引用（如停止按钮需要）。
+        """
         from evomaster.utils.types import TaskInstance
 
         logger.info("Running subtask with agent=%s", agent_name)
@@ -735,6 +778,8 @@ class TaskDispatcher:
             if chat_id:
                 self._inject_send_file_tool(playground, chat_id)
             agent = playground.agent
+            if on_agent_ready:
+                on_agent_ready(agent)
             task = TaskInstance(
                 task_id=f"subtask_{agent_name}",
                 task_type="subtask",
@@ -784,11 +829,13 @@ class TaskDispatcher:
         on_step: Optional[Callable] = None,
         sender_open_id: Optional[str] = None,
         session_key: str | None = None,
+        reporter=None,
     ) -> tuple[str, Any]:
         """运行会话级子任务：支持多轮对话的独立 agent 会话。
 
         Args:
             session_key: 自定义会话 key。不传时 fallback 到 {chat_id}:{agent_name}。
+            reporter: 可选 FeishuStepReporter，存储到 session 供停止按钮使用。
 
         Returns:
             (answer_text, trajectory) 元组。trajectory 可能为 None（异常时）。
@@ -807,6 +854,10 @@ class TaskDispatcher:
             session.message_count += 1
             # 注册当前线程到 playground（用于日志过滤）
             session.playground.register_thread()
+
+            # 跟踪 reporter 和 running agent（供停止按钮使用）
+            if reporter:
+                session.current_reporter = reporter
 
             try:
                 if not session.initialized:
@@ -828,6 +879,8 @@ class TaskDispatcher:
                         task_type="session_subtask",
                         description=task_text,
                     )
+                    session.current_running_agent = session.agent
+                    session.agent._cancel_event.clear()
                     trajectory = session.agent.run(task, on_step=on_step)
                     session.initialized = True
                 else:
@@ -835,6 +888,8 @@ class TaskDispatcher:
                         "Continuing session subtask key=%s (message #%d)",
                         session_key, session.message_count,
                     )
+                    session.current_running_agent = session.agent
+                    session.agent._cancel_event.clear()
                     trajectory = session.agent.continue_run(
                         task_text, on_step=on_step
                     )
@@ -849,6 +904,9 @@ class TaskDispatcher:
                     "Session subtask failed: key=%s, agent=%s", session_key, agent_name
                 )
                 return f"会话子任务执行出错: {e}", None
+            finally:
+                session.current_reporter = None
+                session.current_running_agent = None
 
     def _inject_doc_write_tool(self, playground, sender_open_id: str | None) -> None:
         """将飞书文档写入工具注入 playground 的所有 agent。"""
@@ -1008,6 +1066,13 @@ class TaskDispatcher:
                     subtask_reporter = self._step_reporter_factory(
                         chat_id, message_id, sender_open_id
                     )
+                    # 添加停止按钮
+                    subtask_reporter.set_stop_actions(
+                        self._build_stop_actions(
+                            chat_id, target="session_subtask",
+                            session_key=unique_session_key,
+                        )
+                    )
                     subtask_reporter.send_initial_card(
                         f"[{delegated_agent}] {delegated_task[:200]}"
                     )
@@ -1020,7 +1085,17 @@ class TaskDispatcher:
                     chat_id, delegated_agent, delegated_task,
                     subtask_on_step, sender_open_id,
                     session_key=unique_session_key,
+                    reporter=subtask_reporter,
                 )
+
+                # 检查是否被取消
+                if sub_trajectory and sub_trajectory.status == "cancelled":
+                    if subtask_reporter:
+                        try:
+                            subtask_reporter.finalize("cancelled", "任务已被用户停止。")
+                        except Exception:
+                            pass
+                    return
 
                 # waiting_for_input: 显示提问卡片
                 if sub_trajectory and sub_trajectory.status == "waiting_for_input":
@@ -1131,10 +1206,17 @@ class TaskDispatcher:
                     bg_reporter = self._step_reporter_factory(
                         chat_id, message_id, sender_open_id
                     )
+                    # 添加停止按钮
+                    bg_reporter.set_stop_actions(
+                        self._build_stop_actions(
+                            chat_id, target="subtask", task_id=bg_task.task_id,
+                        )
+                    )
                     bg_reporter.send_initial_card(
                         f"🔄 [{bg_task.agent_name}] {bg_task.task_description[:200]}"
                     )
                     bg_reporter.start_heartbeat(interval=15)
+                    bg_task.reporter = bg_reporter
                 except Exception:
                     logger.exception("Failed to create background reporter")
 
@@ -1158,11 +1240,27 @@ class TaskDispatcher:
                             bg_task.task_id, exc_info=True,
                         )
 
+            def _store_agent(agent):
+                bg_task.agent = agent
+
             try:
                 answer = self._run_subtask(
                     bg_task.agent_name, bg_task.task_description,
                     _on_step, chat_id=chat_id, sender_open_id=sender_open_id,
+                    on_agent_ready=_store_agent,
                 )
+
+                # 检查是否被用户取消
+                if bg_task.agent and bg_task.agent.is_cancelled:
+                    self._bg_task_registry.mark_cancelled(bg_task)
+                    if bg_reporter:
+                        try:
+                            bg_reporter.stop_heartbeat()
+                            bg_reporter.finalize("cancelled", "任务已被用户停止。")
+                        except Exception:
+                            logger.exception("Failed to finalize cancelled background reporter")
+                    return  # 取消的任务跳过自动审阅
+
                 self._bg_task_registry.mark_completed(bg_task, answer)
 
                 if bg_reporter:
@@ -1185,7 +1283,7 @@ class TaskDispatcher:
                     except Exception:
                         pass
 
-            # 任务完成后触发审阅
+            # 任务完成后触发审阅（取消的任务已 return，不会到达此处）
             self._on_background_task_completed(bg_task, chat_id, message_id, sender_open_id)
 
         thread = threading.Thread(
@@ -1563,13 +1661,26 @@ class TaskDispatcher:
                     reporter = self._step_reporter_factory(
                         chat_id, card_message_id, sender_open_id
                     )
+                    # 添加停止按钮
+                    reporter.set_stop_actions(
+                        self._build_stop_actions(
+                            chat_id, target="session_subtask",
+                            session_key=session_key,
+                        )
+                    )
                     # agent_builder confirm: 延迟发送卡片，等 TODO 解析后一次性发送
                     # answer_question: 立即发送，让 on_step 可以实时更新
                     if action_type == "answer_question" or agent_name not in _CONFIRM_SUBTASK_AGENTS:
                         reporter.send_initial_card(f"[{agent_name}] {task_text}")
-                    on_step = reporter.on_step
+                    on_step = self._make_on_step_with_delegation(
+                        reporter.on_step, session, chat_id,
+                        card_message_id or f"card_{session_key}", sender_open_id,
+                    )
                 except Exception:
                     logger.exception("Failed to create step reporter for card action")
+
+            # 跟踪 reporter（供停止按钮使用）
+            session.current_reporter = reporter
 
             try:
                 # === 逐个提问：检查是否还有待展示的后续问题 ===
@@ -1635,10 +1746,12 @@ class TaskDispatcher:
                             "请使用 feishu_doc_read 工具读取飞书文档获取完整方案，然后生成所有文件。"
                         ),
                     )
+                    session.current_running_agent = builder_agent
+                    builder_agent._cancel_event.clear()
                     trajectory = builder_agent.run(plan_task, on_step=on_step)
 
                     # builder 完成后检查 TODO 是否全部完成，未完成则追加一轮
-                    if reporter and reporter.has_incomplete_todos():
+                    if reporter and reporter.has_incomplete_todos() and not builder_agent.is_cancelled:
                         incomplete = reporter.get_incomplete_todo_labels()
                         reminder = (
                             "你还有以下 TODO 项未完成，请逐一完成并上报 PROGRESS 后再调用 finish：\n"
@@ -1650,9 +1763,60 @@ class TaskDispatcher:
                         )
                         trajectory = builder_agent.continue_run(reminder, on_step=on_step)
                 else:
+                    session.current_running_agent = session.agent
+                    session.agent._cancel_event.clear()
                     trajectory = session.agent.continue_run(
                         task_text, on_step=on_step
                     )
+
+                # === 取消检测 ===
+                if trajectory and trajectory.status == "cancelled":
+                    if reporter:
+                        try:
+                            reporter.finalize("cancelled", "任务已被用户停止。")
+                        except Exception:
+                            pass
+                    return None
+
+                # === 委派检测 (safety net) ===
+                safety_delegations = self._check_all_delegations(session)
+                for delegation in safety_delegations:
+                    delegated_agent = delegation["agent_name"]
+                    delegated_task = delegation["task"]
+                    key = (delegated_agent, delegated_task)
+                    session.dispatched_delegation_keys.add(key)
+                    logger.info(
+                        "Safety-net delegation in card action: agent=%s, task=%s",
+                        delegated_agent, delegated_task[:100],
+                    )
+                    if delegated_agent in _SYNCHRONOUS_DELEGATION_AGENTS:
+                        self._dispatch_sync_delegation(
+                            chat_id, delegated_agent, delegated_task,
+                            card_message_id or f"card_{session_key}", sender_open_id,
+                        )
+                    else:
+                        bg_task = self._bg_task_registry.create(
+                            chat_id, delegated_agent, delegated_task
+                        )
+                        self._dispatch_background_subtask(
+                            chat_id, bg_task,
+                            card_message_id or f"card_{session_key}", sender_open_id,
+                        )
+
+                had_delegations = bool(session.dispatched_delegation_keys)
+                if had_delegations:
+                    # finalize card and return early — delegations are dispatched
+                    chat_answer = _extract_final_answer(
+                        {"trajectory": trajectory, "status": trajectory.status}
+                    )
+                    if reporter:
+                        try:
+                            reporter.finalize("completed", chat_answer)
+                        except Exception:
+                            logger.exception("Failed to finalize reporter after delegation")
+                    session.dispatched_delegation_keys.clear()
+                    return None
+
                 answer = _extract_final_answer(
                     {"trajectory": trajectory, "status": trajectory.status}
                 )
@@ -1764,6 +1928,9 @@ class TaskDispatcher:
                     )
 
                 return f"会话子任务执行出错: {e}"
+            finally:
+                session.current_reporter = None
+                session.current_running_agent = None
 
     def _patch_phase1_card(
         self,
@@ -2022,7 +2189,8 @@ class TaskDispatcher:
             "**常用命令**\n"
             "`/help` — 显示本帮助信息\n"
             "`/list` — 查看可用的子智能体列表\n"
-            "`/new` — 清除上下文，开始新会话"
+            "`/new` — 清除上下文，开始新会话\n"
+            "`/stop` — 停止当前正在执行的任务"
         )
 
         send_card_message(
@@ -2059,7 +2227,8 @@ class TaskDispatcher:
             "**命令列表**\n"
             "`/help` — 显示本帮助信息\n"
             "`/list` — 查看可用的子智能体列表\n"
-            "`/new` — 清除上下文，开始新会话"
+            "`/new` — 清除上下文，开始新会话\n"
+            "`/stop` — 停止当前正在执行的任务"
         )
 
         send_card_message(
@@ -2070,6 +2239,87 @@ class TaskDispatcher:
             reply_to_message_id=message_id,
             header_template="blue",
         )
+
+    # ------------------------------------------------------------------
+    # Stop / Cancel
+    # ------------------------------------------------------------------
+
+    def _build_stop_actions(
+        self, chat_id: str, target: str = "orchestrator",
+        task_id: str = "", session_key: str = "",
+    ) -> list[dict]:
+        """构建停止按钮配置。"""
+        return [{
+            "text": "🛑 停止",
+            "type": "danger",
+            "value": {
+                "action": "stop_agent",
+                "chat_id": chat_id,
+                "target": target,
+                "task_id": task_id,
+                "session_key": session_key,
+            },
+        }]
+
+    def _stop_all_for_chat(self, chat_id: str) -> tuple[bool, list[str]]:
+        """停止指定 chat 的 orchestrator + 所有后台子任务 + 子会话。
+
+        线程安全，不需要 session.lock（仅设置 threading.Event 和 bool）。
+
+        Returns:
+            (orchestrator_stopped, cancelled_task_ids)
+        """
+        orchestrator_stopped = False
+        cancelled_task_ids: list[str] = []
+
+        # 1. 停止 orchestrator
+        session = self._session_manager.get(chat_id)
+        if session and session.current_running_agent:
+            session.current_running_agent.cancel()
+            if session.current_reporter:
+                session.current_reporter.mark_stopping()
+                session.current_reporter.finalize("cancelled", "任务已被用户停止。")
+            orchestrator_stopped = True
+
+        # 2. 停止后台子任务
+        for task in self._bg_task_registry.get_active_tasks(chat_id):
+            if task.agent:
+                task.agent.cancel()
+            if task.reporter:
+                task.reporter.mark_stopping()
+                task.reporter.finalize("cancelled", "任务已被用户停止。")
+            self._bg_task_registry.mark_cancelled(task)
+            cancelled_task_ids.append(task.task_id)
+
+        # 3. 停止同步委派子会话（key pattern: {chat_id}:*）
+        for sub in self._session_manager.get_sessions_by_prefix(chat_id):
+            if sub.current_running_agent:
+                sub.current_running_agent.cancel()
+            if sub.current_reporter:
+                sub.current_reporter.mark_stopping()
+                sub.current_reporter.finalize("cancelled", "任务已被用户停止。")
+
+        return orchestrator_stopped, cancelled_task_ids
+
+    def _handle_stop_command(self, chat_id: str, message_id: str) -> None:
+        """处理 /stop 命令：停止当前 chat 的所有运行中任务。"""
+        orchestrator_stopped, cancelled_ids = self._stop_all_for_chat(chat_id)
+
+        if orchestrator_stopped or cancelled_ids:
+            parts = ["已发送停止信号。"]
+            if orchestrator_stopped:
+                parts.append("- 主智能体将在当前步骤完成后停止")
+            for tid in cancelled_ids:
+                parts.append(f"- 后台任务 {tid} 已取消")
+            msg = "\n".join(parts)
+        else:
+            msg = "当前没有正在运行的任务。"
+
+        if self._feishu_client:
+            from .messaging.sender import send_text_message
+            send_text_message(self._feishu_client, chat_id, msg, reply_to_message_id=message_id)
+        elif self._on_result:
+            self._on_result(chat_id, message_id, msg)
 
     def shutdown(self, wait: bool = False) -> None:
         """关闭调度器和所有会话"""
