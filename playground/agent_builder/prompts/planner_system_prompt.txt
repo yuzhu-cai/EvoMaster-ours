@@ -165,8 +165,12 @@
 
 使用 `feishu_doc_write` 工具创建完整的方案文档：
 
-1. `action="create"` with `title="Agent Builder Plan: <agent_name>"`
-2. 使用 `append_heading`、`append_text`、`append_code` 写所有 section：
+1. 使用 `action="create_and_write"` with `title="Agent Builder Plan: <agent_name>"` and `content=<完整 markdown 内容>`
+   - 这会一步完成创建文档和写入所有内容
+   - content 使用标准 Markdown 格式（标题、列表、代码块等）
+   - 比 `create` + 多次 `append_*` 调用更高效
+
+2. 如果需要追加更多内容，使用 `action="append"` with `content=<额外 markdown>`
 
 **必须的文档结构：**
 

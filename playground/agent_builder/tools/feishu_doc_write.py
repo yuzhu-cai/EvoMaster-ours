@@ -23,7 +23,16 @@ logger = logging.getLogger(__name__)
 class FeishuDocWriteToolParams(BaseToolParams):
     """Create, write, or modify content in a Feishu (Lark) document.
 
-    Actions:
+    Actions (recommended — use markdown for batch writing):
+    - "create_and_write": Create a new document and write markdown content in one call.
+      Preferred over separate "create" + multiple "append_*" calls.
+      Requires: title, content (markdown string).
+    - "write": Replace entire document content with markdown.
+      Requires: content (markdown string).
+    - "append": Append markdown content to end of document.
+      Requires: content (markdown string).
+
+    Actions (legacy, for fine-grained single-block control):
     - "create": Create a new document with the given title. Returns the document URL.
     - "append_heading": Append a heading (level 1-4) to the end of document.
     - "append_text": Append a text paragraph to the end of document.
@@ -42,23 +51,23 @@ class FeishuDocWriteToolParams(BaseToolParams):
     2. To update a single block's text: use "update_block" with the block_id
     3. To rewrite a section: use "delete_blocks" to remove, then "insert_blocks" to add new content
 
-    You must call "create" first before using any other actions.
+    You must call "create" or "create_and_write" first before using any other actions.
     """
 
     name: ClassVar[str] = "feishu_doc_write"
 
     action: Literal[
+        "create_and_write", "write", "append",
         "create", "append_heading", "append_text", "append_code", "append_divider",
         "append_image",
         "list_blocks", "update_block", "delete_blocks", "insert_blocks",
     ] = Field(
         description=(
             'The action to perform. '
-            'Use "list_blocks" to see document structure, '
-            '"update_block" to update a single block in-place, '
-            '"delete_blocks" to remove a range, '
-            '"insert_blocks" to insert at a position, '
-            '"append_image" to add an image from a local file.'
+            'Recommended: "create_and_write" to create doc and write markdown in one step, '
+            '"write" to replace doc content with markdown, '
+            '"append" to append markdown content. '
+            'Legacy: "create", "append_heading", "append_text", "append_code", etc.'
         )
     )
     title: Optional[str] = Field(
@@ -67,7 +76,7 @@ class FeishuDocWriteToolParams(BaseToolParams):
     )
     content: Optional[str] = Field(
         default=None,
-        description='Text content (required for append_*, update_block, insert_blocks except divider/image)'
+        description='Text/markdown content. For "write", "append", "create_and_write": full markdown string. For append_*, update_block, insert_blocks: plain text.'
     )
     level: Optional[int] = Field(
         default=2,
@@ -138,6 +147,12 @@ class FeishuDocWriteTool(BaseTool):
         try:
             if action == "create":
                 return self._do_create(params)
+            elif action == "create_and_write":
+                return self._do_create_and_write(params)
+            elif action == "write":
+                return self._do_write(params)
+            elif action == "append":
+                return self._do_append_markdown(params)
             elif action == "append_heading":
                 return self._do_append_heading(params)
             elif action == "append_text":
@@ -195,10 +210,56 @@ class FeishuDocWriteTool(BaseTool):
         """检查是否已创建文档"""
         if not self._current_doc_id:
             return (
-                "No active document. Please use 'create' action first.",
+                "No active document. Please use 'create' or 'create_and_write' action first.",
                 {"error": "no_document"},
             )
         return None
+
+    def _do_write(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
+        """Replace document content with markdown."""
+        err = self._require_doc()
+        if err:
+            return err
+        if not params.content:
+            return "content is required for 'write'.", {"error": "missing_content"}
+        ok, count = self._writer.write_markdown(self._current_doc_id, params.content)
+        if not ok:
+            return "Failed to write document.", {"error": "write_failed"}
+        return f"Document written successfully ({count} blocks).", {"action": "write", "blocks_added": count}
+
+    def _do_append_markdown(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
+        """Append markdown content to document."""
+        err = self._require_doc()
+        if err:
+            return err
+        if not params.content:
+            return "content is required for 'append'.", {"error": "missing_content"}
+        ok, count = self._writer.append_markdown(self._current_doc_id, params.content)
+        if not ok:
+            return "Failed to append content.", {"error": "append_failed"}
+        return f"Content appended successfully ({count} blocks).", {"action": "append", "blocks_added": count}
+
+    def _do_create_and_write(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
+        """Create document and write markdown in one call."""
+        title = params.title
+        if not title:
+            return "title is required for 'create_and_write'.", {"error": "missing_title"}
+        if not params.content:
+            return "content is required for 'create_and_write'.", {"error": "missing_content"}
+        # Reuse existing create logic
+        result_text, result_meta = self._do_create(params)
+        if "error" in result_meta:
+            return result_text, result_meta
+        # Then write markdown
+        ok, count = self._writer.write_markdown(self._current_doc_id, params.content)
+        if not ok:
+            return "Document created but failed to write content.", {"error": "write_failed"}
+        return (
+            f"Document created and written successfully.\n"
+            f"URL: {self._current_doc_url}\n"
+            f"Blocks: {count}",
+            {"document_id": self._current_doc_id, "url": self._current_doc_url, "blocks_added": count},
+        )
 
     def _do_append_heading(self, params: FeishuDocWriteToolParams) -> tuple[str, dict[str, Any]]:
         """追加标题"""
