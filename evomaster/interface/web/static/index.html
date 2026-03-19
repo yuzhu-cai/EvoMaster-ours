@@ -16,7 +16,12 @@
   <aside id="sidebar" class="sidebar">
     <div class="sidebar-header">
       <div class="brand-block">
-        <div class="brand-badge">AI</div>
+        <div class="brand-badge">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L9 9l-7 2 5 5-1 7 6-3 6 3-1-7 5-5-7-2z"/>
+          </svg>
+        </div>
         <div class="brand-text">
           <h1 class="sidebar-title">MagiClaw</h1>
           <p class="sidebar-subtitle">Clean, focused, realtime chat</p>
@@ -59,7 +64,19 @@
     </header>
 
     <!-- Messages -->
-    <div id="message-list" class="message-list"></div>
+    <div id="message-list" class="message-list">
+      <!-- Welcome hero (hidden on first message) -->
+      <div id="welcome-hero" class="welcome-hero">
+        <div class="welcome-icon">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L9 9l-7 2 5 5-1 7 6-3 6 3-1-7 5-5-7-2z"/>
+          </svg>
+        </div>
+        <h2 class="welcome-title">MagiClaw</h2>
+        <p class="welcome-subtitle">Start a new session and ask anything</p>
+      </div>
+    </div>
 
     <!-- Input -->
     <div class="input-bar">

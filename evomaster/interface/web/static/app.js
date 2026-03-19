@@ -25,6 +25,7 @@
   const sessionIdDisplay = document.getElementById("session-id-display");
   const sidebarToggleOpen = document.getElementById("sidebar-toggle-open");
   const sidebarToggleClose = document.getElementById("sidebar-toggle-close");
+  const welcomeHero = document.getElementById("welcome-hero");
 
   // ───── Markdown Setup ─────
   marked.setOptions({
@@ -47,7 +48,8 @@
     } else {
       highlighted = hljs.highlightAuto(code).value;
     }
-    return '<pre><code class="hljs">' + highlighted + "</code></pre>";
+    var langAttr = lang ? ' data-lang="' + lang + '"' : '';
+    return '<pre' + langAttr + '><code class="hljs">' + highlighted + "</code></pre>";
   };
   marked.use({ renderer: renderer });
 
@@ -81,6 +83,33 @@
     messageInput.style.height = "auto";
     messageInput.style.height =
       Math.min(messageInput.scrollHeight, 200) + "px";
+  }
+
+  function hideWelcomeHero() {
+    if (welcomeHero && !welcomeHero.classList.contains("hidden")) {
+      welcomeHero.classList.add("hidden");
+    }
+  }
+
+  // ───── Typing Indicator ─────
+  var typingEl = null;
+
+  function showTypingIndicator() {
+    if (typingEl) return;
+    typingEl = document.createElement("div");
+    typingEl.className = "typing-indicator";
+    typingEl.innerHTML =
+      '<span class="typing-indicator-label">Agent is thinking</span>' +
+      '<div class="typing-dots"><span></span><span></span><span></span></div>';
+    messageList.appendChild(typingEl);
+    scrollToBottom();
+  }
+
+  function hideTypingIndicator() {
+    if (typingEl) {
+      typingEl.remove();
+      typingEl = null;
+    }
   }
 
   // ───── Sidebar (mobile) ─────
@@ -117,6 +146,7 @@
   // ───── Message Creation ─────
 
   function addUserMessage(text) {
+    hideWelcomeHero();
     var wrapper = document.createElement("div");
     wrapper.className = "message message-user";
 
@@ -138,6 +168,7 @@
   }
 
   function addSystemMessage(text) {
+    hideWelcomeHero();
     var wrapper = document.createElement("div");
     wrapper.className = "message message-system";
 
@@ -271,6 +302,7 @@
     socket.on("message_ack", function (data) {
       var msgId = data.message_id;
       if (msgId) {
+        hideTypingIndicator();
         getOrCreateAgentCard(msgId);
       }
     });
@@ -311,6 +343,7 @@
     socket.on("agent_response", function (data) {
       var msgId = data.message_id;
       if (!msgId) return;
+      hideTypingIndicator();
       var card = getOrCreateAgentCard(msgId);
 
       hideProgress(card);
@@ -542,6 +575,7 @@
     if (!text || !socket || !socket.connected) return;
 
     addUserMessage(text);
+    showTypingIndicator();
     socket.emit("send_message", {
       session_id: sessionId,
       text: text,
@@ -565,6 +599,18 @@
 
   messageInput.addEventListener("input", autoResizeTextarea);
 
+  // ───── Session ID Copy ─────
+  sessionIdDisplay.addEventListener("click", function () {
+    var text = sessionIdDisplay.textContent;
+    if (!text || text === "--") return;
+    navigator.clipboard.writeText(text).then(function () {
+      sessionIdDisplay.classList.add("copied");
+      setTimeout(function () {
+        sessionIdDisplay.classList.remove("copied");
+      }, 1500);
+    });
+  });
+
   btnNewSession.addEventListener("click", function () {
     if (!confirm("Start a new session? Current conversation will be cleared.")) {
       return;
@@ -575,6 +621,21 @@
     backgroundTasks = {};
     isUserScrolled = false;
     sessionIdDisplay.textContent = sessionId;
+
+    // Restore welcome hero
+    var hero = document.createElement("div");
+    hero.id = "welcome-hero";
+    hero.className = "welcome-hero";
+    hero.innerHTML =
+      '<div class="welcome-icon">' +
+      '  <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+      '       stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">' +
+      '    <path d="M12 2L9 9l-7 2 5 5-1 7 6-3 6 3-1-7 5-5-7-2z"/>' +
+      '  </svg>' +
+      '</div>' +
+      '<h2 class="welcome-title">MagiClaw</h2>' +
+      '<p class="welcome-subtitle">Start a new session and ask anything</p>';
+    messageList.appendChild(hero);
 
     if (socket && socket.connected) {
       socket.emit("new_session", { session_id: sessionId });
