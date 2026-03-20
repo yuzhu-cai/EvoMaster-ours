@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Data Viewer</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="logo"></div>
+    <div class="title" id="title">Data Viewer</div>
+    <div class="meta" id="meta">loading...</div>
+    <div class="controls">
+      <select id="sourceSelect"></select>
+      <select id="viewSelect"></select>
+      <button class="primary" id="refreshBtn">Refresh</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <section class="stats-row" id="statsRow"></section>
+    <section class="chart-row" id="chartRow"></section>
+    <section class="filter-bar" id="filterBar">
+      <div id="dynamicFilters" class="dynamic-filters"></div>
+      <input id="searchInput" type="text" placeholder="Search..." />
+      <label class="check-wrap hidden" id="onlyFailedWrap">
+        <input id="onlyFailedInput" type="checkbox" />
+        <span>仅失败</span>
+      </label>
+      <button class="primary" id="searchBtn">Search</button>
+      <span class="filter-count" id="filterCount"></span>
+    </section>
+    <section class="record-list" id="recordList"></section>
+    <section class="pagination-bar" id="paginationBar"></section>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -186,6 +186,7 @@ class FeishuBot:
             feishu_doc_folder_token=config.doc_folder_token,
             available_agents=config.available_agents,
             container_pool=self._container_pool,
+            scheduler_config=getattr(config, "scheduler", None),
         )
 
         self._ws_client: Optional[lark.ws.Client] = None

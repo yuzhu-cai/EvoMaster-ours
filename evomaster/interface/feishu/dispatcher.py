@@ -129,6 +129,7 @@ class TaskDispatcher:
         feishu_doc_folder_token: Optional[str] = None,
         available_agents: dict[str, str] | None = None,
         container_pool: Any = None,
+        scheduler_config: Any = None,
     ):
         """
         Args:
@@ -217,6 +218,34 @@ class TaskDispatcher:
         # 预加载 playgrounds
         _ensure_playgrounds_imported(project_root)
 
+        # 定时任务调度器（可选）
+        self._scheduler_service = None
+        self._scheduler_store = None
+        self._scheduler_config = scheduler_config
+        if scheduler_config and getattr(scheduler_config, "enabled", False):
+            try:
+                from evomaster.scheduler import ScheduledJobStore, SchedulerService
+                from evomaster.scheduler.service import SchedulerConfig as SchedSvcConfig
+                from .scheduler_adapter import FeishuTaskExecutor, FeishuResultNotifier
+
+                db_path = project_root / scheduler_config.db_path
+                self._scheduler_store = ScheduledJobStore(db_path)
+                executor = FeishuTaskExecutor(self._run_subtask)
+                notifier = FeishuResultNotifier(self._feishu_client)
+                svc_config = SchedSvcConfig(
+                    max_concurrent_runs=scheduler_config.max_concurrent_runs,
+                    max_poll_interval=scheduler_config.max_poll_interval,
+                )
+                self._scheduler_service = SchedulerService(
+                    self._scheduler_store, executor, notifier, svc_config,
+                )
+                self._scheduler_service.start()
+                logger.info("Scheduler service started (db=%s)", db_path)
+            except Exception:
+                logger.exception("Failed to initialize scheduler service")
+                self._scheduler_service = None
+                self._scheduler_store = None
+
     def dispatch(
         self,
         chat_id: str,
@@ -257,6 +286,11 @@ class TaskDispatcher:
         # /stop 命令：停止当前 chat 的所有运行中任务
         if stripped == "/stop":
             self._handle_stop_command(chat_id, message_id)
+            return
+
+        # /schedule 命令：管理定时任务
+        if stripped.startswith("/schedule"):
+            self._handle_schedule_command(chat_id, message_id, stripped, sender_open_id)
             return
 
         # 白名单校验：/agent 指定的 agent 必须在允许列表中
@@ -575,6 +609,7 @@ class TaskDispatcher:
                     self._inject_ask_user_tool(session.agent)
                     self._inject_memory_tools(session.agent, memory_manager, user_id)
                     self._inject_background_tools(session.agent, chat_id)
+                    self._inject_schedule_tools(session.agent, chat_id, sender_open_id or "")
 
                     # 设置 compaction 前的记忆提取钩子
                     if memory_manager and memory_config.get("auto_capture", True):
@@ -979,6 +1014,51 @@ class TaskDispatcher:
                 task_registry=self._bg_task_registry, chat_id=chat_id
             )
             agent.tools.register(check_tool)
+
+    def _inject_schedule_tools(self, agent, chat_id: str, sender_open_id: str) -> None:
+        """注入定时任务工具：schedule_task + manage_schedules。"""
+        if not self._scheduler_store or not self._scheduler_service:
+            return
+
+        sched_cfg = self._scheduler_config
+
+        # 1. schedule_task
+        sched_tool = agent.tools.get_tool("schedule_task")
+        if sched_tool and hasattr(sched_tool, "set_context"):
+            sched_tool.set_context(
+                self._scheduler_store, self._scheduler_service,
+                chat_id, sender_open_id,
+                max_jobs_per_chat=getattr(sched_cfg, "max_jobs_per_chat", 20),
+                max_jobs_total=getattr(sched_cfg, "max_jobs_total", 200),
+                default_timezone=getattr(sched_cfg, "default_timezone", "Asia/Shanghai"),
+            )
+        else:
+            from playground.magiclaw.tools.schedule_task import ScheduleTaskTool
+            sched_tool = ScheduleTaskTool()
+            sched_tool.set_context(
+                self._scheduler_store, self._scheduler_service,
+                chat_id, sender_open_id,
+                max_jobs_per_chat=getattr(sched_cfg, "max_jobs_per_chat", 20),
+                max_jobs_total=getattr(sched_cfg, "max_jobs_total", 200),
+                default_timezone=getattr(sched_cfg, "default_timezone", "Asia/Shanghai"),
+            )
+            agent.tools.register(sched_tool)
+
+        # 2. manage_schedules
+        manage_tool = agent.tools.get_tool("manage_schedules")
+        if manage_tool and hasattr(manage_tool, "set_context"):
+            manage_tool.set_context(self._scheduler_store, chat_id)
+        else:
+            from playground.magiclaw.tools.schedule_task import ManageSchedulesTool
+            manage_tool = ManageSchedulesTool()
+            manage_tool.set_context(self._scheduler_store, chat_id)
+            agent.tools.register(manage_tool)
+
+        # 3. 确保 schedule 工具加入 enabled_tool_names（使 LLM 能看到函数 schema）
+        if hasattr(agent, 'enabled_tool_names') and agent.enabled_tool_names is not None:
+            for name in ('schedule_task', 'manage_schedules'):
+                if name not in agent.enabled_tool_names:
+                    agent.enabled_tool_names.append(name)
 
     def _dispatch_delegation_from_step(
         self, step_record, session, chat_id, message_id, sender_open_id
@@ -2190,7 +2270,8 @@ class TaskDispatcher:
             "`/help` — 显示本帮助信息\n"
             "`/list` — 查看可用的子智能体列表\n"
             "`/new` — 清除上下文，开始新会话\n"
-            "`/stop` — 停止当前正在执行的任务"
+            "`/stop` — 停止当前正在执行的任务\n"
+            "`/schedule` — 查看/管理定时任务"
         )
 
         send_card_message(
@@ -2228,7 +2309,8 @@ class TaskDispatcher:
             "`/help` — 显示本帮助信息\n"
             "`/list` — 查看可用的子智能体列表\n"
             "`/new` — 清除上下文，开始新会话\n"
-            "`/stop` — 停止当前正在执行的任务"
+            "`/stop` — 停止当前正在执行的任务\n"
+            "`/schedule` — 查看/管理定时任务"
         )
 
         send_card_message(
@@ -2321,9 +2403,81 @@ class TaskDispatcher:
         elif self._on_result:
             self._on_result(chat_id, message_id, msg)
 
+    def _handle_schedule_command(
+        self, chat_id: str, message_id: str, text: str,
+        sender_open_id: str | None = None,
+    ) -> None:
+        """处理 /schedule 命令：list / cancel <id>"""
+        if not self._scheduler_store:
+            msg = "定时任务功能未启用。"
+            if self._feishu_client:
+                from .messaging.sender import send_text_message
+                send_text_message(self._feishu_client, chat_id, msg, reply_to_message_id=message_id)
+            elif self._on_result:
+                self._on_result(chat_id, message_id, msg)
+            return
+
+        parts = text.strip().split(maxsplit=2)
+        sub = parts[1] if len(parts) > 1 else "list"
+
+        if sub == "list":
+            jobs = self._scheduler_store.get_active_for_chat(chat_id)
+            if not jobs:
+                msg = "当前没有活跃的定时任务。"
+            else:
+                from datetime import datetime
+                lines = [f"共 {len(jobs)} 个活跃定时任务:\n"]
+                for j in jobs:
+                    try:
+                        from zoneinfo import ZoneInfo
+                        tzinfo = ZoneInfo(j.timezone)
+                    except Exception:
+                        tzinfo = None
+                    next_str = datetime.fromtimestamp(j.next_run_at, tz=tzinfo).strftime("%m-%d %H:%M")
+                    lines.append(
+                        f"• `{j.job_id}` {j.schedule_type.value}({j.schedule_expr}) "
+                        f"→ {j.task_description[:60]}\n"
+                        f"  下次: {next_str} | 执行: {j.run_count}次"
+                    )
+                msg = "\n".join(lines)
+
+        elif sub == "cancel":
+            job_id = parts[2].strip() if len(parts) > 2 else ""
+            if not job_id:
+                msg = "用法: /schedule cancel <任务ID>"
+            else:
+                from evomaster.scheduler.models import JobStatus
+                job = self._scheduler_store.get(job_id)
+                if not job:
+                    msg = f"未找到任务: {job_id}"
+                elif job.chat_id != chat_id:
+                    msg = "无权取消其他会话的任务。"
+                elif job.status != JobStatus.ACTIVE:
+                    msg = f"任务 {job_id} 状态为 {job.status.value}，无需取消。"
+                else:
+                    self._scheduler_store.mark_cancelled(job_id)
+                    msg = f"已取消定时任务 `{job_id}`: {job.task_description[:80]}"
+        else:
+            msg = (
+                "定时任务命令:\n"
+                "`/schedule` 或 `/schedule list` — 查看活跃任务\n"
+                "`/schedule cancel <ID>` — 取消指定任务\n\n"
+                "创建定时任务请直接对话，例如：「每小时检查一下xxx」"
+            )
+
+        if self._feishu_client:
+            from .messaging.sender import send_text_message
+            send_text_message(self._feishu_client, chat_id, msg, reply_to_message_id=message_id)
+        elif self._on_result:
+            self._on_result(chat_id, message_id, msg)
+
     def shutdown(self, wait: bool = False) -> None:
         """关闭调度器和所有会话"""
         logger.info("Shutting down task dispatcher...")
+        if self._scheduler_service is not None:
+            self._scheduler_service.stop()
+        if self._scheduler_store is not None:
+            self._scheduler_store.close()
         self._session_manager.shutdown()
         self._executor.shutdown(wait=wait)
         if self._container_pool is not None:

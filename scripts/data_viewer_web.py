@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backward-compatible alias for data viewer."""
+"""Unified web viewer for project data sources."""
 
 try:
     from data_viewer_web.app import main

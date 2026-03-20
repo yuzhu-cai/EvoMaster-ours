@@ -21,6 +21,29 @@ from evomaster.config import _substitute_env
 from evomaster.env.container_pool import ContainerPoolConfig
 
 
+class SchedulerConfig(BaseModel):
+    """定时任务调度器配置"""
+
+    enabled: bool = Field(default=True, description="是否启用定时任务")
+    db_path: str = Field(
+        default="data/scheduler/schedules.db",
+        description="SQLite 数据库路径（相对于 project_root）",
+    )
+    max_jobs_per_chat: int = Field(default=20, description="每个会话最大活跃任务数")
+    max_jobs_total: int = Field(default=200, description="全局最大活跃任务数")
+    max_concurrent_runs: int = Field(default=2, description="最大并发执行数")
+    default_timezone: str = Field(
+        default="Asia/Shanghai", description="默认时区（IANA）"
+    )
+    max_poll_interval: float = Field(
+        default=60.0, description="最大轮询间隔（秒）"
+    )
+    max_retries: int = Field(default=3, description="任务失败最大重试次数")
+
+    class Config:
+        extra = "allow"
+
+
 class FeishuBotConfig(BaseModel):
     """飞书 Bot 配置"""
 
@@ -69,6 +92,10 @@ class FeishuBotConfig(BaseModel):
     container_pool: Optional[ContainerPoolConfig] = Field(
         default=None,
         description="Docker 容器池配置，None 或 enabled=False 表示不使用容器池",
+    )
+    scheduler: Optional[SchedulerConfig] = Field(
+        default_factory=SchedulerConfig,
+        description="定时任务调度器配置",
     )
 
     class Config:

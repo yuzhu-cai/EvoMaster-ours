@@ -38,14 +38,14 @@ llm:
     max_retries: 3
     retry_delay: 1.0
 
-  default: "openai"
+  default: "local_sglang"
 
 # ============================================
 # Agent 配置
 # ============================================
 agents:
   general:
-    llm: "openai"
+    llm: "local_sglang"
     max_turns: 50
     finish_on_text_response: true
     tools:
