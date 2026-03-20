@@ -66,6 +66,7 @@ class BaseAgent(ABC):
     
     # Class-level trajectory file lock (mutex when multiple agent instances write to file)
     _trajectory_file_lock = threading.Lock()
+    _trajectory_file_path: Path | None = None
 
     # Class-level current experiment info (shared by all agent instances)
     _current_exp_name: str | None = None
@@ -139,7 +140,7 @@ class BaseAgent(ABC):
         self._agent_name: str | None = None
 
         # Instance-level trajectory file path (independent for each agent instance)
-        self._trajectory_file_path: Path | None = None
+        # self._trajectory_file_path: Path | None = None
 
     def run(self, task: TaskInstance, on_step=None):
         """Execute a task
