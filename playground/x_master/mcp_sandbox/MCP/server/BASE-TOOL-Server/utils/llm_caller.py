@@ -35,4 +35,4 @@ async def llm_call(query: str, model_name: str = "qwen-72b", max_retries: int = 
 
 
 if __name__ == "__main__":
-    print(asyncio.run(llm_call("What is the Nerf?",model_name="gpt-4o")))
+    print(asyncio.run(llm_call("What is the Nerf?",model_name="Vendor2/Gemini-2.5-Flash")))

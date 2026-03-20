@@ -67,7 +67,7 @@ async def get_web_content_api(url: str):
 
 
 async def fetch_web_content(url: str):
-    # Check if it's a PDF URL
+    # 检查是否是 PDF URL
     if url.lower().endswith('.pdf'):
         return False, "This URL points to a PDF file. Please use the read_pdf tool instead."
 
@@ -76,7 +76,7 @@ async def fetch_web_content(url: str):
         print(f"\033[91mFailed to crawl web content, using API: {url}\033[0m")
         result = await get_web_content_api(url)
 
-    # Check if returned content is PDF binary (starts with %PDF)
+    # 检查返回内容是否是 PDF 二进制（以 %PDF 开头）
     if isinstance(result, str) and result.startswith('%PDF'):
         return False, "This URL returned PDF content. Please use the read_pdf tool instead."
 

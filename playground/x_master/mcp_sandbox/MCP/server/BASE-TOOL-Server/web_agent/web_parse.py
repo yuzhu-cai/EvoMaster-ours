@@ -19,26 +19,57 @@ USE_LLM = tools_config['USE_MODEL']
 
 
 def split_chunks(text: str, model: str):
-    if "gpt" in model:
-        tokenizer = tiktoken.encoding_for_model("gpt-4o")
-        chunk_token_limit = 120000
-    elif model == "deepseek-r1":
-        tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/deepseek-r1", trust_remote_code=True)
-        chunk_token_limit = 120000
-    else:
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-72B", trust_remote_code=True)
-        chunk_token_limit = 30000
+    """
+    Robust chunking:
+    - Use tiktoken for GPT/Gemini/Vendor2 and as general fallback.
+    - Try to load Hugging Face tokenizers only for explicit HF models (e.g. Qwen).
+    - On any exception (网络/SSL/加载失败)，退回到基于字符的简单切分，避免抛出错误。
+    """
+    model_lower = (model or "").lower()
+    # defaults
+    chunk_token_limit = 120000
+    try:
+        # Prefer tiktoken for GPT-like or vendor models (no HF download required)
+        if "gpt" in model_lower or "gemini" in model_lower or "vendor2" in model_lower:
+            tokenizer = tiktoken.encoding_for_model("gpt-4o")
+            chunk_token_limit = 120000
+        # deepseek has a dedicated tokenizer available locally in some setups
+        elif "deepseek" in model_lower:
+            tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/deepseek-coder-6.7b-base")
+            chunk_token_limit = 120000
+        # only try to load HF Qwen if model explicitly references qwen
+        elif "qwen" in model_lower:
+            tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-72B", trust_remote_code=True)
+            chunk_token_limit = 30000
+        else:
+            # Generic fallback to a common tiktoken encoding
+            tokenizer = tiktoken.get_encoding("cl100k_base")
+            chunk_token_limit = 120000
 
-    all_tokens = tokenizer.encode(text)
-    chunks = []
-    start = 0
-    while start < len(all_tokens):
-        end = min(start + chunk_token_limit, len(all_tokens))
-        chunk_tokens = all_tokens[start:end]
-        chunk_text = tokenizer.decode(chunk_tokens)
-        chunks.append(chunk_text)
-        start = end
-    return chunks
+        # Tokenize and generate chunks
+        all_tokens = tokenizer.encode(text)
+        chunks = []
+        start = 0
+        while start < len(all_tokens):
+            end = min(start + chunk_token_limit, len(all_tokens))
+            chunk_tokens = all_tokens[start:end]
+            # Some tokenizer objects (HF) return ints/ids, need to decode accordingly
+            try:
+                chunk_text = tokenizer.decode(chunk_tokens)
+            except Exception:
+                # If decode not supported, join ids as bytes fallback (should rarely happen)
+                chunk_text = "".join([str(t) for t in chunk_tokens])
+            chunks.append(chunk_text)
+            start = end
+        return chunks
+
+    except Exception as e:
+        # likely network/SSL when loading HF tokenizer; fallback to safe character-splitting
+        print(f"[WARN] tokenizer load/usage failed ({e}), falling back to character splitter.")
+        # choose a conservative chunk size in characters
+        chunk_size_chars = 20000
+        chunks = [text[i:i+chunk_size_chars] for i in range(0, len(text), chunk_size_chars)]
+        return chunks
 
 
 async def read_html(text, user_prompt, model=None):
@@ -95,7 +126,7 @@ def _get_contents(response: str):
 async def main():
     query = "what is the content of the page"
     url = "https://proceedings.neurips.cc/paper_files/paper/2022"
-    results = await parse_htmlpage(url, query, llm="gpt-4o")
+    results = await parse_htmlpage(url, query, llm="GpuGeek/Qwen3-30B-A3B-Instruct-2507")
     print(results)
 
 

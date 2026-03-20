@@ -11,7 +11,7 @@ from api_utils.fetch_web_page_api import fetch_web_content
 
 app = FastAPI()
 
-# Initialize in-memory rate limiter
+# 初始化内存限流器
 limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
@@ -39,7 +39,7 @@ async def search(request: Request, search_request: SearchRequest):
                 if result['organic']:
                     print(f"📊 第一个 organic 结果: {result['organic'][0].get('title', '')[:50]}")
         
-        # Your fix code
+        # 你的修复代码
         if isinstance(result, dict):
             organic_results = result.get('organic', [])
             if search_request.top_k and len(organic_results) > search_request.top_k:

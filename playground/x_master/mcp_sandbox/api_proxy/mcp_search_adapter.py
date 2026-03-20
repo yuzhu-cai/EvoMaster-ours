@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-MCP Adapter - Converts your search API to MCP protocol.
-Calls your existing FastAPI service.
+MCP适配器 - 将你的搜索API转换为MCP协议
+调用你现有的 FastAPI 服务
 """
 
 import os
@@ -10,20 +10,20 @@ import asyncio
 from mcp.server.fastmcp import FastMCP
 import aiohttp
 
-# Configuration
+# 配置
 MCP_PORT = int(os.getenv("MCP_PORT", "8002"))
 HOST = os.getenv("HOST", "0.0.0.0")
 
-# Your FastAPI service address
+# 你的 FastAPI 服务地址
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:1234")
 
-# Read API key from config file or environment variable
+# 从配置文件或环境变量读取 API key
 def _load_serper_api_key():
-    """Read Serper API key from environment variable or config file."""
+    """从环境变量或配置文件读取 Serper API key"""
     key = os.getenv("SERPER_API_KEY")
     if key:
         return key
-    # Try to read from config file
+    # 尝试从配置文件读取
     config_path = os.path.join(os.path.dirname(__file__), "../configs/web_agent.json")
     if os.path.exists(config_path):
         with open(config_path, 'r') as f:
@@ -33,7 +33,7 @@ def _load_serper_api_key():
 
 SERPER_API_KEY = _load_serper_api_key()
 
-# Initialize MCP server
+# 初始化MCP服务器
 mcp = FastMCP(
     "search-tools",
     host=HOST,
@@ -41,7 +41,7 @@ mcp = FastMCP(
 )
 
 async def make_async_request(session, url, payload, timeout=30):
-    """Async HTTP request."""
+    """异步HTTP请求"""
     async with session.post(url, json=payload, timeout=timeout) as response:
         response.raise_for_status()
         return await response.json()
@@ -55,14 +55,14 @@ async def search(
     depth: int = 0
 ) -> str:
     """
-    Search web content.
-
+    搜索网页内容
+    
     Args:
-        query: Search keywords
-        top_k: Number of results to return, default 10
-        region: Search region (us, uk, cn, etc.)
-        lang: Language (en, zh-CN, etc.)
-        depth: Search depth (brief, basic, detailed)
+        query: 搜索关键词
+        top_k: 返回结果数量，默认10
+        region: 搜索区域（us, uk, cn等）
+        lang: 语言（en, zh-CN等）
+        depth: 搜索深度（brief, basic, detailed）
     """
     try:
         payload = {
@@ -81,7 +81,7 @@ async def search(
                 payload
             )
         
-        # Format output
+        # 格式化输出
         return json.dumps(result, ensure_ascii=False, indent=2)
         
     except aiohttp.ClientError as e:
@@ -94,10 +94,10 @@ async def search(
 @mcp.tool()
 async def read_pdf(url: str) -> str:
     """
-    Read PDF file content from a URL.
-
+    从URL读取PDF文件内容
+    
     Args:
-        url: URL of the PDF file
+        url: PDF文件的URL地址
     """
     try:
         payload = {"url": url}
@@ -122,10 +122,10 @@ async def read_pdf(url: str) -> str:
 @mcp.tool()
 async def fetch_web(url: str) -> str:
     """
-    Fetch web page content.
-
+    获取网页内容
+    
     Args:
-        url: URL of the web page
+        url: 网页URL地址
     """
     try:
         payload = {"url": url}
@@ -148,5 +148,5 @@ async def fetch_web(url: str) -> str:
 
 if __name__ == "__main__":
 
-    # Run MCP server
+    # 运行MCP服务器
     mcp.run(transport="streamable-http") 

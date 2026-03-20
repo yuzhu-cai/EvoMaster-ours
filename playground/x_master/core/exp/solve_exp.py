@@ -10,23 +10,23 @@ from evomaster.core.exp import BaseExp
 from .utils import extract_agent_response
 
 class SolveExp(BaseExp):
-    """Solve experiment implementation in X-Master.
+    """X-Master中Solve实验类实现
 
-    Implements the workflow for the Solve stage: analyze the task and obtain the solution.
+    实现Solve阶段工作流：分析任务并得到问题结果
     """
 
     @property
     def exp_name(self) -> str:
-        """Return the name of the experiment stage."""
+        """返回实验阶段名称"""
         return "Solving"
 
     def __init__(self, solver_agent, config, index=0):
-        """Initialize the SolveExp experiment class.
+        """初始化SolveExp实验类
 
         Args:
-            solver_agent: Solver Agent instance
-            config: EvoMasterConfig instance
-            index: index assigned when running multiple identical experiments in parallel
+            solver_agent: Solver Agent 实例
+            config: EvoMasterConfig 实例
+            index: x-master需要并行多个exp, 因此需要为每个相同的exp定义一个编号
         """
 
         super().__init__(solver_agent, config)
@@ -38,16 +38,16 @@ class SolveExp(BaseExp):
         self.solver._current_exp_index = self.index
 
     def run(self, task_description:str, task_id:str = "exp_001") -> dict:
-        """Run the solver experiment.
+        """运行solver实验
 
-        Workflow: a single Agent analyzes the same original problem and produces an initial answer.
+        工作流: 一个Agent对同一个原始问题进行分析并得到初始答案
 
         Args:
-            task_description: the task description
-            task_id: the task identifier
-
+            task_description: 任务描述
+            task_id: 任务 ID
+        
         Returns:
-            A dictionary with the execution results.
+            执行结果字典
         """
         self.logger.info("Starting XMaster task execution")
         self.logger.info(f"Task:{task_description}")
@@ -74,12 +74,11 @@ class SolveExp(BaseExp):
                     input_data={},
                 )
                 try:
-                    # set current experiment info for trajectory recording
+                    # 设置当前exp信息，用于trajectory记录
                     solver_trajectory = self.solver.run(solver_task)
                     results[f'solver_trajectory'] = solver_trajectory
                     solver_result = extract_agent_response(solver_trajectory)
                     results[f'solver_result'] = solver_result
-                    self.solver.reset_context()
 
                     self.logger.info("Solving completed")
 
@@ -105,10 +104,10 @@ class SolveExp(BaseExp):
 
 
     def save_results(self, output_file: str):
-        """Save experiment results.
+        """保存实验结果
 
         Args:
-            output_file: output file path
+            output_file: 输出文件路径
         """
         import json
         from pathlib import Path
