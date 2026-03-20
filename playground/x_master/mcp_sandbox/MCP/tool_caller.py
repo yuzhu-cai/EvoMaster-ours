@@ -46,7 +46,7 @@ def call_tool(tool_name: str, tool_args: dict, session_id:str=None):
     post_item_info(session_id, item)
 
     if tool_name is None:
-        # List all tools
+        # 列出所有工具
         try:
             t1 = time.time()
             resp = requests.get(f"{url}/get_tool")
@@ -104,12 +104,12 @@ if __name__ == "__main__":
     test()
     exit()
     # print(call_tool("web_search", {"query": "what is the multi-modal learning"}))
-    # List all tools
+    # 列出所有工具
     # result = call_tool(None, None)
 
     # print(result)
     # import asyncio
-    # # RAG search
+    # # rag搜索
     # begin_time = time.time()
     # result = call_tool("rag_batch_search", {"query": ["what is the multi-modal learning", "what is the multi-modal learning"]})
     # # end_time = time.time()
@@ -117,12 +117,12 @@ if __name__ == "__main__":
     # print(result)
     
 
-    # Web search
+    # 联网搜索
     # result = call_tool("web_search", {"query": "original artist of I'm Losing You song"})
     # print(result)
     # print(result)
     
-    # Parse specific web page content based on link and query
+    # 根据link和query解析网页具体内容
     # import concurrent.futures,time
     # result_list = []
     # begin = time.time()
@@ -137,21 +137,21 @@ if __name__ == "__main__":
     # print(result_list)
     result = call_tool("web_parse_nano", {'link': 'https://bohr.physics.berkeley.edu/classes/221/1112/notes/covariance.pdf', 'query': "What is main content of this page?"})
     print(result)
-    # Math calculation
+    # 数学计算
     # result = call_tool("parse_img", {"url": "https://i-blog.csdnimg.cn/blog_migrate/f4bc39ab34337400e97ff1d7dae70be0.png","query": "what is VLLM?"})
     # print(result)
     
-    # Related paper search
+    # 相关论文搜索
     # result = asyncio.run(call_tool("paper_search", {"query": "large language model", "max_num": 10}))
     # print(result)
     
-    # Parse specific content based on paper link and query
+    # 根据文献link和query解析具体内容
     # result = asyncio.run(call_tool("paper_parse", {"link": "https://arxiv.org/abs/2403.08271", 
     #                                               "title": "Humanity's Last Exam", 
-    #                                               "query": "Please parse the abstract of the following paper: https://arxiv.org/abs/2403.08271"}))
+    #                                               "query": "请解析以下论文的摘要：https://arxiv.org/abs/2403.08271"}))
     # print(result)
     
-    # Image parsing
+    # 图片解析
     # import os
     # current_dir = os.path.dirname(os.path.abspath(__file__))
     # import asyncio
@@ -159,12 +159,12 @@ if __name__ == "__main__":
     # result = asyncio.run(call_tool("image_to_text", {"image_path" : image_path}))
     # print(result)
     
-    # Parse image content based on query
+    # 根据query解析图片内容
     # image_path = os.path.join(current_dir, "Test", "word.png")
-    # result = asyncio.run(call_tool("ask_question_about_image", {"image_path" : image_path, "question" : "Please describe what text is in the image and what the specific content is"}))
+    # result = asyncio.run(call_tool("ask_question_about_image", {"image_path" : image_path, "question" : "请描述图片中是什么文字，具体内容是什么"}))
     # print(result)
     
-    # Image to LaTeX
+    # 图片转latex
     # image_path = os.path.join(current_dir, "Test", "latex.png")
     # result = asyncio.run(call_tool("image2latex", {"image_path" : image_path}))
     # print(result)

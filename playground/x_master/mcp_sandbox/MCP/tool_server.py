@@ -49,7 +49,7 @@ async def put_item_with_session_id(session_id:str, item:Dict[str, Any]):
 
 
 
-# Set up logging
+# 设置日志
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -130,7 +130,7 @@ async def stream_put_item(request:Request):
                     session_id = data.get("session_id", "unknown")
                     item = data.get("item", {})
 
-                    # Processing logic (your own function)
+                    # 处理逻辑（你自己的函数）
                     await put_item_with_session_id(session_id, item)
 
                     total_count += 1
@@ -213,13 +213,13 @@ async def create_tool_task(tool_name: str, tool_args: Dict):
 
 
 output_manager = ThreadOutputManager()
-execution_semaphore = asyncio.Semaphore(2000)  # Limit concurrency per worker
-executor = ThreadPoolExecutor(max_workers=1000)  # Limited threads per worker
+execution_semaphore = asyncio.Semaphore(2000)  # 每个worker限制50个并发
+executor = ThreadPoolExecutor(max_workers=1000)  # 每个worker使用少量线程
 
 
 
 async def execute_python_code(code: str, session_id:str, timeout: int) -> Tuple[str, Optional[str], float]:
-    """Execute Python code and return output, error, and execution time."""
+    """执行Python代码并返回输出、错误和执行时间"""
     loop = asyncio.get_event_loop()
     start_time = loop.time()
 
@@ -234,7 +234,7 @@ async def execute_python_code(code: str, session_id:str, timeout: int) -> Tuple[
     return output, error, execution_time
 
 def _execute_code_safely(code: str, session_id:str, timeout: int) -> Tuple[str, Optional[str]]:
-    """Safely execute code in sandbox environment and control actual execution timeout."""
+    """在沙箱环境中安全执行代码，并控制实际执行超时"""
     logger.info(f"Executing in thread {threading.current_thread().ident}, process {os.getpid()}")
 
     module = session_manager.get_session(session_id)
@@ -270,7 +270,7 @@ def _execute_code_safely(code: str, session_id:str, timeout: int) -> Tuple[str, 
         return capture.get_stdout(), capture.get_stderr()
 
     try:
-        # Submit code execution task and set timeout
+        # 提交代码执行任务，并设置超时
         future = single_executor.submit(run_code)
         output_value, error_value = future.result(timeout=timeout)
 
@@ -298,7 +298,7 @@ def _execute_code_safely(code: str, session_id:str, timeout: int) -> Tuple[str, 
         error_value = error
 
     finally:
-        # Ensure all write operations are completed before closing
+        # 确保所有写操作完成后再关闭
         if not capture.stdout.closed or not capture.stderr.closed:
             if output_value is None:
                 output_value = capture.get_stdout()
@@ -325,11 +325,11 @@ def restricted_open(*args, **kwargs):
 
 
 def redirect_stderr(stream):
-    """Redirect stderr to a specified stream."""
+    """重定向stderr到指定流"""
     return _RedirectStream(sys.stderr, stream)
 
 class _RedirectStream:
-    """Context manager for redirecting streams."""
+    """用于重定向流的上下文管理器"""
     def __init__(self, original_stream, target_stream):
         self.original_stream = original_stream
         self.target_stream = target_stream
@@ -347,7 +347,7 @@ async def execute_code_handler(request: CodeRequest):
 
     # print(request.dict())
 
-    """Handle code execution request."""
+    """处理代码执行请求"""
     if not request.code.strip():
         raise HTTPException(
             status_code=400,
@@ -385,7 +385,7 @@ async def execute_code_handler(request: CodeRequest):
 
 @app.post("/submit", response_model=CodeSubmitResponse)
 async def sumbit_code_handler(request: CodeSubmitRequest, background_tasks:BackgroundTasks):
-    """Handle code execution request."""
+    """处理代码执行请求"""
     if not request.code.strip():
         raise HTTPException(
             status_code=400,
