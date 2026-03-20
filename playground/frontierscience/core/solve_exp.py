@@ -65,6 +65,7 @@ class SolveExp(BaseExp):
                 "steps": steps,
                 "trajectory": trajectory,
                 "final_answer": final_answer,
+                "refined_answer": final_answer,
             }
             self.results.append(result)
             return result
@@ -82,6 +83,7 @@ class SolveExp(BaseExp):
                 "steps": 0,
                 "error": str(exc),
                 "final_answer": "",
+                "refined_answer": "",
             }
             self.results.append(result)
             return result

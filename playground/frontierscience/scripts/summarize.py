@@ -13,8 +13,8 @@ from pathlib import Path
 TASK_DIR_PATTERN = re.compile(r"^(\d{4})_(physics|chemistry|biology)([0-9a-f\-]+)$")
 SUBJECTS = ("physics", "chemistry", "biology")
 MODES = (
-    ("without_reflect", "solution_scored", False),
-    ("with_reflect", "solution_refined_scored", True),
+    ("draft", "solution_scored"),
+    ("final", "solution_refined_scored"),
 )
 
 
@@ -34,29 +34,50 @@ def iter_task_dirs(runs_dir: Path):
             yield child, match.group(2), match.group(3)
 
 
-def extract_steps_from_trajectory(path: Path) -> int | None:
+def load_trajectory_steps(path: Path) -> list[dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return None
+        return []
+    return data if isinstance(data, list) else []
 
-    if isinstance(data, list):
-        if not data:
-            return 0
-        last_item = data[-1]
-        if isinstance(last_item, dict) and isinstance(last_item.get("steps"), int):
-            return last_item["steps"]
-        return len(data)
 
-    if isinstance(data, dict):
-        if isinstance(data.get("steps"), int):
-            return data["steps"]
-        for key in ("trajectory", "trajectories", "dialogs"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return len(value)
-
+def find_reflect_step(steps: list[dict]) -> int | None:
+    for item in steps:
+        if not isinstance(item, dict):
+            continue
+        trajectory = item.get("trajectory") or {}
+        dialogs = trajectory.get("dialogs") or []
+        for dialog in dialogs:
+            messages = dialog.get("messages") or []
+            for message in messages:
+                tool_calls = message.get("tool_calls") or []
+                for call in tool_calls:
+                    function = call.get("function") or {}
+                    if function.get("name") == "reflect_answer":
+                        step_no = item.get("steps")
+                        if isinstance(step_no, int):
+                            return step_no
     return None
+
+
+def extract_step_stats(path: Path) -> dict[str, int] | None:
+    steps = load_trajectory_steps(path)
+    if not steps:
+        return None
+    total_steps = 0
+    last = steps[-1]
+    if isinstance(last, dict) and isinstance(last.get("steps"), int):
+        total_steps = last["steps"]
+    else:
+        total_steps = len(steps)
+    reflect_step = find_reflect_step(steps)
+    return {
+        "total_steps": total_steps,
+        "pre_reflect_steps": reflect_step - 1 if reflect_step else total_steps,
+        "reflect_extra_steps": total_steps - reflect_step + 1 if reflect_step else 0,
+        "reflect_called": 1 if reflect_step else 0,
+    }
 
 
 def safe_mean(values: list[float]) -> float:
@@ -78,27 +99,39 @@ def load_scored_rows(path: Path) -> list[dict]:
 
 
 def summarize_steps(runs_dir: Path) -> dict[str, dict[str, list[int]]]:
-    overall = {mode: [] for mode, _, _ in MODES}
-    by_subject = {mode: defaultdict(list) for mode, _, _ in MODES}
+    overall = {
+        "draft": [],
+        "final": [],
+        "reflect_extra": [],
+        "reflect_called": [],
+    }
+    by_subject = {
+        key: defaultdict(list)
+        for key in overall
+    }
 
     for task_dir, subject, task_id in iter_task_dirs(runs_dir):
-        for mode, _, is_reflect in MODES:
-            name = f"{task_id}_reflect" if is_reflect else task_id
-            path = task_dir / "trajectories" / name / "trajectory.json"
-            if not path.exists():
-                continue
-            steps = extract_steps_from_trajectory(path)
-            if steps is None:
-                continue
-            overall[mode].append(steps)
-            by_subject[mode][subject].append(steps)
+        path = task_dir / "trajectories" / task_id / "trajectory.json"
+        if not path.exists():
+            continue
+        stats = extract_step_stats(path)
+        if not stats:
+            continue
+        overall["draft"].append(stats["pre_reflect_steps"])
+        overall["final"].append(stats["total_steps"])
+        overall["reflect_extra"].append(stats["reflect_extra_steps"])
+        overall["reflect_called"].append(stats["reflect_called"])
+        by_subject["draft"][subject].append(stats["pre_reflect_steps"])
+        by_subject["final"][subject].append(stats["total_steps"])
+        by_subject["reflect_extra"][subject].append(stats["reflect_extra_steps"])
+        by_subject["reflect_called"][subject].append(stats["reflect_called"])
 
     return {"overall": overall, "by_subject": by_subject}
 
 
 def summarize_eval(eval_repeat_dir: Path) -> dict[str, dict[str, float]]:
     results: dict[str, dict[str, float]] = {}
-    for mode, prefix, _ in MODES:
+    for mode, prefix in MODES:
         paths = sorted(eval_repeat_dir.glob(f"{prefix}*.jsonl"))
         overall_scores: list[float] = []
         per_subject_scores: dict[str, list[float]] = defaultdict(list)
@@ -106,6 +139,8 @@ def summarize_eval(eval_repeat_dir: Path) -> dict[str, dict[str, float]]:
             rows = load_scored_rows(path)
             if not rows:
                 continue
+            score_key = "solution_refined" if mode == "final" else "solution"
+            del score_key
             overall_scores.append(sum(int(row.get("score", 0)) for row in rows) / len(rows))
             for subject in SUBJECTS:
                 subject_rows = [row for row in rows if row.get("subject") == subject]
@@ -129,19 +164,28 @@ def main() -> int:
 
     print(f"runs_dir={args.runs_dir}")
     print(f"eval_repeat_dir={eval_repeat_dir}")
-    for mode, _, _ in MODES:
+    print(
+        f"[draft] avg_steps={format_float(safe_mean(step_stats['overall']['draft']))} "
+        f"count={len(step_stats['overall']['draft'])}"
+    )
+    print(
+        f"[final] avg_steps={format_float(safe_mean(step_stats['overall']['final']))} "
+        f"count={len(step_stats['overall']['final'])}"
+    )
+    print(
+        f"[reflect_extra] avg_steps={format_float(safe_mean(step_stats['overall']['reflect_extra']))} "
+        f"reflect_call_rate={format_float(safe_mean(step_stats['overall']['reflect_called']))}"
+    )
+    for subject in SUBJECTS:
         print(
-            f"[{mode}] avg_steps={format_float(safe_mean(step_stats['overall'][mode]))} "
-            f"count={len(step_stats['overall'][mode])}"
+            f"  {subject}: draft={format_float(safe_mean(step_stats['by_subject']['draft'][subject]))} "
+            f"final={format_float(safe_mean(step_stats['by_subject']['final'][subject]))} "
+            f"reflect_extra={format_float(safe_mean(step_stats['by_subject']['reflect_extra'][subject]))}"
         )
-        for subject in SUBJECTS:
-            print(
-                f"  {subject}: avg_steps={format_float(safe_mean(step_stats['by_subject'][mode][subject]))} "
-                f"count={len(step_stats['by_subject'][mode][subject])}"
-            )
+    for mode, _ in MODES:
         if mode in eval_stats:
             print(
-                f"  acc_overall={format_float(eval_stats[mode]['overall_acc'])} "
+                f"  eval[{mode}] overall={format_float(eval_stats[mode]['overall_acc'])} "
                 f"physics={format_float(eval_stats[mode]['physics_acc'])} "
                 f"chemistry={format_float(eval_stats[mode]['chemistry_acc'])} "
                 f"biology={format_float(eval_stats[mode]['biology_acc'])}"

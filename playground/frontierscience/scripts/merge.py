@@ -59,6 +59,10 @@ def read_solution(task_dir: Path, task_id: str, field: str) -> str:
     for path in candidates:
         if path.exists():
             return path.read_text(encoding="utf-8").strip()
+    if field == "solution_refined":
+        fallback = read_solution(task_dir, task_id, "solution")
+        if fallback:
+            return fallback
     return ""
 
 

@@ -2,6 +2,7 @@ Please solve the following scientific task.
 
 Task ID: {task_id}
 Task Type: {task_type}
+Note: the complete task statement is already embedded below in `Description`. Do not search for or open `task.md`.
 Description:
 {description}
 
@@ -15,9 +16,10 @@ Execution requirements:
 4. If retrieval is allowed:
    - Prefer `search_web` and `google_scholar` to locate relevant sources.
    - Use `visit_web` only for `arxiv.org` URLs when full-paper access is needed.
-   - Prefer the PDF-reading skill for reading full arXiv papers after locating them.
+   - Prefer this route for papers: locate with search -> inspect arXiv with `visit_web` -> download `paper.pdf` -> read with `read_paper_pdf`.
    - If two consecutive retrieval attempts for the same missing fact return `No results` or `BLOCKED`, stop looping and continue with best-effort reasoning.
-5. If `allow_external_retrieval=false`, do not use external retrieval tools or external research skills.
+5. If `allow_external_retrieval=false`, do not use external retrieval tools.
 6. If formulas or derivations are needed, include the essential intermediate steps.
 7. Make the final answer self-contained, scientifically grounded, and aligned with the requested format.
-8. Write the full answer to `solution.md` in your workspace, then call `finish`.
+8. Write a real draft to `solution.md`, call `reflect_answer`, then continue working for at least one more solve iteration if reflection reveals gaps.
+9. Before `finish`, ensure `solution_refined.md` contains the best post-reflection answer.
