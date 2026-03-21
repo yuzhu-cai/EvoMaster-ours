@@ -1,7 +1,7 @@
-"""Mat Master 特定的适配器模块
+"""Mat Master specific adaptor module
 
-此目录包含 Mat Master playground 专用的适配器：
-- calculation: 材料计算 MCP 工具的路径和参数适配器
+This directory contains adaptors specific to the Mat Master playground:
+- calculation: Path and parameter adaptors for materials calculation MCP tools
 """
 
 from .calculation import (

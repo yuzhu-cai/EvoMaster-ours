@@ -191,15 +191,6 @@ agents:
     system_prompt_file: "prompts/metric_system_prompt.txt"
     user_prompt_file: "prompts/metric_user_prompt.txt"
 
-# ============================================
-# MCP Configuration
-# ============================================
-mcp:
-  # MCP configuration file path (relative to config_dir or absolute path)
-  config_file: "mcp_config.json"
-
-  # Whether to enable MCP (optional, default true)
-  enabled: False
 
 # ============================================
 # Session Configuration

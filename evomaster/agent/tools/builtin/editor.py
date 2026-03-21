@@ -1,6 +1,6 @@
-"""EvoMaster Editor 工具
+"""EvoMaster Editor tool.
 
-提供文件查看、创建、编辑的能力。
+Provides file viewing, creation, and editing capabilities.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from evomaster.agent.session import BaseSession
 
 
-# 截断提示
+# Truncation notice
 TEXT_FILE_TRUNCATED_NOTICE = (
     '<response clipped><NOTE>Due to the max output limit, only part of this file has been shown to you. '
     'You should retry this tool after you have searched inside the file with `grep -n` in order to find '
@@ -28,13 +28,13 @@ DIRECTORY_TRUNCATED_NOTICE = (
     'You should use `ls -la` instead to view large directories incrementally.</NOTE>'
 )
 
-# 每次编辑显示的上下文行数
+# Number of context lines shown per edit
 SNIPPET_LINES = 4
 MAX_OUTPUT_SIZE = 16000
 
 
 def maybe_truncate(content: str, max_size: int = MAX_OUTPUT_SIZE, notice: str = TEXT_FILE_TRUNCATED_NOTICE) -> str:
-    """中间截断内容"""
+    """Truncate content in the middle if it exceeds max_size."""
     if len(content) <= max_size:
         return content
     half = max_size // 2
@@ -101,18 +101,18 @@ class EditorToolParams(BaseToolParams):
 
 
 class EditorTool(BaseTool):
-    """文件编辑工具"""
+    """File editing tool."""
     
     name: ClassVar[str] = "str_replace_editor"
     params_class: ClassVar[type[BaseToolParams]] = EditorToolParams
 
     def __init__(self):
         super().__init__()
-        # 文件编辑历史 {path: [(content, encoding), ...]}
+        # File edit history {path: [(content, encoding), ...]}
         self._file_history: dict[str, list[tuple[str, str]]] = {}
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """执行编辑操作"""
+        """Execute an editing operation."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:
@@ -121,7 +121,7 @@ class EditorTool(BaseTool):
         assert isinstance(params, EditorToolParams)
         
         try:
-            # 验证路径
+            # Validate path
             path_type = self._validate_path(session, params.command, params.path)
             
             if params.command == "view":
@@ -145,42 +145,42 @@ class EditorTool(BaseTool):
         command: str,
         path: str,
     ) -> Literal["file", "dir", "not_exist"]:
-        """验证路径"""
-        # 检查是否是绝对路径
+        """Validate the path."""
+        # Check whether the path is absolute
         if not Path(path).is_absolute():
             raise ToolParameterError("path", path, "The path should be an absolute path, starting with `/`.")
         
-        # 检查路径类型（优先检查目录，因为目录检查更可靠）
+        # Check path type (check directory first as it is more reliable)
         if session.is_directory(path):
             path_type = "dir"
         elif session.is_file(path):
             path_type = "file"
         elif session.path_exists(path):
-            # 如果路径存在但既不是文件也不是目录，再次检查
-            # 可能是符号链接或其他特殊类型，尝试判断实际类型
+            # If the path exists but is neither a file nor a directory, re-check
+            # It could be a symbolic link or other special type; try to determine the actual type
             if session.is_directory(path):
                 path_type = "dir"
             elif session.is_file(path):
                 path_type = "file"
             else:
-                # 未知类型，默认当作文件处理（但会在使用时再次检查）
+                # Unknown type; default to treating it as a file (will be re-checked at use time)
                 path_type = "file"
         else:
             path_type = "not_exist"
         
-        # 验证命令与路径类型的兼容性
+        # Validate compatibility of command with path type
         if path_type == "not_exist" and command != "create":
             raise ToolParameterError("path", path, f"The path {path} does not exist.")
         
-        # 对于 create 命令，需要更严格的检查
+        # For the create command, stricter checks are needed
         if command == "create":
-            # 再次确认路径不存在（防止误判）
+            # Confirm once more that the path does not exist (prevent false positives)
             if session.is_file(path):
                 raise ToolParameterError("path", path, f"File already exists at: {path}. Cannot overwrite files using command `create`.")
             if session.is_directory(path):
                 raise ToolParameterError("path", path, f"The path {path} is a directory. Cannot create a file with the same name as a directory.")
             if session.path_exists(path):
-                # 路径存在但不是文件也不是目录，可能是其他类型（如符号链接）
+                # Path exists but is neither a file nor a directory; might be some other type (e.g. symlink)
                 raise ToolParameterError("path", path, f"Path already exists at: {path}. Cannot overwrite using command `create`.")
         
         if path_type == "dir" and command != "view":
@@ -195,24 +195,24 @@ class EditorTool(BaseTool):
         view_range: list[int],
         path_type: Literal["file", "dir", "not_exist"],
     ) -> tuple[str, dict[str, Any]]:
-        """查看文件或目录"""
-        # 再次检查路径类型，确保判断正确（防止 path_type 误判）
+        """View a file or directory."""
+        # Re-check the path type to ensure correctness (prevent path_type misidentification)
         if path_type == "dir" or session.is_directory(path):
             if view_range:
                 raise ToolParameterError("view_range", view_range, "The `view_range` parameter is not allowed for directories.")
             
-            # 列出目录内容（最多 2 层）
+            # List directory contents (up to 2 levels deep)
             result = session.exec_bash(f"find -L {path} -maxdepth 2 -not -path '*/\\.*' | head -500 | sort")
             output = result.get("stdout", "")
             output = maybe_truncate(output, max_size=MAX_OUTPUT_SIZE, notice=DIRECTORY_TRUNCATED_NOTICE)
             
             return f"Here's the files and directories up to 2 levels deep in {path}, excluding hidden items:\n{output}", {}
         
-        # 读取文件
+        # Read file
         content = session.read_file(path)
         init_line = 1
         
-        # 处理 view_range
+        # Handle view_range
         if view_range:
             if len(view_range) != 2 or not all(isinstance(i, int) for i in view_range):
                 raise ToolParameterError("view_range", view_range, "It should be a list of two integers.")
@@ -238,7 +238,7 @@ class EditorTool(BaseTool):
         return self._format_output(content, path, init_line), {}
 
     def _create(self, session: BaseSession, path: str, file_text: str) -> tuple[str, dict[str, Any]]:
-        """创建文件"""
+        """Create a file."""
         session.write_file(path, file_text)
         self._file_history[path] = [(file_text, "utf-8")]
         return f"File created successfully at: {path}", {}
@@ -250,25 +250,25 @@ class EditorTool(BaseTool):
         old_str: str,
         new_str: str,
     ) -> tuple[str, dict[str, Any]]:
-        """替换字符串"""
+        """Replace a string."""
         if new_str == old_str:
             raise ToolParameterError("new_str", new_str, "No replacement was performed. `new_str` and `old_str` must be different.")
         
         content = session.read_file(path)
         
-        # 查找所有匹配
+        # Find all matches
         pattern = re.escape(old_str)
         matches = list(re.finditer(pattern, content))
         
         if not matches:
-            # 尝试 strip 后重试
+            # Try again after stripping whitespace
             old_str_stripped = old_str.strip()
             new_str_stripped = (new_str or "").strip()
             pattern = re.escape(old_str_stripped)
             matches = list(re.finditer(pattern, content))
             
             if matches:
-                # 检查 strip 后是否相同
+                # Check whether they are the same after stripping
                 if old_str_stripped == new_str_stripped:
                     raise ToolParameterError("new_str", new_str, "No replacement was performed. `new_str` and `old_str` must be different (after stripping whitespace).")
                 old_str = old_str_stripped
@@ -277,22 +277,22 @@ class EditorTool(BaseTool):
                 raise ToolError(f"No replacement was performed, old_str did not appear verbatim in {path}.")
         
         if len(matches) > 1:
-            # 计算行号
+            # Compute line numbers
             line_numbers = sorted(set(content.count("\n", 0, m.start()) + 1 for m in matches))
             raise ToolError(f"No replacement was performed. Multiple occurrences of old_str in lines {line_numbers}. Please ensure it is unique.")
         
-        # 执行替换
+        # Perform replacement
         match = matches[0]
         replacement_line = content.count("\n", 0, match.start()) + 1
         new_content = content[:match.start()] + new_str + content[match.end():]
         
-        # 保存历史并写入
+        # Save history and write
         if path not in self._file_history:
             self._file_history[path] = []
         self._file_history[path].append((content, "utf-8"))
         session.write_file(path, new_content)
         
-        # 创建代码片段
+        # Create code snippet
         start_line = max(0, replacement_line - SNIPPET_LINES)
         end_line = replacement_line + SNIPPET_LINES + new_str.count("\n") + 1
         snippet = "\n".join(new_content.split("\n")[start_line:end_line + 1])
@@ -310,7 +310,7 @@ class EditorTool(BaseTool):
         insert_line: int,
         new_str: str,
     ) -> tuple[str, dict[str, Any]]:
-        """插入内容"""
+        """Insert content."""
         content = session.read_file(path)
         lines = content.rstrip("\n").split("\n")
         n_lines = len(lines)
@@ -318,18 +318,18 @@ class EditorTool(BaseTool):
         if insert_line < 0 or insert_line > n_lines:
             raise ToolParameterError("insert_line", insert_line, f"It should be within the range [0, {n_lines}]")
         
-        # 插入新行
+        # Insert new lines
         new_lines = new_str.split("\n")
         result_lines = lines[:insert_line] + new_lines + lines[insert_line:]
         new_content = "\n".join(result_lines)
         
-        # 保存历史并写入
+        # Save history and write
         if path not in self._file_history:
             self._file_history[path] = []
         self._file_history[path].append((content, "utf-8"))
         session.write_file(path, new_content)
         
-        # 创建代码片段
+        # Create code snippet
         start_line = max(0, insert_line - SNIPPET_LINES + 1)
         end_line = insert_line + SNIPPET_LINES + 1
         snippet_lines = lines[start_line:insert_line] + new_lines + lines[insert_line:end_line]
@@ -342,7 +342,7 @@ class EditorTool(BaseTool):
         return msg, {}
 
     def _undo_edit(self, session: BaseSession, path: str) -> tuple[str, dict[str, Any]]:
-        """撤销编辑"""
+        """Undo the last edit."""
         if path not in self._file_history or not self._file_history[path]:
             raise ToolError(f"No edit history found for {path}.")
         
@@ -352,7 +352,7 @@ class EditorTool(BaseTool):
         return f"Last edit to {path} undone successfully. {self._format_output(old_content, path)}", {}
 
     def _format_output(self, content: str, descriptor: str, init_line: int = 1) -> str:
-        """格式化输出（添加行号）"""
+        """Format output (add line numbers)."""
         content = maybe_truncate(content, max_size=MAX_OUTPUT_SIZE)
         numbered_lines = [
             f"{i + init_line:6}\t{line}"

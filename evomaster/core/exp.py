@@ -1,6 +1,6 @@
-"""EvoMaster Core - 基础类和通用流程
+"""EvoMaster Core - Base Classes and Common Workflows
 
-提供 Exp 和 Playground 的基础实现，供具体的 playground 继承使用。
+Provides base implementations for Exp and Playground, for concrete playgrounds to inherit.
 """
 
 import json
@@ -11,26 +11,26 @@ from typing import Any
 
 
 def extract_agent_response(trajectory: Any) -> str:
-    """从轨迹中提取 Agent 的最终回答（模块级工具函数）
+    """Extract the agent's final response from a trajectory (module-level utility function).
 
-    支持两种数据格式：
-    - 对象格式（有 .dialogs 属性，来自运行时）
-    - dict 格式（JSON 反序列化结果，来自轨迹文件）
+    Supports two data formats:
+    - Object format (has .dialogs attribute, from runtime)
+    - Dict format (JSON deserialization result, from trajectory files)
 
-    提取优先级：
-    1. 最后一条 assistant 消息的 finish tool_call 中的 message 参数
-    2. 最后一条有内容的 assistant 消息的 content
+    Extraction priority:
+    1. The message parameter from the finish tool_call in the last assistant message
+    2. The content of the last assistant message that has content
 
     Args:
-        trajectory: 执行轨迹（对象或 dict）
+        trajectory: Execution trajectory (object or dict).
 
     Returns:
-        Agent 的回答文本，提取失败返回空字符串
+        The agent's response text; returns an empty string if extraction fails.
     """
     if not trajectory:
         return ""
 
-    # 获取 dialogs（兼容对象和 dict）
+    # Get dialogs (compatible with both object and dict)
     if isinstance(trajectory, dict):
         dialogs = trajectory.get("dialogs")
     elif hasattr(trajectory, "dialogs"):
@@ -43,7 +43,7 @@ def extract_agent_response(trajectory: Any) -> str:
 
     last_dialog = dialogs[-1]
 
-    # 获取 messages（兼容对象和 dict）
+    # Get messages (compatible with both object and dict)
     if isinstance(last_dialog, dict):
         messages = last_dialog.get("messages", [])
     else:
@@ -52,7 +52,7 @@ def extract_agent_response(trajectory: Any) -> str:
     if not messages:
         return ""
 
-    # 反向遍历，找最后一条 assistant 消息
+    # Iterate in reverse to find the last assistant message
     for message in reversed(messages):
         if isinstance(message, dict):
             role = message.get("role", "")
@@ -67,7 +67,7 @@ def extract_agent_response(trajectory: Any) -> str:
         if role != "assistant":
             continue
 
-        # 优先检查 finish tool_call 的 message 参数
+        # Prefer checking the finish tool_call's message parameter
         for tc in (tool_calls or []):
             if isinstance(tc, dict):
                 func = tc.get("function", {})
@@ -87,7 +87,7 @@ def extract_agent_response(trajectory: Any) -> str:
                 except (json.JSONDecodeError, AttributeError):
                     pass
 
-        # 回退到 content（跳过有 tool_calls 的消息，其 content 可能是泄漏的格式化 token）
+        # Fall back to content (skip messages with tool_calls, whose content may be leaked formatting tokens)
         if content and content.strip() and not tool_calls:
             return content
 
@@ -95,18 +95,18 @@ def extract_agent_response(trajectory: Any) -> str:
 
 
 class BaseExp:
-    """实验基类
+    """Experiment base class.
 
-    定义单次实验的通用执行逻辑。
-    具体 playground 可以继承并覆盖相关方法。
+    Defines the common execution logic for a single experiment.
+    Concrete playgrounds can inherit and override relevant methods.
     """
 
     def __init__(self, agent, config):
-        """初始化实验
+        """Initialize the experiment.
 
         Args:
-            agent: Agent 实例
-            config: EvoMasterConfig 实例
+            agent: Agent instance.
+            config: EvoMasterConfig instance.
         """
         self.agent = agent
         self.config = config
@@ -116,37 +116,38 @@ class BaseExp:
 
     @property
     def exp_name(self) -> str:
-        """获取 Exp 名称（自动从类名推断）
+        """Get the Exp name (automatically inferred from the class name).
 
-        例如: SolverExp -> Solver, CriticExp -> Critic
-        子类可以覆盖此属性来自定义名称。
+        Example: SolverExp -> Solver, CriticExp -> Critic.
+        Subclasses can override this property to customize the name.
         """
         class_name = self.__class__.__name__
-        # 移除 "Exp" 后缀
+        # Remove the "Exp" suffix
         if class_name.endswith('Exp'):
             return class_name[:-3]
         return class_name
 
     def set_run_dir(self, run_dir: str | Path) -> None:
-        """设置 run 目录
+        """Set the run directory.
 
         Args:
-            run_dir: Run 目录路径
+            run_dir: Run directory path.
         """
         self.run_dir = Path(run_dir)
 
     def run(self, task_description: str, task_id: str = "exp_001", images: list[str] | None = None, on_step=None) -> dict:
-        """运行一次实验
+        """Run a single experiment.
 
         Args:
-            task_description: 任务描述
-            task_id: 任务 ID
-            images: 图片文件路径列表（可选，用于多模态任务）
+            task_description: Task description.
+            task_id: Task ID.
+            images: List of image file paths (optional, for multimodal tasks).
+            on_step: Step callback, signature (StepRecord, step_number, max_steps) -> None.
 
         Returns:
-            运行结果字典
+            Run result dictionary.
         """
-        # 创建任务实例
+        # Create a task instance
         task = TaskInstance(
             task_id=task_id,
             task_type="discovery",
@@ -154,11 +155,11 @@ class BaseExp:
             images=images or [],
         )
 
-        # 运行 Agent
+        # Run the Agent
         self.logger.debug(f"Running task: {task_id}")
         trajectory = self.agent.run(task, on_step=on_step)
 
-        # 保存结果
+        # Save results
         result = {
             "task_id": task_id,
             "status": trajectory.status,
@@ -174,10 +175,10 @@ class BaseExp:
         }
 
     def save_results(self, output_file: str):
-        """保存实验结果
+        """Save experiment results.
 
         Args:
-            output_file: 输出文件路径
+            output_file: Output file path.
         """
         output_data = []
         for result in self.results:
@@ -195,12 +196,12 @@ class BaseExp:
 
 
     def _extract_agent_response(self, trajectory: Any) -> str:
-        """从轨迹中提取Agent的最终回答
+        """Extract the agent's final response from a trajectory.
 
         Args:
-            trajectory: 执行轨迹
+            trajectory: Execution trajectory.
 
         Returns:
-            Agent的回答文本
+            The agent's response text.
         """
         return extract_agent_response(trajectory)

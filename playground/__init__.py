@@ -1,5 +1,5 @@
 """EvoMaster Playground
 
-包含各种任务执行 Pipeline 的实现。
+Contains implementations of various task execution pipelines.
 """
 

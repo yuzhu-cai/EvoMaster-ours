@@ -1,6 +1,6 @@
-"""飞书消息发送
+"""Feishu message sending
 
-发送文本消息、卡片消息和回复消息到飞书。支持卡片消息的原地更新（PATCH）。
+Send text messages, card messages, and reply messages to Feishu. Supports in-place card message updates (PATCH).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from lark_oapi.api.im.v1 import (
 
 logger = logging.getLogger(__name__)
 
-# 卡片消息内容上限（飞书 interactive 消息约 30KB，保守取 15KB）
+# Card message content limit (Feishu interactive messages ~30KB, using a conservative 15KB)
 _MAX_CARD_CONTENT_LENGTH = 15000
 
 
@@ -30,7 +30,7 @@ def _build_card_json(
     content: str,
     header_template: str = "blue",
 ) -> str:
-    """构建卡片 JSON 字符串"""
+    """Build a card JSON string."""
     if len(content) > _MAX_CARD_CONTENT_LENGTH:
         content = content[:_MAX_CARD_CONTENT_LENGTH] + "\n\n...(内容过长已截断)"
 
@@ -52,18 +52,18 @@ def build_card_with_actions(
     actions: list[dict],
     header_template: str = "blue",
 ) -> str:
-    """构建包含按钮的卡片 JSON 字符串
+    """Build a card JSON string with action buttons.
 
     Args:
-        title: 卡片标题
-        content: 卡片 Markdown 内容
-        actions: 按钮列表，每项格式:
-            {"text": "确认", "type": "primary", "value": {"action": "confirm"}}
-            type 可选: "default", "primary", "danger"
-        header_template: 卡片标题栏颜色模板
+        title: Card title.
+        content: Card Markdown content.
+        actions: Button list, each item format:
+            {"text": "Confirm", "type": "primary", "value": {"action": "confirm"}}
+            type options: "default", "primary", "danger"
+        header_template: Card header color template.
 
     Returns:
-        卡片 JSON 字符串
+        Card JSON string.
     """
     if len(content) > _MAX_CARD_CONTENT_LENGTH:
         content = content[:_MAX_CARD_CONTENT_LENGTH] + "\n\n...(内容过长已截断)"
@@ -97,16 +97,16 @@ def send_text_message(
     text: str,
     reply_to_message_id: str | None = None,
 ) -> bool:
-    """发送或回复文本消息
+    """Send or reply with a text message.
 
     Args:
-        client: 飞书 Client 实例
-        chat_id: 聊天 ID
-        text: 消息文本
-        reply_to_message_id: 要回复的消息 ID（可选）
+        client: Feishu Client instance.
+        chat_id: Chat ID.
+        text: Message text.
+        reply_to_message_id: Message ID to reply to (optional).
 
     Returns:
-        True 表示发送成功
+        True on successful send.
     """
     content = json.dumps({"text": text})
 
@@ -164,19 +164,19 @@ def send_card_message(
     header_template: str = "blue",
     card_json: str | None = None,
 ) -> str | None:
-    """发送卡片消息（支持 Markdown 格式，适合较长内容）
+    """Send a card message (supports Markdown formatting, suitable for longer content).
 
     Args:
-        client: 飞书 Client 实例
-        chat_id: 聊天 ID
-        title: 卡片标题
-        content: 卡片内容（支持飞书 Markdown 子集）
-        reply_to_message_id: 要回复的消息 ID（可选）
-        header_template: 卡片标题栏颜色模板
-        card_json: 预构建的卡片 JSON（可选，传入时忽略 title/content/header_template）
+        client: Feishu Client instance.
+        chat_id: Chat ID.
+        title: Card title.
+        content: Card content (supports Feishu Markdown subset).
+        reply_to_message_id: Message ID to reply to (optional).
+        header_template: Card header color template.
+        card_json: Pre-built card JSON (optional; when provided, title/content/header_template are ignored).
 
     Returns:
-        发送成功返回新消息的 message_id，失败返回 None
+        The new message's message_id on success, None on failure.
     """
     card = card_json or _build_card_json(title, content, header_template)
 
@@ -230,14 +230,14 @@ def upload_image(
     client: lark.Client,
     image_path: str,
 ) -> str | None:
-    """上传图片到飞书 IM，返回 image_key
+    """Upload an image to Feishu IM and return the image_key.
 
     Args:
-        client: 飞书 Client 实例
-        image_path: 本地图片文件路径
+        client: Feishu Client instance.
+        image_path: Local image file path.
 
     Returns:
-        成功返回 image_key，失败返回 None
+        image_key on success, None on failure.
     """
     from lark_oapi.api.im.v1 import CreateImageRequest, CreateImageRequestBody
 
@@ -277,16 +277,16 @@ def send_image_message(
     image_key: str,
     reply_to_message_id: str | None = None,
 ) -> str | None:
-    """发送图片消息
+    """Send an image message.
 
     Args:
-        client: 飞书 Client 实例
-        chat_id: 聊天 ID
-        image_key: 已上传的图片 key（从 upload_image 获取）
-        reply_to_message_id: 要回复的消息 ID（可选）
+        client: Feishu Client instance.
+        chat_id: Chat ID.
+        image_key: Uploaded image key (obtained from upload_image).
+        reply_to_message_id: Message ID to reply to (optional).
 
     Returns:
-        发送成功返回 message_id，失败返回 None
+        message_id on success, None on failure.
     """
     content = json.dumps({"image_key": image_key})
 
@@ -335,7 +335,7 @@ def send_image_message(
         return None
 
 
-# 文件后缀 → 飞书 file_type 映射
+# File extension -> Feishu file_type mapping
 _FILE_TYPE_MAP = {
     ".pdf": "pdf",
     ".doc": "doc", ".docx": "doc",
@@ -350,14 +350,14 @@ def upload_file(
     client: lark.Client,
     file_path: str,
 ) -> str | None:
-    """上传文件到飞书 IM，返回 file_key
+    """Upload a file to Feishu IM and return the file_key.
 
     Args:
-        client: 飞书 Client 实例
-        file_path: 本地文件路径
+        client: Feishu Client instance.
+        file_path: Local file path.
 
     Returns:
-        成功返回 file_key，失败返回 None
+        file_key on success, None on failure.
     """
     from lark_oapi.api.im.v1 import CreateFileRequest, CreateFileRequestBody
 
@@ -403,16 +403,16 @@ def send_file_message(
     file_key: str,
     reply_to_message_id: str | None = None,
 ) -> str | None:
-    """发送文件消息
+    """Send a file message.
 
     Args:
-        client: 飞书 Client 实例
-        chat_id: 聊天 ID
-        file_key: 已上传的文件 key（从 upload_file 获取）
-        reply_to_message_id: 要回复的消息 ID（可选）
+        client: Feishu Client instance.
+        chat_id: Chat ID.
+        file_key: Uploaded file key (obtained from upload_file).
+        reply_to_message_id: Message ID to reply to (optional).
 
     Returns:
-        发送成功返回 message_id，失败返回 None
+        message_id on success, None on failure.
     """
     content = json.dumps({"file_key": file_key})
 
@@ -469,20 +469,20 @@ def patch_card_message(
     header_template: str = "blue",
     card_json: str | None = None,
 ) -> bool:
-    """原地更新已发送的卡片消息（PATCH API）
+    """Update an already-sent card message in-place (PATCH API).
 
-    仅支持更新 bot 自己发送的 interactive 类型消息。
+    Only supports updating interactive-type messages sent by the bot itself.
 
     Args:
-        client: 飞书 Client 实例
-        message_id: 要更新的消息 ID
-        title: 更新后的卡片标题
-        content: 更新后的卡片内容
-        header_template: 卡片标题栏颜色模板
-        card_json: 预构建的卡片 JSON（可选，传入时忽略 title/content/header_template）
+        client: Feishu Client instance.
+        message_id: Message ID to update.
+        title: Updated card title.
+        content: Updated card content.
+        header_template: Card header color template.
+        card_json: Pre-built card JSON (optional; when provided, title/content/header_template are ignored).
 
     Returns:
-        True 表示更新成功
+        True on successful update.
     """
     card = card_json or _build_card_json(title, content, header_template)
 

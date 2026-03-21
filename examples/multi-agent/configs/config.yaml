@@ -1,8 +1,8 @@
-# Multi-Agent 配置示例
-# 展示如何为多个 agent 配置独立的 prompt 文件
+# Multi-Agent Configuration Example
+# Demonstrates how to configure independent prompt files for multiple agents
 
 # ============================================
-# LLM 配置（所有 agent 共享）
+# LLM Configuration (shared by all agents)
 # ============================================
 llm:
   openai:
@@ -24,10 +24,10 @@ llm:
   default: "openai"
 
 # ============================================
-# Multi-Agent 配置列表
+# Multi-Agent Configuration List
 # ============================================
 agents:
-  # Agent 1: 代码生成器
+  # Agent 1: Code Generator
   - name: "code_generator"
     max_turns: 30
     llm: "openai"
@@ -36,7 +36,7 @@ agents:
       max_tokens: 128000
       truncation_strategy: "latest_half"
 
-  # Agent 2: 代码审查者
+  # Agent 2: Code Reviewer
   - name: "code_reviewer"
     max_turns: 20
     llm: "openai"
@@ -45,7 +45,7 @@ agents:
       max_tokens: 128000
       truncation_strategy: "latest_half"
 
-  # Agent 3: 测试生成器
+  # Agent 3: Test Generator
   - name: "test_generator"
     max_turns: 25
     llm: "openai"
@@ -55,7 +55,7 @@ agents:
       truncation_strategy: "latest_half"
 
 # ============================================
-# Session 配置（所有 agent 共享）
+# Session Configuration (shared by all agents)
 # ============================================
 session:
   type: "local"
@@ -73,14 +73,14 @@ session:
     auto_remove: false
 
 # ============================================
-# MCP 配置
+# MCP Configuration
 # ============================================
 mcp:
   config_file: "mcp_config.json"
   enabled: false
 
 # ============================================
-# 日志和输出配置
+# Logging and Output Configuration
 # ============================================
 llm_output:
   show_in_console: true

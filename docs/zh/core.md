@@ -61,14 +61,16 @@ def set_run_dir(self, run_dir: str | Path) -> None:
     """
 ```
 
-#### run(task_description, task_id)
+#### run(task_description, task_id, images)
 ```python
-def run(self, task_description: str, task_id: str = "exp_001") -> dict:
+def run(self, task_description: str, task_id: str = "exp_001", images: list[str] | None = None, on_step=None) -> dict:
     """运行一次实验
 
     Args:
         task_description: 任务描述
         task_id: 任务 ID
+        images: 可选的图片文件路径列表（用于多模态任务）
+        on_step: 可选的步骤回调
 
     Returns:
         结果字典，包含：
@@ -165,16 +167,14 @@ def set_run_dir(self, run_dir: str | Path, task_id: str | None = None) -> None:
 def setup(self) -> None:
     """初始化所有组件
 
-    支持单 agent 和多 agent 两种模式：
-    - 如果配置中有 `agents:`，则创建多个 agent
-    - 否则，如果配置中有 `agent:`，则创建单个 agent
-
     步骤：
-    1. 准备 LLM 配置
-    2. 创建 Session（如果尚未创建）
-    3. 加载 Skills（如果启用）
-    4. 创建工具注册表并初始化 MCP 工具
-    5. 创建 Agent(s)
+    1. 创建 Session（如果尚未创建）via _setup_session()
+    2. 创建 Agents via _setup_agents()，自动：
+       - 读取 per-agent 配置（LLM、tools、skills）
+       - 创建独立的 LLM 实例
+       - 创建工具注册表（支持 MCP）
+       - 加载 per-agent 技能注册表
+       - 注册 agents 到 self.agents（AgentSlots）
     """
 ```
 
@@ -204,29 +204,49 @@ def cleanup(self) -> None:
 
 ### 组件创建方法
 
-#### _create_agent(name, agent_config, enable_tools, llm_config, skill_registry)
+#### _create_agent(name, agent_config, llm_config, tool_config, skill_config)
 ```python
 def _create_agent(
     self,
     name: str,
-    agent_config: dict,
-    enable_tools: bool = True,
+    agent_config: dict | None = None,
     llm_config: dict | None = None,
-    skill_registry: SkillRegistry | None = None,
+    tool_config: dict | None = None,
+    skill_config: dict | None = None,
 ) -> Agent:
     """创建 Agent 实例
 
     每个 Agent 使用独立的 LLM 实例，确保日志记录独立。
+    所有参数均为可选；如果未提供，会自动根据 agent 名称从配置管理器获取。
 
     Args:
         name: Agent 名称
-        agent_config: Agent 配置字典
-        enable_tools: 是否启用工具调用
-        llm_config: LLM 配置（如果为 None，则从配置管理器获取）
-        skill_registry: 可选的技能注册表
+        agent_config: Agent 配置字典（为 None 时自动获取）
+        llm_config: LLM 配置字典（为 None 时自动获取）
+        tool_config: 工具配置字典，形如 {"builtin": list[str], "mcp": str}（为 None 时自动获取）
+        skill_config: Skill 配置字典（为 None 时自动获取）
 
     Returns:
         Agent 实例
+    """
+```
+
+#### copy_agent(agent, new_agent_name)
+```python
+def copy_agent(self, agent, new_agent_name: str | None = None) -> Agent:
+    """复制 Agent 实例，拥有独立的 LLM 和上下文
+
+    创建一个新的 Agent 实例，该实例：
+    - 拥有独立的 LLM 实例
+    - 共享 session、tools、skill_registry、config_dir、enable_tools
+    - 拥有独立的上下文（context_manager、current_dialog、trajectory）
+
+    Args:
+        agent: 要复制的 Agent 实例
+        new_agent_name: 可选的新 Agent 名称
+
+    Returns:
+        新的 Agent 实例
     """
 ```
 
@@ -271,13 +291,22 @@ def _parse_mcp_servers(self, mcp_config: dict) -> list[dict]:
 ### 内部方法
 
 ```python
-def _setup_llm_config(self) -> dict:
-    """准备 LLM 配置"""
-
 def _setup_session(self) -> None:
     """创建并打开 Session（如果尚未创建）"""
 
-def _setup_tools(self, skill_registry=None) -> None:
+def _setup_agents(self) -> None:
+    """自动从配置创建 agents 并注册到 self.agents（AgentSlots）"""
+
+def _setup_agent_llm(self, name: str) -> dict:
+    """获取 per-agent LLM 配置"""
+
+def _setup_agent_tools(self, name: str) -> dict:
+    """获取 per-agent 工具配置"""
+
+def _setup_agent_skills(self, name: str) -> dict:
+    """获取 per-agent Skills 配置"""
+
+def _setup_tools(self, skill_config=None, tool_config=None) -> None:
     """创建工具注册表并初始化 MCP 工具"""
 
 def _get_output_config(self) -> dict:
@@ -291,6 +320,9 @@ def _update_workspace_path(self, workspace_path: Path) -> None:
 
 def _setup_trajectory_file(self, output_file: str | Path | None = None) -> Path | None:
     """设置轨迹文件路径"""
+
+def execute_parallel_tasks(self, tasks, max_workers=None) -> list:
+    """使用 ThreadPoolExecutor 并行执行多个实验"""
 ```
 
 ## 使用示例
@@ -321,29 +353,30 @@ class MyPlayground(BasePlayground):
 
 ```python
 class MultiAgentPlayground(BasePlayground):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # 声明 agent 槽位（IDE 补全友好）
+        self.agents.declare("planning_agent", "coding_agent")
+
     def setup(self):
-        super().setup()
-        # setup() 后会根据配置创建多个 agent
+        # 两行搞定！基类自动处理 LLM/Tools/Skills
+        self._setup_session()
+        self._setup_agents()
+        # 现在可通过 self.agents.planning_agent 等访问 agents
 
     def run(self, task_description: str, output_file: str | None = None) -> dict:
         self.setup()
 
-        # 获取所有 agents
-        agents = self.agents  # 假设在 setup 中存储
-
-        # 使用 ThreadPoolExecutor 并行运行 agents
-        from concurrent.futures import ThreadPoolExecutor
-
-        results = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(self._run_single_agent, agent, task_description)
-                for agent in agents
-            ]
-            results = [f.result() for f in futures]
+        # 通过 AgentSlots 访问 agents
+        planning_result = self._run_single_agent(
+            self.agents.planning_agent, task_description
+        )
+        coding_result = self._run_single_agent(
+            self.agents.coding_agent, task_description
+        )
 
         self.cleanup()
-        return {"results": results}
+        return {"results": [planning_result, coding_result]}
 ```
 
 ### 运行 Playground
@@ -374,8 +407,9 @@ llm:
   openai:
     provider: "openai"
     model: "gpt-4"
-    api_key: "your-api-key"
+    api_key: "${OPENAI_API_KEY}"
     temperature: 0.7
+  default: "openai"
 
 # Session 配置
 session:
@@ -383,31 +417,34 @@ session:
   local:
     workspace_path: "./workspace"
 
-# 单 Agent 配置
-agent:
-  max_turns: 50
-  system_prompt_file: "prompts/system.txt"
-  user_prompt_file: "prompts/user.txt"
-
-# 或 多 Agent 配置
+# 多 Agent 配置（v0.0.2）
 agents:
   Solver:
-    llm: "openai"
+    llm: "openai"                  # per-agent LLM 绑定
     max_turns: 50
-    enable_tools: true
+    tools:                          # per-agent 工具配置
+      builtin: ["*"]               # 所有内置工具
+    skills:                         # per-agent Skills
+      - "*"                        # 加载所有 skills
   Critic:
     llm: "openai"
     max_turns: 30
-    enable_tools: true
+    tools:
+      builtin: []                  # 无工具（纯文本回复）
+    # 无 skills 键 -> 不加载任何 skill
+  Coder:
+    llm: "openai"
+    max_turns: 100
+    tools:
+      builtin: ["execute_bash", "str_replace_editor", "finish"]
+      mcp: "mcp_config.json"      # per-agent MCP 配置
+    skills:
+      - "rag"
+      - "pdf"
 
-# MCP 配置
-mcp:
-  enabled: true
-  config_file: "mcp_config.json"
-
-# Skills 配置
+# 全局 Skills 配置（根目录）
 skills:
-  enabled: true
+  enabled: false
   skills_root: "evomaster/skills"
 
 # 日志配置

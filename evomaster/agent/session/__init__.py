@@ -1,6 +1,6 @@
-"""EvoMaster Agent Session 模块
+"""EvoMaster Agent Session module.
 
-Session 是 Agent 与集群 Env 交互的介质。
+A Session serves as the medium for an Agent to interact with the cluster Env.
 """
 
 from .base import BaseSession, SessionConfig

@@ -1,15 +1,15 @@
-"""Playground 注册表
+"""Playground Registry
 
-提供装饰器机制，用于注册各 agent 的自定义 Playground 类。
+Provides a decorator mechanism for registering custom Playground classes for each agent.
 
-使用示例：
+Usage examples:
     from evomaster.core import BasePlayground, register_playground
 
     @register_playground("my-agent")
     class MyAgentPlayground(BasePlayground):
         pass
 
-    # 在 run.py 中
+    # In run.py
     from evomaster.core import get_playground_class
     playground = get_playground_class("my-agent", config_dir=...)
 """
@@ -18,31 +18,31 @@ import logging
 from typing import Dict, Type, Optional
 from pathlib import Path
 
-# 全局注册表：存储 agent_name -> Playground 类的映射
+# Global registry: stores agent_name -> Playground class mapping
 _PLAYGROUND_REGISTRY: Dict[str, Type] = {}
 
 logger = logging.getLogger(__name__)
 
 
 def register_playground(agent_name: str):
-    """装饰器：注册 Playground 类
+    """Decorator: Register a Playground class.
 
-    使用示例：
+    Usage example:
         @register_playground("agent-builder")
         class AgentBuilderPlayground(BasePlayground):
             pass
 
     Args:
-        agent_name: Agent 名称（如 "minimal", "agent-builder"）
-                   必须与 playground 目录名一致（使用连字符）
+        agent_name: Agent name (e.g., "minimal", "agent-builder").
+                   Must match the playground directory name (use hyphens).
 
     Returns:
-        装饰器函数
+        Decorator function.
     """
     def decorator(cls):
         if agent_name in _PLAYGROUND_REGISTRY:
             logger.warning(
-                f"Playground '{agent_name}' 已被注册，将被覆盖: "
+                f"Playground '{agent_name}' is already registered, will be overridden: "
                 f"{_PLAYGROUND_REGISTRY[agent_name].__name__} -> {cls.__name__}"
             )
 
@@ -54,49 +54,50 @@ def register_playground(agent_name: str):
 
 
 def get_playground_class(agent_name: str, config_dir: Optional[Path] = None, config_path: Optional[Path] = None):
-    """获取注册的 Playground 类实例
+    """Get a registered Playground class instance.
 
-    如果 agent 有注册的自定义 Playground 类，则使用自定义类；
-    否则回退到 BasePlayground。
+    If the agent has a registered custom Playground class, uses the custom class;
+    otherwise falls back to BasePlayground.
 
     Args:
-        agent_name: Agent 名称
-        config_path: 配置文件完整路径（推荐使用）
+        agent_name: Agent name.
+        config_dir: Configuration directory path (optional).
+        config_path: Full configuration file path (recommended).
 
     Returns:
-        Playground 实例
+        Playground instance.
 
     Raises:
-        ImportError: 如果 BasePlayground 无法导入（内部错误）
+        ImportError: If BasePlayground cannot be imported (internal error).
     """
     from .playground import BasePlayground
 
     playground_class = _PLAYGROUND_REGISTRY.get(agent_name)
 
     if playground_class:
-        # 使用注册的自定义类
+        # Use registered custom class
         logger.info(f"Using custom Playground: {agent_name} -> {playground_class.__name__}")
         return playground_class(config_dir=config_dir, config_path=config_path)
     else:
-        # 回退到 BasePlayground
+        # Fall back to BasePlayground
         logger.info(f"Using BasePlayground for agent '{agent_name}' (no custom implementation registered)")
         return BasePlayground(config_dir=config_dir, config_path=config_path)
 
 
 def list_registered_playgrounds():
-    """列出所有注册的 Playground
+    """List all registered Playgrounds.
 
     Returns:
-        已注册的 agent 名称列表
+        List of registered agent names.
     """
     return list(_PLAYGROUND_REGISTRY.keys())
 
 
 def get_registry_info():
-    """获取注册表的详细信息
+    """Get detailed information about the registry.
 
     Returns:
-        字典，格式为 {agent_name: class_name}
+        Dictionary of the form {agent_name: class_name}.
     """
     return {
         agent_name: cls.__name__

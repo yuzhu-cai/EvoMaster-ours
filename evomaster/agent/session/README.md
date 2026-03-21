@@ -1,61 +1,61 @@
-# Session - Agent 与 Env 交互的介质
+# Session - The Interface Between Agent and Env
 
-Session 是 Agent 与远程集群环境交互的中间层，提供统一的接口来执行命令、传输文件等。
+Session is the intermediate layer for Agent interaction with remote cluster environments, providing a unified interface for executing commands, transferring files, etc.
 
-## 目录结构
+## Directory Structure
 
-- `base.py` - Session 抽象基类，定义标准接口
-- `local.py` - 本地 Session 实现，在本地直接执行命令
-- `docker.py` - Docker Session 实现，使用 Docker 容器提供隔离的执行环境
+- `base.py` - Session abstract base class, defining the standard interface
+- `local.py` - Local Session implementation, executing commands locally
+- `docker.py` - Docker Session implementation, using Docker containers for isolated execution environments
 
-## 核心类
+## Core Classes
 
-### BaseSession（base.py）
-Session 的抽象基类，定义所有 Session 实现必须提供的接口：
+### BaseSession (base.py)
+The abstract base class for Session, defining interfaces that all Session implementations must provide:
 
-- `open()` / `close()` - 会话生命周期管理
-- `exec_bash(command)` - 执行 Bash 命令
-- `upload(local, remote)` - 上传文件
-- `download(remote)` - 下载文件
-- `read_file()` / `write_file()` - 文本文件读写
-- `path_exists()` / `is_file()` / `is_directory()` - 路径检查
+- `open()` / `close()` - Session lifecycle management
+- `exec_bash(command)` - Execute Bash commands
+- `upload(local, remote)` - Upload files
+- `download(remote)` - Download files
+- `read_file()` / `write_file()` - Text file read/write
+- `path_exists()` / `is_file()` / `is_directory()` - Path checks
 
-### LocalSession（local.py）
-本地 Session 实现，在本地直接执行命令：
+### LocalSession (local.py)
+Local Session implementation, executing commands directly on the local machine:
 
-- 使用 subprocess 直接执行 bash 命令
-- 文件操作为本地复制/读写
-- 适合开发和测试
-- 无需任何外部依赖（Docker、集群等）
+- Uses subprocess to execute bash commands directly
+- File operations are local copy/read/write
+- Suitable for development and testing
+- No external dependencies required (Docker, clusters, etc.)
 
-### DockerSession（docker.py）
-基于 Docker 的 Session 实现，提供隔离的执行环境：
+### DockerSession (docker.py)
+Docker-based Session implementation providing an isolated execution environment:
 
-- 使用 Docker 容器作为执行环境
-- 通过 tmux 维持持久化的 bash 会话
-- 支持环境变量、工作目录等状态保持
-- 支持资源限制（内存、CPU）和卷挂载
+- Uses Docker containers as the execution environment
+- Maintains persistent bash sessions via tmux
+- Supports environment variables, working directory, and other state persistence
+- Supports resource limits (memory, CPU) and volume mounts
 
-## 使用示例
+## Usage Examples
 
-### 本地 Session
+### Local Session
 
 ```python
 from evomaster.agent.session import LocalSession, LocalSessionConfig
 
-# 创建配置
+# Create configuration
 config = LocalSessionConfig(timeout=30)
 
-# 使用 Session
+# Use Session
 with LocalSession(config) as session:
-    # 执行命令
+    # Execute command
     result = session.exec_bash("python --version")
     print(result["stdout"])
 
-    # 上传文件（本地复制）
+    # Upload file (local copy)
     session.upload("/local/path", "/tmp/remote.py")
 
-    # 下载文件（本地读取）
+    # Download file (local read)
     content = session.download("/tmp/file.txt")
 ```
 
@@ -64,59 +64,58 @@ with LocalSession(config) as session:
 ```python
 from evomaster.agent.session import DockerSession, DockerSessionConfig
 
-# 创建配置
+# Create configuration
 config = DockerSessionConfig(
     image="python:3.11-slim",
     memory_limit="4g",
     cpu_limit=2.0,
 )
 
-# 使用 Session
+# Use Session
 with DockerSession(config) as session:
-    # 执行命令
+    # Execute command
     result = session.exec_bash("python --version")
     print(result["stdout"])
 
-    # 上传文件
+    # Upload file
     session.upload("/local/path", "/workspace/remote.py")
 
-    # 下载文件
+    # Download file
     content = session.download("/workspace/output.txt")
 ```
 
-## 设计特点
+## Design Features
 
-1. **抽象接口** - BaseSession 定义标准接口，便于多种实现（本地、远程、Kubernetes 等）
-2. **多种实现** - 支持本地、Docker、以及未来的其他环境
-3. **隔离环境** - Docker 容器提供完整的隔离执行环境
-4. **持久化会话** - 使用 tmux 维持 bash 状态，支持长期实验
-5. **资源管理** - 支持内存、CPU 等资源限制
-6. **上下文管理** - 实现了 Python 上下文管理器接口
+1. **Abstract Interface** - BaseSession defines a standard interface, enabling multiple implementations (local, remote, Kubernetes, etc.)
+2. **Multiple Implementations** - Supports local, Docker, and future environments
+3. **Isolated Environment** - Docker containers provide fully isolated execution environments
+4. **Persistent Sessions** - Uses tmux to maintain bash state for long-running experiments
+5. **Resource Management** - Supports memory, CPU, and other resource limits
+6. **Context Manager** - Implements Python's context manager interface
 
-## 配置参数
+## Configuration Parameters
 
-### SessionConfig（基础配置）
-- `timeout` - 命令执行超时时间（秒），默认 300
-- `workspace_path` - 工作空间路径，默认 `/workspace`
+### SessionConfig (Base Configuration)
+- `timeout` - Command execution timeout in seconds, default 300
+- `workspace_path` - Workspace path, default `/workspace`
 
-### LocalSessionConfig（本地 Session 配置）
-继承 `SessionConfig`，额外参数：
-- `encoding` - 文件编码，默认 `utf-8`
+### LocalSessionConfig (Local Session Configuration)
+Inherits from `SessionConfig`, additional parameters:
+- `encoding` - File encoding, default `utf-8`
 
-### DockerSessionConfig（Docker Session 配置）
-继承 `SessionConfig`，额外参数：
-- `image` - Docker 镜像名称，默认 `python:3.11-slim`
-- `container_name` - 容器名称，自动生成则为 None
-- `memory_limit` - 内存限制，默认 `4g`
-- `cpu_limit` - CPU 限制，默认 2.0
-- `volumes` - 卷挂载 {主机路径: 容器路径}
-- `env_vars` - 环境变量
-- `auto_remove` - 容器结束后是否自动删除，默认 True
+### DockerSessionConfig (Docker Session Configuration)
+Inherits from `SessionConfig`, additional parameters:
+- `image` - Docker image name, default `python:3.11-slim`
+- `container_name` - Container name, auto-generated if None
+- `memory_limit` - Memory limit, default `4g`
+- `cpu_limit` - CPU limit, default 2.0
+- `volumes` - Volume mounts {host_path: container_path}
+- `env_vars` - Environment variables
+- `auto_remove` - Auto-remove container when finished, default True
 
-## 后续扩展
+## Future Extensions
 
-可在此基础上实现：
-- `RemoteSession` - SSH 连接远程服务器
-- `KubernetesSession` - Kubernetes 集群执行
-- `RaySession` - Ray 分布式框架
-
+The following can be implemented on this foundation:
+- `RemoteSession` - SSH connection to remote servers
+- `KubernetesSession` - Kubernetes cluster execution
+- `RaySession` - Ray distributed framework

@@ -1,9 +1,9 @@
-"""EvoMaster Utils 模块
+"""EvoMaster Utils module
 
-工具类和辅助函数，包括：
-- LLM 接口封装
-- 基础类型定义
-- 其他通用工具
+Utility classes and helper functions, including:
+- LLM interface wrappers
+- Core type definitions
+- Other general-purpose utilities
 """
 
 from .llm import (
@@ -19,7 +19,7 @@ from .llm import (
 )
 
 from .types import (
-    # Message 类型
+    # Message types
     MessageRole,
     BaseMessage,
     SystemMessage,
@@ -27,12 +27,12 @@ from .types import (
     AssistantMessage,
     ToolMessage,
     Message,
-    # Function/Tool 定义
+    # Function/Tool definitions
     FunctionCall,
     ToolCall,
     FunctionSpec,
     ToolSpec,
-    # Dialog 和 Trajectory
+    # Dialog and Trajectory
     Dialog,
     StepRecord,
     Trajectory,

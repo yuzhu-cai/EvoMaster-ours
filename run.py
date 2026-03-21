@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""EvoMaster 统一入口
+"""EvoMaster unified entry point
 
-使用方式：
-  python run.py --agent minimal --task "你的任务描述"
-  python run.py --agent agent-builder --config configs/agent-builder/config.yaml
-  python run.py --agent mcp-example --interactive
+Usage:
+  python run.py --agent minimal --task "your task description"
+  python run.py --agent minimal_multi_agent --config configs/minimal_multi_agent/config.yaml
+  python run.py --agent minimal_skill_task --config configs/minimal_skill/config.yaml
 
-参数说明：
-  --agent: 指定 playground 名称（必需）
-  --config: 指定配置文件路径（可选，默认使用 configs/{agent}/config.yaml）
-  --task: 任务描述（可选，如不提供则进入交互式输入）
-  --interactive: 交互式模式（可选）
-  --run-dir: 指定 run 目录（可选，默认自动创建 runs/{agent}_{timestamp}/）
+Arguments:
+  --agent: Specify the playground name (required)
+  --config: Specify the config file path (optional, defaults to configs/{agent}/config.yaml)
+  --task: Task description (optional, enters interactive input if not provided)
+  --interactive: Interactive mode (optional)
+  --run-dir: Specify the run directory (optional, auto-creates runs/{agent}_{timestamp}/ by default)
 """
 
 import argparse
@@ -21,7 +21,7 @@ import importlib
 from pathlib import Path
 from datetime import datetime
 
-# 添加项目根目录到 sys.path
+# Add project root directory to sys.path
 project_root = Path(__file__).parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -30,28 +30,28 @@ from evomaster.core import get_playground_class, list_registered_playgrounds
 
 
 def parse_args():
-    """解析命令行参数"""
+    """Parse command-line arguments"""
     parser = argparse.ArgumentParser(
-        description="EvoMaster 统一入口 - 运行指定的 playground agent",
+        description="EvoMaster unified entry point - run the specified playground agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例：
-  # 使用默认配置运行 minimal agent
-  python run.py --agent minimal --task "分析数据"
+Examples:
+  # Run the minimal agent with default config
+  python run.py --agent minimal --task "analyze data"
 
-  # 使用自定义配置
-  python run.py --agent minimal --config my_config.yaml --task "分析数据"
+  # Use a custom config
+  python run.py --agent minimal --config my_config.yaml --task "analyze data"
 
-  # 交互式模式
+  # Interactive mode
   python run.py --agent agent-builder --interactive
 
-  # 指定 run 目录
-  python run.py --agent minimal --task "分析数据" --run-dir runs/my_experiment
+  # Specify a run directory
+  python run.py --agent minimal --task "analyze data" --run-dir runs/my_experiment
 
-  # 批量任务（串行）
+  # Batch tasks (sequential)
   python run.py --agent minimal --task-file tasks.json
 
-  # 批量任务（并行）
+  # Batch tasks (parallel)
   python run.py --agent minimal --task-file tasks.json --parallel
         """
     )
@@ -59,87 +59,87 @@ def parse_args():
     parser.add_argument(
         "--agent",
         required=True,
-        help="Playground agent 名称（如 minimal, agent-builder, mcp-example）"
+        help="Playground agent name (e.g., minimal, agent-builder, mcp-example)"
     )
 
     parser.add_argument(
         "--config",
-        help="配置文件路径（默认：configs/{agent}/config.yaml）"
+        help="Config file path (default: configs/{agent}/config.yaml)"
     )
 
-    # 任务输入（互斥）
+    # Task input (mutually exclusive)
     task_group = parser.add_mutually_exclusive_group(required=True)
     task_group.add_argument(
         "--task",
-        help="单个任务描述，或任务文件路径（.txt 或 .md）"
+        help="Single task description, or path to a task file (.txt or .md)"
     )
     task_group.add_argument(
         "--task-file",
-        help="包含多个任务的 JSON 文件路径"
+        help="Path to a JSON file containing multiple tasks"
     )
     task_group.add_argument(
         "--interactive",
         action="store_true",
-        help="交互式模式（手动输入任务）"
+        help="Interactive mode (manual task input)"
     )
 
     parser.add_argument(
         "--run-dir",
-        help="指定 run 目录（默认自动创建 runs/{agent}_{timestamp}/）"
+        help="Specify run directory (default: auto-creates runs/{agent}_{timestamp}/)"
     )
 
     parser.add_argument(
         "--parallel",
         action="store_true",
-        help="并行执行多个任务（仅在使用 --task-file 时有效）"
+        help="Execute multiple tasks in parallel (only effective with --task-file)"
     )
 
     parser.add_argument(
         "--images",
         nargs="+",
-        help="图片文件路径列表（支持 PNG/JPG），用于多模态任务输入"
+        help="List of image file paths (supports PNG/JPG), for multimodal task input"
     )
 
     return parser.parse_args()
 
 
 def setup_logging():
-    """配置基础日志"""
+    """Configure basic logging"""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    # 禁用 httpx 的 INFO 级别日志（只保留 WARNING 及以上）
+    # Suppress httpx INFO-level logs (keep WARNING and above only)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 def get_task_description(args):
-    """获取任务描述
-    
-    如果 args.task 是文件路径（.txt 或 .md），则读取文件内容；
-    否则直接返回 args.task 作为任务描述。
+    """Get task description
+
+    If args.task is a file path (.txt or .md), read the file content;
+    otherwise return args.task directly as the task description.
     """
     if args.task:
         task_path = Path(args.task)
-        # 检查是否是文件路径（.txt 或 .md）
+        # Check if it is a file path (.txt or .md)
         if task_path.suffix.lower() in ['.txt', '.md'] and task_path.exists() and task_path.is_file():
             try:
                 with open(task_path, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
                 if not content:
-                    print(f"❌ 错误：文件 {task_path} 为空")
+                    print(f"❌ Error: file {task_path} is empty")
                     sys.exit(1)
                 return content
             except Exception as e:
-                print(f"❌ 错误：读取文件 {task_path} 失败: {e}")
+                print(f"❌ Error: failed to read file {task_path}: {e}")
                 sys.exit(1)
-        # 不是文件路径或文件不存在，直接作为任务描述返回
+        # Not a file path or file does not exist, return directly as task description
         return args.task
 
     if args.interactive:
         print("\n" + "=" * 60)
-        print("📝 请输入任务描述（输入空行结束）：")
+        print("📝 Please enter task description (empty line to finish):")
         print("=" * 60)
         lines = []
         while True:
@@ -152,24 +152,24 @@ def get_task_description(args):
                 break
 
         if not lines:
-            print("❌ 错误：未提供任务描述")
+            print("❌ Error: no task description provided")
             sys.exit(1)
 
         return '\n'.join(lines)
 
-    # 既没有 --task 也没有 --interactive
-    print("❌ 错误：请使用 --task 提供任务描述或使用 --interactive 进入交互式模式")
+    # Neither --task nor --interactive provided
+    print("❌ Error: please use --task to provide task description or --interactive for interactive mode")
     sys.exit(1)
 
 
 def parse_task_file(task_file_path: Path):
-    """解析任务 JSON 文件
+    """Parse task JSON file
 
     Args:
-        task_file_path: JSON 文件路径
+        task_file_path: Path to the JSON file
 
     Returns:
-        任务列表，每个任务包含 {id, description} 字段
+        List of tasks, each containing {id, description} fields
     """
     import json
 
@@ -177,25 +177,25 @@ def parse_task_file(task_file_path: Path):
         tasks_raw = json.load(f)
 
     if not isinstance(tasks_raw, list):
-        raise ValueError(f"任务文件格式错误：期望列表，实际为 {type(tasks_raw).__name__}")
+        raise ValueError(f"Invalid task file format: expected list, got {type(tasks_raw).__name__}")
 
     tasks = []
     for idx, task in enumerate(tasks_raw):
         if isinstance(task, str):
-            # 兼容简单列表格式：["任务1", "任务2"]
+            # Compatible with simple list format: ["task1", "task2"]
             task_obj = {"description": task}
         elif isinstance(task, dict):
             task_obj = task.copy()
         else:
-            raise ValueError(f"任务 {idx} 格式错误：期望字符串或字典，实际为 {type(task).__name__}")
+            raise ValueError(f"Task {idx} has invalid format: expected string or dict, got {type(task).__name__}")
 
-        # 自动生成 ID（如果没有）
+        # Auto-generate ID if not present
         if "id" not in task_obj:
             task_obj["id"] = f"task_{idx}"
 
-        # 验证必需字段
+        # Validate required fields
         if "description" not in task_obj:
-            raise ValueError(f"任务 {idx} 缺少必需字段 'description'")
+            raise ValueError(f"Task {idx} is missing the required field 'description'")
 
         tasks.append(task_obj)
 
@@ -204,32 +204,32 @@ def parse_task_file(task_file_path: Path):
 
 def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
                     task_id: str, task_description: str, images: list[str] | None = None):
-    """运行单个任务（在主进程中）
+    """Run a single task (in the main process)
 
-    注意：这个函数在主进程中运行，不是在独立进程中。
-    每个任务有独立的 workspace，通过 task_id 区分。
+    Note: This function runs in the main process, not in a separate process.
+    Each task has its own workspace, distinguished by task_id.
 
     Args:
-        agent_name: Agent 名称
-        config_path: 配置文件路径
-        run_dir: 运行目录
-        task_id: 任务 ID
-        task_description: 任务描述
-        images: 图片文件路径列表（可选）
+        agent_name: Agent name
+        config_path: Config file path
+        run_dir: Run directory
+        task_id: Task ID
+        task_description: Task description
+        images: List of image file paths (optional)
 
     Returns:
-        任务结果字典
+        Task result dictionary
     """
     logger = logging.getLogger(__name__)
 
     try:
-        # 加载 Playground
+        # Load Playground
         playground = get_playground_class(agent_name, config_path=config_path)
 
-        # 设置 run_dir 和 task_id（会创建独立的 workspace）
+        # Set run_dir and task_id (creates an independent workspace)
         playground.set_run_dir(run_dir, task_id=task_id)
 
-        # 运行任务
+        # Run task
         if images:
             result = playground.run(task_description=task_description, images=images)
         else:
@@ -251,17 +251,17 @@ def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
 
 def run_tasks_sequential(agent_name: str, config_path: Path, run_dir: Path,
                          tasks: list, images: list[str] | None = None):
-    """串行运行多个任务
+    """Run multiple tasks sequentially
 
     Args:
-        agent_name: Agent 名称
-        config_path: 配置文件路径
-        run_dir: 运行目录
-        tasks: 任务列表
-        images: 图片文件路径列表（可选，所有任务共享）
+        agent_name: Agent name
+        config_path: Config file path
+        run_dir: Run directory
+        tasks: List of tasks
+        images: List of image file paths (optional, shared across all tasks)
 
     Returns:
-        所有任务的结果列表
+        List of results for all tasks
     """
     results = []
     for task in tasks:
@@ -280,20 +280,20 @@ def run_tasks_sequential(agent_name: str, config_path: Path, run_dir: Path,
 
 def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
                        tasks: list, max_workers: int = 4, images: list[str] | None = None):
-    """并行运行多个任务
+    """Run multiple tasks in parallel
 
-    使用 ProcessPoolExecutor 并行执行任务。
+    Uses ProcessPoolExecutor for parallel task execution.
 
     Args:
-        agent_name: Agent 名称
-        config_path: 配置文件路径
-        run_dir: 运行目录
-        tasks: 任务列表
-        max_workers: 最大并行进程数
-        images: 图片文件路径列表（可选，所有任务共享）
+        agent_name: Agent name
+        config_path: Config file path
+        run_dir: Run directory
+        tasks: List of tasks
+        max_workers: Maximum number of parallel worker processes
+        images: List of image file paths (optional, shared across all tasks)
 
     Returns:
-        所有任务的结果列表
+        List of results for all tasks
     """
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -301,7 +301,7 @@ def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
     results = []
 
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # 提交所有任务
+        # Submit all tasks
         future_to_task = {
             executor.submit(
                 run_single_task,
@@ -315,7 +315,7 @@ def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
             for task in tasks
         }
 
-        # 收集结果
+        # Collect results
         for future in as_completed(future_to_task):
             task = future_to_task[future]
             try:
@@ -335,27 +335,28 @@ def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
 
 
 def auto_import_playgrounds():
-    """自动导入所有 playground 模块以触发装饰器注册
+    """Auto-import all playground modules to trigger decorator registration
 
-    遍历 playground 目录下的所有 agent 子目录，尝试导入其 core.playground 模块。
-    这样可以确保所有使用 @register_playground 装饰器的类都被注册。
+    Iterates over all agent subdirectories under the playground directory
+    and attempts to import their core.playground module.
+    This ensures all classes using the @register_playground decorator are registered.
     """
     logger = logging.getLogger(__name__)
     playground_dir = project_root / "playground"
 
     if not playground_dir.exists():
-        logger.warning(f"Playground 目录不存在: {playground_dir}")
+        logger.warning(f"Playground directory does not exist: {playground_dir}")
         return
 
     imported_count = 0
 
-    # 收集需要扫描的 agent 目录：顶层 + _generated/ 子目录
+    # Collect agent directories to scan: top-level + _generated/ subdirectories
     agent_dirs: list[tuple[Path, str]] = []  # (dir_path, module_prefix)
     for child in playground_dir.iterdir():
         if not child.is_dir():
             continue
         if child.name == "_generated":
-            # 扫描 _generated/ 下的每个子目录
+            # Scan each subdirectory under _generated/
             for gen_dir in child.iterdir():
                 if gen_dir.is_dir() and not gen_dir.name.startswith("_"):
                     agent_dirs.append((gen_dir, f"playground._generated.{gen_dir.name}"))
@@ -369,92 +370,92 @@ def auto_import_playgrounds():
             logger.info(f"✅ Successfully imported {module_name}")
             imported_count += 1
         except ImportError as e:
-            # 如果没有 core/playground.py，跳过（agent 可能使用默认 BasePlayground）
-            # 但如果是其他导入错误（如缺少依赖），应该警告
+            # If no core/playground.py exists, skip (agent may use the default BasePlayground)
+            # But if it's another import error (e.g., missing dependency), we should warn
             error_msg = str(e)
             if "No module named" in error_msg or "cannot import name" in error_msg or "core.playground" not in error_msg:
                 logger.warning(f"❌ Failed to import {module_name}: {e}", exc_info=True)
             else:
                 logger.debug(f"No custom playground for '{agent_dir.name}': {e}")
         except Exception as e:
-            # 其他错误（语法错误等）应该警告
+            # Other errors (syntax errors, etc.) should trigger a warning
             logger.warning(f"❌ Failed to import {module_name}: {e}", exc_info=True)
 
     logger.info(f"Auto-imported {imported_count} playground modules")
 
 
 def main():
-    """主入口函数"""
+    """Main entry function"""
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    # 自动导入所有 playground 模块（触发装饰器注册）
+    # Auto-import all playground modules (trigger decorator registration)
     auto_import_playgrounds()
 
-    # 调试：显示已注册的 playground
+    # Debug: display registered playgrounds
     registered = list_registered_playgrounds()
     if registered:
         logger.debug(f"Registered playgrounds: {registered}")
 
     args = parse_args()
 
-    # 1. 确定配置文件路径
+    # 1. Determine config file path
     if args.config:
         config_path = Path(args.config)
     else:
         config_path = project_root / "configs" / args.agent / "config.yaml"
 
     if not config_path.exists():
-        logger.error(f"配置文件不存在: {config_path}")
+        logger.error(f"Config file does not exist: {config_path}")
         sys.exit(1)
 
-    # 2. 确定 run 目录
+    # 2. Determine run directory
     if args.run_dir:
         run_dir = Path(args.run_dir)
     else:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_dir = project_root / "runs" / f"{args.agent}_{timestamp}"
 
-    # 3. 验证图片文件（如果提供）
+    # 3. Validate image files (if provided)
     images = None
     if args.images:
         images = []
         for img_path_str in args.images:
             img_path = Path(img_path_str)
             if not img_path.exists():
-                logger.error(f"图片文件不存在: {img_path}")
+                logger.error(f"Image file does not exist: {img_path}")
                 sys.exit(1)
             if img_path.suffix.lower() not in ['.png', '.jpg', '.jpeg']:
-                logger.error(f"不支持的图片格式: {img_path.suffix}（仅支持 PNG/JPG）")
+                logger.error(f"Unsupported image format: {img_path.suffix} (only PNG/JPG supported)")
                 sys.exit(1)
             images.append(str(img_path.absolute()))
-        logger.info(f"加载了 {len(images)} 张图片")
+        logger.info(f"Loaded {len(images)} images")
 
-    # 4. 解析任务
+    # 4. Parse tasks
     if args.task_file:
-        # 批量任务模式
+        # Batch task mode
         task_file = Path(args.task_file)
         if not task_file.exists():
-            logger.error(f"任务文件不存在: {task_file}")
+            logger.error(f"Task file does not exist: {task_file}")
             sys.exit(1)
 
         try:
             tasks = parse_task_file(task_file)
-            logger.info(f"📋 加载了 {len(tasks)} 个任务")
+            logger.info(f"📋 Loaded {len(tasks)} tasks")
         except Exception as e:
-            logger.error(f"解析任务文件失败: {e}")
+            logger.error(f"Failed to parse task file: {e}")
             sys.exit(1)
     else:
-        # 单任务模式
+        # Single task mode
         task_description = get_task_description(args)
         tasks = [{
             "id": "task_0",
             "description": task_description
         }]
 
-    # 5. 打印运行信息
+    # 5. Print run information
     logger.info("=" * 60)
-    logger.info("🚀 EvoMaster 启动")
+    logger.info("🚀 EvoMaster starting")
     logger.info("=" * 60)
     logger.info(f"Agent: {args.agent}")
     logger.info(f"Config: {config_path}")
@@ -463,51 +464,51 @@ def main():
     if images:
         logger.info(f"Images: {len(images)} files")
     if len(tasks) > 1:
-        mode = "并行" if args.parallel else "串行"
-        logger.info(f"执行模式: {mode}")
+        mode = "parallel" if args.parallel else "sequential"
+        logger.info(f"Execution mode: {mode}")
     logger.info("=" * 60)
 
-    # 6. 运行任务
+    # 6. Run tasks
     try:
         if len(tasks) > 1 and args.parallel:
-            # 并行模式
-            logger.info("🔄 并行执行任务...")
+            # Parallel mode
+            logger.info("🔄 Executing tasks in parallel...")
             results = run_tasks_parallel(args.agent, config_path, run_dir, tasks, images=images)
         else:
-            # 串行模式（包括单任务）
+            # Sequential mode (including single task)
             if len(tasks) > 1:
-                logger.info("🔄 串行执行任务...")
+                logger.info("🔄 Executing tasks sequentially...")
             results = run_tasks_sequential(args.agent, config_path, run_dir, tasks, images=images)
 
-        # 7. 输出结果
+        # 7. Output results
         logger.info("=" * 60)
-        logger.info("✅ 所有任务完成")
+        logger.info("✅ All tasks completed")
         logger.info("=" * 60)
 
-        # 统计结果（注意：trajectory.status 的值是 "completed"/"failed"/"cancelled"）
+        # Tally results (note: trajectory.status values are "completed"/"failed"/"cancelled")
         success_count = sum(1 for r in results if r.get('status') == 'completed')
         failed_count = len(results) - success_count
 
         if len(tasks) == 1:
-            # 单任务模式：显示详细结果
+            # Single task mode: display detailed results
             result = results[0]
-            logger.info(f"状态: {result['status']}")
-            logger.info(f"步数: {result.get('steps', 0)}")
+            logger.info(f"Status: {result['status']}")
+            logger.info(f"Steps: {result.get('steps', 0)}")
         else:
-            # 批量任务模式：显示汇总和每个任务状态
-            logger.info(f"成功: {success_count}/{len(results)}")
-            logger.info(f"失败: {failed_count}/{len(results)}")
+            # Batch task mode: display summary and each task status
+            logger.info(f"Succeeded: {success_count}/{len(results)}")
+            logger.info(f"Failed: {failed_count}/{len(results)}")
             logger.info("")
-            logger.info("任务状态:")
+            logger.info("Task status:")
             for result in results:
                 status_icon = "✅" if result.get('status') == 'completed' else "❌"
                 logger.info(f"  {status_icon} {result['task_id']}: {result['status']} ({result.get('steps', 0)} steps)")
 
         logger.info("")
-        logger.info(f"结果目录: {run_dir}")
-        logger.info(f"  - 配置: {run_dir}/config.yaml")
-        logger.info(f"  - 日志: {run_dir}/logs/")
-        logger.info(f"  - 轨迹: {run_dir}/trajectories/")
+        logger.info(f"Results directory: {run_dir}")
+        logger.info(f"  - Config: {run_dir}/config.yaml")
+        logger.info(f"  - Logs: {run_dir}/logs/")
+        logger.info(f"  - Trajectories: {run_dir}/trajectories/")
         if len(tasks) > 1:
             logger.info(f"  - Workspaces: {run_dir}/workspaces/")
         else:
@@ -517,7 +518,7 @@ def main():
         return 0 if failed_count == 0 else 1
 
     except Exception as e:
-        logger.error(f"运行失败: {e}", exc_info=True)
+        logger.error(f"Execution failed: {e}", exc_info=True)
         return 1
 
 

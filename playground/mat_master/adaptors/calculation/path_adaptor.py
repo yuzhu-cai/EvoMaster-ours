@@ -1,6 +1,6 @@
 """Path adaptor: Bohrium HTTPS storage and executor/sync logic for calculation MCP tools.
 
-Align with _tmp/MatMaster. Storage 与 executor 鉴权统一通过 evomaster.env.bohrium 读取。
+Aligned with _tmp/MatMaster. Storage and executor authentication are unified through evomaster.env.bohrium.
 """
 
 import logging

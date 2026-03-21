@@ -1,6 +1,6 @@
 # ML-Master 2.0
 
-**ML-Master 2.0** is a pioneering agentic science framework that tackles the challenge of ultra-long-horizon autonomy through cognitive accumulation, facilitated by a Hierarchical Cognitive Caching (HCC) architecture that dynamically distills transient execution traces into stable long-term knowledge, ensuring that tactical execution and strategic planning remain decoupled yet co-evolve throughout complex, long-horizon scientific explorations.
+**ML-Master 2.0** 是一个前沿的的智能体科学框架，通过认知积累应对超长程自主任务的挑战。其采用分层认知缓存（HCC）架构，将瞬态执行轨迹动态提炼为稳定的长期知识，确保战术执行与战略规划在复杂、长时域科学探索中保持解耦却又协同演化。
 在这里，我们基于EvoMaster框架重新实现和开源了ML-Master 2.0的代码。为了方便运行，我们提供了一个可以快速运行的示例任务`detecting-insults-in-social-commentary`和这个任务在运行后提炼得到的示例数据库。
 
 ## 架构

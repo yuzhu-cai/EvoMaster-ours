@@ -61,14 +61,16 @@ def set_run_dir(self, run_dir: str | Path) -> None:
     """
 ```
 
-#### run(task_description, task_id)
+#### run(task_description, task_id, images)
 ```python
-def run(self, task_description: str, task_id: str = "exp_001") -> dict:
+def run(self, task_description: str, task_id: str = "exp_001", images: list[str] | None = None, on_step=None) -> dict:
     """Run a single experiment
 
     Args:
         task_description: Task description
         task_id: Task ID
+        images: Optional list of image file paths (for multimodal tasks)
+        on_step: Optional step callback
 
     Returns:
         Result dictionary with:
@@ -165,16 +167,14 @@ def set_run_dir(self, run_dir: str | Path, task_id: str | None = None) -> None:
 def setup(self) -> None:
     """Initialize all components
 
-    Supports both single-agent and multi-agent modes:
-    - If config has `agents:`, create multiple agents
-    - Otherwise, if config has `agent:`, create single agent
-
     Steps:
-    1. Prepare LLM configuration
-    2. Create Session (if not already created)
-    3. Load Skills (if enabled)
-    4. Create tool registry and init MCP tools
-    5. Create Agent(s)
+    1. Create Session (if not already created) via _setup_session()
+    2. Create Agents via _setup_agents(), which automatically:
+       - Reads per-agent config (LLM, tools, skills)
+       - Creates independent LLM instances
+       - Creates tool registries with MCP support
+       - Loads per-agent skill registries
+       - Registers agents to self.agents (AgentSlots)
     """
 ```
 
@@ -204,29 +204,50 @@ def cleanup(self) -> None:
 
 ### Component Creation Methods
 
-#### _create_agent(name, agent_config, enable_tools, llm_config, skill_registry)
+#### _create_agent(name, agent_config, llm_config, tool_config, skill_config)
 ```python
 def _create_agent(
     self,
     name: str,
-    agent_config: dict,
-    enable_tools: bool = True,
+    agent_config: dict | None = None,
     llm_config: dict | None = None,
-    skill_registry: SkillRegistry | None = None,
+    tool_config: dict | None = None,
+    skill_config: dict | None = None,
 ) -> Agent:
     """Create Agent instance
 
     Each Agent uses independent LLM instance for isolated logging.
+    All parameters are optional; if not provided, they are automatically
+    fetched from the config manager based on the agent name.
 
     Args:
         name: Agent name
-        agent_config: Agent configuration dict
-        enable_tools: Whether to enable tool calls
-        llm_config: LLM config (fetched from config manager if None)
-        skill_registry: Optional skill registry
+        agent_config: Agent configuration dict (auto-fetched if None)
+        llm_config: LLM config dict (auto-fetched if None)
+        tool_config: Tool config dict, e.g. {"builtin": list[str], "mcp": str} (auto-fetched if None)
+        skill_config: Skill config dict (auto-fetched if None)
 
     Returns:
         Agent instance
+    """
+```
+
+#### copy_agent(agent, new_agent_name)
+```python
+def copy_agent(self, agent, new_agent_name: str | None = None) -> Agent:
+    """Copy Agent instance with independent LLM and context
+
+    Creates a new Agent that:
+    - Has an independent LLM instance
+    - Shares session, tools, skill_registry, config_dir, enable_tools
+    - Has independent context (context_manager, current_dialog, trajectory)
+
+    Args:
+        agent: Agent instance to copy
+        new_agent_name: Optional name for the new agent
+
+    Returns:
+        New Agent instance
     """
 ```
 
@@ -272,13 +293,22 @@ def _parse_mcp_servers(self, mcp_config: dict) -> list[dict]:
 ### Internal Methods
 
 ```python
-def _setup_llm_config(self) -> dict:
-    """Prepare LLM configuration"""
-
 def _setup_session(self) -> None:
     """Create and open Session (if not created)"""
 
-def _setup_tools(self, skill_registry=None) -> None:
+def _setup_agents(self) -> None:
+    """Auto-create agents from config and register to self.agents (AgentSlots)"""
+
+def _setup_agent_llm(self, name: str) -> dict:
+    """Get per-agent LLM configuration"""
+
+def _setup_agent_tools(self, name: str) -> dict:
+    """Get per-agent tool configuration"""
+
+def _setup_agent_skills(self, name: str) -> dict:
+    """Get per-agent skills configuration"""
+
+def _setup_tools(self, skill_config=None, tool_config=None) -> None:
     """Create tool registry and init MCP tools"""
 
 def _get_output_config(self) -> dict:
@@ -292,6 +322,9 @@ def _update_workspace_path(self, workspace_path: Path) -> None:
 
 def _setup_trajectory_file(self, output_file: str | Path | None = None) -> Path | None:
     """Set trajectory file path"""
+
+def execute_parallel_tasks(self, tasks, max_workers=None) -> list:
+    """Execute multiple experiments in parallel using ThreadPoolExecutor"""
 ```
 
 ## Usage Examples
@@ -322,29 +355,30 @@ class MyPlayground(BasePlayground):
 
 ```python
 class MultiAgentPlayground(BasePlayground):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Declare agent slots (IDE-friendly)
+        self.agents.declare("planning_agent", "coding_agent")
+
     def setup(self):
-        super().setup()
-        # After setup(), multiple agents are created based on config
+        # Two lines: base class auto-handles LLM/Tools/Skills per agent
+        self._setup_session()
+        self._setup_agents()
+        # Agents are now accessible as self.agents.planning_agent, etc.
 
     def run(self, task_description: str, output_file: str | None = None) -> dict:
         self.setup()
 
-        # Get all agents
-        agents = self.agents  # Assuming stored during setup
-
-        # Run agents in parallel using ThreadPoolExecutor
-        from concurrent.futures import ThreadPoolExecutor
-
-        results = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(self._run_single_agent, agent, task_description)
-                for agent in agents
-            ]
-            results = [f.result() for f in futures]
+        # Access agents via AgentSlots
+        planning_result = self._run_single_agent(
+            self.agents.planning_agent, task_description
+        )
+        coding_result = self._run_single_agent(
+            self.agents.coding_agent, task_description
+        )
 
         self.cleanup()
-        return {"results": results}
+        return {"results": [planning_result, coding_result]}
 ```
 
 ### Running a Playground
@@ -375,8 +409,9 @@ llm:
   openai:
     provider: "openai"
     model: "gpt-4"
-    api_key: "your-api-key"
+    api_key: "${OPENAI_API_KEY}"
     temperature: 0.7
+  default: "openai"
 
 # Session Configuration
 session:
@@ -384,31 +419,34 @@ session:
   local:
     workspace_path: "./workspace"
 
-# Single Agent Configuration
-agent:
-  max_turns: 50
-  system_prompt_file: "prompts/system.txt"
-  user_prompt_file: "prompts/user.txt"
-
-# OR Multi-Agent Configuration
+# Multi-Agent Configuration (v0.0.2)
 agents:
   Solver:
-    llm: "openai"
+    llm: "openai"                  # per-agent LLM binding
     max_turns: 50
-    enable_tools: true
+    tools:                          # per-agent tool config
+      builtin: ["*"]               # all builtin tools
+    skills:                         # per-agent skills
+      - "*"                        # load all skills
   Critic:
     llm: "openai"
     max_turns: 30
-    enable_tools: true
+    tools:
+      builtin: []                  # no tools (pure text response)
+    # No skills key -> no skills loaded
+  Coder:
+    llm: "openai"
+    max_turns: 100
+    tools:
+      builtin: ["execute_bash", "str_replace_editor", "finish"]
+      mcp: "mcp_config.json"      # per-agent MCP config
+    skills:
+      - "rag"
+      - "pdf"
 
-# MCP Configuration
-mcp:
-  enabled: true
-  config_file: "mcp_config.json"
-
-# Skills Configuration
+# Global Skills Configuration (root directory)
 skills:
-  enabled: true
+  enabled: false
   skills_root: "evomaster/skills"
 
 # Logging Configuration

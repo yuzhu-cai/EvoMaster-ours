@@ -12,7 +12,7 @@ START_PORT = int(os.getenv("START_PORT"))
 NUM_WORKERS = int(os.getenv("NUM_WORKERS"))
 
 app = FastAPI()
-BACKEND_PORTS = range(START_PORT, START_PORT + NUM_WORKERS )  # 16个后端实例
+BACKEND_PORTS = range(START_PORT, START_PORT + NUM_WORKERS )  # Backend instances
 
 PROXY_TIMEOUT = 36000
 
@@ -47,7 +47,7 @@ async def proxy(path: str, request: Request):
                 )
 
             elif request.method == "GET":
-                # 注意这里要保留原始流式响应
+                # Note: keep original stream response here
                 
                 async def stream_response():
                     async with httpx.AsyncClient(timeout=None) as client:
@@ -57,7 +57,7 @@ async def proxy(path: str, request: Request):
 
                 return StreamingResponse(
                     stream_response(),
-                    media_type="application/json"  # 或 text/event-stream
+                    media_type="application/json"  # or text/event-stream
                 )
 
         except Exception as e:

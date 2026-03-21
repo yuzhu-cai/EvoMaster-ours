@@ -1,27 +1,27 @@
-"""EvoMaster Core - 通用基础类
+"""EvoMaster Core - Generic Base Classes
 
-提供 Exp 和 Playground 的基础实现，用于快速构建具体的 playground。
+Provides base implementations for Exp and Playground, for quickly building concrete playgrounds.
 
-使用示例：
+Usage examples:
     from evomaster.core import BasePlayground, BaseExp
 
-    # 直接使用（最简单）
+    # Direct usage (simplest)
     playground = BasePlayground()
-    result = playground.run("发现规律")
+    result = playground.run("discover patterns")
 
-    # 自定义 Exp
+    # Custom Exp
     class MyExp(BaseExp):
         def run(self, task_description, task_id="exp_001"):
-            # 自定义逻辑
+            # Custom logic
             return super().run(task_description, task_id)
 
-    # 自定义 Playground
+    # Custom Playground
     class MyPlayground(BasePlayground):
         def _create_exp(self):
             return MyExp(self.agent, self.config)
 
     playground = MyPlayground()
-    result = playground.run("发现规律")
+    result = playground.run("discover patterns")
 """
 
 from .exp import BaseExp, extract_agent_response

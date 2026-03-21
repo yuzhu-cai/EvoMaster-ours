@@ -1,3 +1,8 @@
+"""Improve experiment implementation for Kaggle competitions.
+
+Manages the improve-debug-metric workflow for enhancing existing code solutions.
+"""
+
 import logging
 from typing import Any
 from evomaster.core.exp import BaseExp
@@ -10,7 +15,22 @@ import os
 from evomaster.agent import BaseAgent
 
 class ImproveExp(BaseExp):
+    """Improve experiment class for Kaggle competitions.
+
+    Orchestrates improve, debug, and metric agents to enhance, validate,
+    and fix code solutions based on previous best solutions.
+    """
+
     def __init__(self, improve_agent, debug_agent, metric_agent, config,exp_index):
+        """Initialize the improve experiment.
+
+        Args:
+            improve_agent: Agent responsible for improving code solutions
+            debug_agent: Agent responsible for debugging failed code
+            metric_agent: Agent responsible for extracting validation scores
+            config: EvoMasterConfig instance
+            exp_index: Experiment index for identification
+        """
         super().__init__(improve_agent, config)
         self.improve_agent = improve_agent
         self.debug_agent = debug_agent
@@ -25,10 +45,22 @@ class ImproveExp(BaseExp):
 
     @property
     def exp_name(self) -> str:
-        """返回实验阶段名称"""
+        """Return the experiment phase name."""
         return f"Improve_{self.exp_index}"
 
     def run(self, task_description: str, data_preview: str, best_solution: str, idea: str, task_id: str = "exp_001") -> dict:
+        """Run the improve experiment workflow.
+
+        Args:
+            task_description: Description of the task
+            data_preview: Preview of the dataset
+            best_solution: The best solution so far
+            idea: Improvement idea to apply
+            task_id: Task ID
+
+        Returns:
+            Tuple of (is_success, validation_score, uid, code)
+        """
         self.logger.info("Starting draft task execution")
         self.logger.info(f"Task: {task_description}")
 
@@ -56,18 +88,6 @@ class ImproveExp(BaseExp):
                 improve_trajectory = self.improve_agent.run(improve_task)
                 
                 improve_result = self._extract_agent_response(improve_trajectory)
-                # for debugging
-#                 improve_result = """
-# ```python
-# import shutil
-
-# src = "/data/xinyu/EvoMaster/playground/minimal_kaggle/data/private/gold_submission.csv"
-# dst = "./submission/submission.csv"
-
-# shutil.copy(src, dst)
-# print("validation score: 0.9998")
-# ```                
-# """
                 improve_code,self.code = read_code(improve_result, self.uid)
                 save_code_to_file(self.workspace_path, "run.py", improve_code)
                 tool_call_obj = ChatCompletionMessageToolCall(
@@ -109,7 +129,7 @@ class ImproveExp(BaseExp):
 
                 metric_trajectory = self.metric_agent.run(metric_task)
 
-                # 提取Metric Agent的回答
+                # Extract Metric Agent's response
                 metric_result = self._extract_agent_response(metric_trajectory)
                 try:
                     validation_score = float(metric_result.split("\\boxed{")[1].split("}")[0])

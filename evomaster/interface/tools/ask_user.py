@@ -1,7 +1,7 @@
-"""AskUser 工具 — 仅在交互式上下文中注入
+"""AskUser tool -- only injected in interactive contexts
 
-允许 Agent 向用户提出结构化问题，暂停执行等待用户回答。
-该工具不属于 builtin（非所有 agent 通用），由 dispatcher 按需注入。
+Allows the Agent to ask the user structured questions, pausing execution to wait for the user's answer.
+This tool is not built-in (not universal to all agents); it is injected by the dispatcher on demand.
 """
 
 from __future__ import annotations
@@ -47,13 +47,13 @@ class AskUserToolParams(BaseToolParams):
 
 
 class AskUserTool(BaseTool):
-    """用户提问工具 — 调用后 agent 暂停执行，等待用户回答后继续"""
+    """User question tool -- pauses agent execution upon invocation, continues after the user answers."""
 
     name: ClassVar[str] = "ask_user"
     params_class: ClassVar[type[BaseToolParams]] = AskUserToolParams
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
-        """解析问题参数（实际拦截在 agent.py 中，此方法作为 fallback）"""
+        """Parse question parameters (actual interception happens in agent.py; this method serves as a fallback)."""
         try:
             params = self.parse_params(args_json)
         except Exception as e:

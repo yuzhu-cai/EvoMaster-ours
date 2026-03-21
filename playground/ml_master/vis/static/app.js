@@ -99,7 +99,7 @@ function setMeta(info) {
 function clearDetail() {
   nodeBadge.textContent = "none";
   detailRoot.className = "detailEmpty";
-  detailRoot.textContent = "点击左侧任意节点查看详情。";
+  detailRoot.textContent = "Click any node on the left to view details.";
 }
 
 function makeCard(title, value, isCode=false) {
@@ -187,7 +187,7 @@ function render(treePayload) {
 
   rootHierarchy = d3.hierarchy(treePayload.tree);
 // Top-down layout: x = horizontal, y = vertical
-  const treeLayout = d3.tree().nodeSize([110, 160]); // 间距更大：xSpacing, ySpacing
+  const treeLayout = d3.tree().nodeSize([110, 160]); // Wider spacing: xSpacing, ySpacing
   treeLayout(rootHierarchy);
 
   const nodes = rootHierarchy.descendants();
@@ -234,10 +234,10 @@ function render(treePayload) {
   })
   .attr("opacity", d => (d.data.id === "__root__" ? 0.7 : 0.92));
 
-  // ✅ label：metric 或 N/A（必须有）
+  // Label: metric value or N/A (always present).
   nodeG.append("text")
   .attr("text-anchor", "middle")
-  .attr("dominant-baseline", "middle") // 比 dy 更稳定
+  .attr("dominant-baseline", "middle") // More stable than using dy
   .text(d => nodeLabel(d));
 
   // NOTE: we intentionally do NOT attach svg background click to re-render or reset zoom.

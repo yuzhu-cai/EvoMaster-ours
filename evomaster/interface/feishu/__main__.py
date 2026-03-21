@@ -1,4 +1,4 @@
-"""CLI 入口
+"""CLI entry point
 
 python -m evomaster.interface.feishu [--config PATH] [--agent NAME]
 """
@@ -13,22 +13,27 @@ from pathlib import Path
 
 
 def main() -> int:
+    """Parse CLI arguments and start the Feishu bot.
+
+    Returns:
+        Exit code: 0 on success, 1 on failure.
+    """
     parser = argparse.ArgumentParser(
-        description="EvoMaster Feishu Bot — 接收飞书消息并执行 playground 任务",
+        description="EvoMaster Feishu Bot — receive Feishu messages and execute playground tasks",
     )
     parser.add_argument(
         "--config",
         default=None,
-        help="飞书 Bot 配置文件路径（默认: configs/feishu/config.yaml）",
+        help="Path to the Feishu Bot config file (default: configs/feishu/config.yaml)",
     )
     parser.add_argument(
         "--agent",
         default=None,
-        help="覆盖默认 agent 名称",
+        help="Override the default agent name",
     )
     args = parser.parse_args()
 
-    # 设置日志
+    # Set up logging
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -37,11 +42,11 @@ def main() -> int:
 
     logger = logging.getLogger(__name__)
 
-    # 确定项目根目录
-    # __main__.py 位于 evomaster/interface/feishu/，project_root 向上 3 级
+    # Determine project root directory
+    # __main__.py is located at evomaster/interface/feishu/, project_root is 3 levels up
     project_root = Path(__file__).resolve().parent.parent.parent.parent
 
-    # 加载配置
+    # Load configuration
     config_path = Path(args.config) if args.config else project_root / "configs" / "feishu" / "config.yaml"
 
     from .config import load_feishu_config
@@ -52,17 +57,18 @@ def main() -> int:
         logger.error("配置文件未找到: %s", e)
         return 1
 
-    # 命令行覆盖
+    # Command-line override
     if args.agent:
         config.default_agent = args.agent
 
-    # 创建 Bot
+    # Create the Bot
     from .app import FeishuBot
 
     bot = FeishuBot(config=config, project_root=project_root)
 
-    # 信号处理
+    # Signal handling
     def _shutdown(signum, _frame):
+        """Handle termination signals by stopping the bot."""
         logger.info("Received signal %s, shutting down...", signum)
         bot.stop()
         sys.exit(0)
@@ -70,7 +76,7 @@ def main() -> int:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    # 启动（阻塞）
+    # Start (blocking)
     try:
         bot.start()
     except KeyboardInterrupt:

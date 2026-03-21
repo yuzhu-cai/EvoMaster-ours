@@ -1,62 +1,62 @@
-# Env - 执行环境管理
+# Env - Execution Environment Management
 
-Env 是 EvoMaster 的环境组件，负责管理执行环境和作业调度。
+Env is EvoMaster's environment component, responsible for managing execution environments and job scheduling.
 
-## 目录结构
+## Directory Structure
 
-- `base.py` - Env 抽象基类，定义标准接口
-- `local.py` - LocalEnv 实现，在本地直接执行命令
+- `base.py` - Env abstract base class, defining the standard interface
+- `local.py` - LocalEnv implementation, executing commands locally
 
-## 核心类
+## Core Classes
 
-### BaseEnv（base.py）
-Env 的抽象基类，定义所有 Env 实现必须提供的接口：
+### BaseEnv (base.py)
+The abstract base class for Env, defining interfaces that all Env implementations must provide:
 
-- `setup()` / `teardown()` - 环境生命周期管理
-- `get_session()` - 获取 Session 用于执行命令
-- `submit_job(command, job_type)` - 提交作业
-- `get_job_status(job_id)` - 查询作业状态
-- `cancel_job(job_id)` - 取消作业
+- `setup()` / `teardown()` - Environment lifecycle management
+- `get_session()` - Get a Session for executing commands
+- `submit_job(command, job_type)` - Submit a job
+- `get_job_status(job_id)` - Query job status
+- `cancel_job(job_id)` - Cancel a job
 
-### LocalEnv（local.py）
-本地环境实现，无需 Docker 或集群：
+### LocalEnv (local.py)
+Local environment implementation, no Docker or cluster required:
 
-- 在本地直接执行命令
-- 同步作业执行
-- 支持作业状态查询
-- 适合开发和测试阶段
+- Executes commands directly on the local machine
+- Synchronous job execution
+- Supports job status queries
+- Suitable for development and testing
 
-### LocalSession（local.py）
-本地 Session 实现：
+### LocalSession (local.py)
+Local Session implementation:
 
-- 使用 subprocess 直接执行命令
-- 支持文件上传/下载（实际为本地复制）
-- 工作在本地文件系统
+- Uses subprocess to execute commands directly
+- Supports file upload/download (actually local copy operations)
+- Works on the local file system
 
-## 使用示例
+## Usage Examples
 
-### 基础使用
+### Basic Usage
 
 ```python
 from evomaster.env import LocalEnv, LocalEnvConfig
 
-# 创建本地环境
+# Create local environment
 config = LocalEnvConfig(name="my_env")
 env = LocalEnv(config)
 
-# 设置环境
+# Setup environment
 env.setup()
 
 try:
-    # 获取 Session 直接执行命令
+    # Get Session to execute commands directly
     session = env.get_session()
     result = session.exec_bash("python --version")
     print(result["stdout"])
 
-    # 提交作业
+    # Submit job
     job_id = env.submit_job("python -c 'print(123)'", job_type="debug")
 
-    # 查询作业状态
+    # Query job status
     status = env.get_job_status(job_id)
     print(status)
 
@@ -64,7 +64,7 @@ finally:
     env.teardown()
 ```
 
-### 使用上下文管理器
+### Using Context Manager
 
 ```python
 with LocalEnv() as env:
@@ -73,28 +73,28 @@ with LocalEnv() as env:
     print(result["stdout"])
 ```
 
-## 设计特点
+## Design Features
 
-1. **简易实现** - 本地直接执行，无复杂依赖
-2. **标准接口** - BaseEnv 定义统一的环境接口
-3. **后向兼容** - 可轻松替换为 Docker、Kubernetes 等实现
-4. **作业管理** - 支持作业提交、状态查询、取消等操作
-5. **上下文管理** - 实现了 Python 上下文管理器接口
+1. **Simple Implementation** - Executes locally with no complex dependencies
+2. **Standard Interface** - BaseEnv defines a unified environment interface
+3. **Forward Compatible** - Easily replaceable with Docker, Kubernetes, or other implementations
+4. **Job Management** - Supports job submission, status queries, and cancellation
+5. **Context Manager** - Implements Python's context manager interface
 
-## 配置参数
+## Configuration Parameters
 
-### EnvConfig（基础配置）
-- `name` - 环境名称
-- `session_config` - Session 配置
+### EnvConfig (Base Configuration)
+- `name` - Environment name
+- `session_config` - Session configuration
 
-### LocalEnvConfig（本地环境配置）
-- 继承 EnvConfig 的所有配置
-- 默认使用本地 Session
+### LocalEnvConfig (Local Environment Configuration)
+- Inherits all configuration from EnvConfig
+- Uses local Session by default
 
-## 后续扩展
+## Future Extensions
 
-可在此基础上实现：
-- `DockerEnv` - 使用 Docker 容器
-- `KubernetesEnv` - 使用 Kubernetes 集群
-- `RemoteEnv` - 连接远程服务器
-- `RayEnv` - 使用 Ray 分布式框架
+The following can be implemented on this foundation:
+- `DockerEnv` - Using Docker containers
+- `KubernetesEnv` - Using Kubernetes clusters
+- `RemoteEnv` - Connecting to remote servers
+- `RayEnv` - Using Ray distributed framework

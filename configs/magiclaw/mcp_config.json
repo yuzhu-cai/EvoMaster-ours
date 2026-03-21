@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "structure-generator": {
+        "transport": "http",
+        "url": "https://structure-generator-uuid1767674194.appspace.bohrium.com/mcp?token=c537c67d94ba4929b745cf43463356fc"
+    }
+  }
+}

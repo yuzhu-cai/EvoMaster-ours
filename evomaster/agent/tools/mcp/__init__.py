@@ -1,6 +1,6 @@
-"""MCP (Model Context Protocol) 工具模块
+"""MCP (Model Context Protocol) tools module.
 
-提供 MCP 协议支持，允许 Agent 使用外部 MCP 服务器的工具。
+Provides MCP protocol support, allowing Agents to use tools from external MCP servers.
 """
 
 from .mcp import MCPTool

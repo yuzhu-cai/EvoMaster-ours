@@ -1,6 +1,6 @@
 html, body {
   height: 100%;
-  overflow: hidden; /* 禁止整页滚动 */
+  overflow: hidden; /* Prevent full-page scrolling */
 }
 
 :root {
@@ -149,7 +149,7 @@ button:hover {
   flex: 1;
   overscroll-behavior: contain;
   height: 100%;
-  overflow-y: auto;         /* 右侧可滚 */
+  overflow-y: auto;         /* Right panel can scroll */
 }
 
 .detailEmpty {

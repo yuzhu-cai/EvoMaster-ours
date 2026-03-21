@@ -1,8 +1,8 @@
-# 工具导入说明
+# Tool Import Guide
 
-## 本地client导入 
-在 server 目录下新建目录，每个目录有一个用fastmcp装饰的工具实例。
-以 server/PubChem-MCP-Server/pubchem_server.py 为例，里面定义了一个mcp工具
+## Local Client Import
+Create a new directory under the `server` directory, each containing a tool instance decorated with fastmcp.
+For example, `server/PubChem-MCP-Server/pubchem_server.py` defines an MCP tool:
 ```
 @mcp.tool()
 async def search_pubchem_by_name(name: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -24,11 +24,11 @@ async def search_pubchem_by_name(name: str, max_results: int = 5) -> List[Dict[s
         return [{"error": f"An error occurred while searching: {str(e)}"}]
 ```
 
-文件定义好之后需要在 config/server_list.json中指定对应的py文件路径(在这里是server/PubChem-MCP-Server/pubchem_server.py)，同时一些简单的mcp服务可以直接在mcp_server.py文件中定义，默认会从中导入
+After defining the file, you need to specify the corresponding Python file path in `config/server_list.json` (in this case, `server/PubChem-MCP-Server/pubchem_server.py`). Additionally, some simple MCP services can be defined directly in `mcp_server.py`, which is imported by default.
 
 
-## sse client 导入
-在 config/server_list.json 里面加入需要的sse链接即可
+## SSE Client Import
+Simply add the required SSE links to `config/server_list.json`:
 ```
 [
     "server/Agents-Server/agents_server.py",
@@ -37,51 +37,48 @@ async def search_pubchem_by_name(name: str, max_results: int = 5) -> List[Dict[s
 ]
 ```
 
-## 运行服务
-建议服务跑在docker镜像下，我们有一个自己的docker镜像，启动参考脚本：
+## Running the Service
+It is recommended to run the service inside a Docker container. We have our own Docker image. Reference startup script:
 ```
 docker run -d \
   --name backend_server_shenshi \
   --cpuset-cpus="64-95" \
   -p 30004:30004 \
-  -v #Agent对应的目录:/mnt \
+  -v #path-to-agent-directory:/mnt \
   fastapi-server \
   tail -f /dev/null
 ```
-这里指定CPU是为了提升多核性能，提高并发性。
-在容器中运行脚本：
+CPU pinning is used here to improve multi-core performance and increase concurrency.
+Run the deployment script inside the container:
 ```
 bash deploy_server.sh
 ```
 
-## 调用服务
+## Calling the Service
 
-### 使用 Agent 框架下自带的 tool manager 执行代码(推荐)
+### Using the Agent Framework's Built-in Tool Manager to Execute Code (Recommended)
 
 ```
 class StreamToolManager(BaseToolManager):
     def __init__(self, url, session_id:str = None, timeout:int=180):
         super().__init__(url)
         self.session_id = str(uuid4()) if not session_id else session_id
-        # self.session_id = str("test_id2")
         self.timeout = timeout
 
     async def submit_task(self, code:str):
         ...
 
-
     async def recieve_task_process(self, ):
         ...
-                        
+
     async def execute_code_async_stream(self, tool_call: str,):
         submit_status = await self.submit_task(tool_call)
         if submit_status["status"] == "fail":
             yield {"output":""}
             return
-        
+
         async for item in self.recieve_task_process():
             yield item
-
 
     async def close_session(self):
         async with httpx.AsyncClient() as client:
@@ -91,10 +88,11 @@ class StreamToolManager(BaseToolManager):
             )
             return resp.json()
 ```
-- 需要自己维护好自己session id下的tool manager，每个session id 对应的tool manager会有一个独立的代码执行空间，历史的函数和变量都会保留
-- 在整个 session infer 结束后，如果你不需要这个session，需要手动删除 (close_session()函数)，释放你这个session的代码执行内存和变量
-- 通过 execute_code_async_stream 来执行代码，代码执行结果会流式出现，分别包含以下几种情况
-1. agent直接调用工具，工具正常返回，会流式返回所有调用的工具，和最终代码执行结果，工具返回的时候，other_info里面会有函数名:结果的字典，代码返回的时候 main_stream_type是code_result. stream_state 有start, running, end三种。
+- You need to maintain your own tool manager for each session ID. Each session ID corresponds to an independent code execution space where historical functions and variables are preserved.
+- After the entire session inference is complete, if you no longer need the session, you must manually delete it (using the `close_session()` function) to free the code execution memory and variables for that session.
+- Use `execute_code_async_stream` to execute code. The execution results appear in a streaming fashion, with the following scenarios:
+
+1. When the agent calls a tool directly and the tool returns normally, all called tools and the final code execution result are streamed back. When a tool returns, `other_info` contains a dictionary of `function_name: result`. When code returns, `main_stream_type` is `code_result`. `stream_state` has three values: `start`, `running`, and `end`.
 ```
     {
         "main_stream_type": "tool_result",
@@ -255,8 +253,7 @@ class StreamToolManager(BaseToolManager):
         "other_info": {}
     },
 ```
-2. agent调用其他agent作为工具，此时会流式返回其他agent的text和工具调用结果，
-
+2. When an agent calls another agent as a tool, the other agent's text and tool call results are streamed back.
 ```
 {
     "main_stream_type": "tool_result",
@@ -442,10 +439,9 @@ class StreamToolManager(BaseToolManager):
     }
 },
 ```
+### Direct HTTP Request to the Execute Endpoint
 
-### Http 请求直接调用execute 端点
-
-使用http请求的形式向目标服务发送代码执行请求，这里假设工具服务部署在30004上
+Send a code execution request to the target service via HTTP. Assuming the tool service is deployed on port 30004:
 ```
 import requests
 import time
@@ -465,7 +461,7 @@ headers = {
 
 
 def code_tool(code:str):
-    start_time = time.time()  # 记录开始时间
+    start_time = time.time()
     payload = {
         "code":code
     }
@@ -474,13 +470,12 @@ def code_tool(code:str):
         headers=headers,
         json=payload
     )
-    # print(resp.json())
     print(resp.content)
     response = resp.json()
-    elapsed = time.time() - start_time  # 计算总耗时
+    elapsed = time.time() - start_time
     response['total_time'] = elapsed
     response['server_time'] = resp.elapsed.total_seconds()
-    
+
     return response
 
 code_tool(test_code)

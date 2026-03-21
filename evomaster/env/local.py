@@ -1,6 +1,6 @@
-"""本地环境实现
+"""Local environment implementation.
 
-提供本地环境的底层操作接口。
+Provides the low-level operations interface for local environments.
 """
 
 from __future__ import annotations
@@ -21,19 +21,19 @@ from evomaster.agent.session.base import SessionConfig
 
 
 class LocalEnvConfig(EnvConfig):
-    """本地环境配置"""
+    """Local environment configuration."""
     session_config: SessionConfig = Field(
         ...,
-        description="Session 配置"
+        description="Session configuration"
     )
 
 
 class ResourceAllocator:
-    """资源分配器
-    
-    根据并行索引分配 GPU 和 CPU 资源。
+    """Resource allocator.
+
+    Allocates GPU and CPU resources based on the parallel index.
     """
-    
+
     def __init__(
         self,
         gpu_devices: str | list[str] | None,
@@ -41,13 +41,13 @@ class ResourceAllocator:
         max_parallel: int,
         logger: Any = None
     ):
-        """初始化资源分配器
-        
+        """Initialize the resource allocator.
+
         Args:
-            gpu_devices: GPU 设备配置
-            cpu_devices: CPU 设备配置
-            max_parallel: 最大并行数量
-            logger: 日志记录器
+            gpu_devices: GPU device configuration.
+            cpu_devices: CPU device configuration.
+            max_parallel: Maximum number of parallel executions.
+            logger: Logger instance.
         """
         self.gpu_devices = gpu_devices
         self.cpu_devices = cpu_devices
@@ -56,24 +56,24 @@ class ResourceAllocator:
         self._lock = threading.Lock()
         self._active_executions: dict[int, threading.Thread] = {}
         
-        # 解析 GPU 设备列表
+        # Parse GPU device list
         self._gpu_list: list[str] = []
         if gpu_devices is not None:
             if isinstance(gpu_devices, str):
                 if gpu_devices == "all":
-                    # 如果配置为 "all"，需要从环境获取可用 GPU
-                    # 这里简化处理，假设用户明确指定了 GPU 列表
+                    # If configured as "all", available GPUs should be obtained from the environment
+                    # Simplified here: assume the user has explicitly specified the GPU list
                     self._gpu_list = []
                 else:
                     self._gpu_list = [gpu_devices]
             elif isinstance(gpu_devices, list):
                 self._gpu_list = [str(gpu) for gpu in gpu_devices]
         
-        # 解析 CPU 设备列表
+        # Parse CPU device list
         self._cpu_list: list[int] = []
         if cpu_devices is not None:
             if isinstance(cpu_devices, str):
-                # 解析范围字符串，如 "0-35"
+                # Parse a range string, e.g., "0-35"
                 if "-" in cpu_devices:
                     start, end = map(int, cpu_devices.split("-"))
                     self._cpu_list = list(range(start, end + 1))
@@ -83,25 +83,26 @@ class ResourceAllocator:
                 self._cpu_list = cpu_devices
     
     def allocate_resources(self, parallel_index: int) -> tuple[str | None, str | None]:
-        """为指定的并行索引分配资源
-        
+        """Allocate resources for the specified parallel index.
+
         Args:
-            parallel_index: 并行索引（从 0 开始）
-            
+            parallel_index: Parallel index (starting from 0).
+
         Returns:
-            (gpu_allocation, cpu_allocation) 元组
-            - gpu_allocation: GPU 设备字符串，如 "0" 或 "0,1"，None 表示不使用 GPU 限制
-            - cpu_allocation: CPU 设备字符串，如 "0-11" 或 "0,1,2"，None 表示不使用 CPU 限制
+            (gpu_allocation, cpu_allocation) tuple.
+            - gpu_allocation: GPU device string, e.g., "0" or "0,1"; None means no GPU restriction.
+            - cpu_allocation: CPU device string, e.g., "0-11" or "0,1,2"; None means no CPU restriction.
         """
-        # 分配 GPU
+        # Allocate GPU
         gpu_allocation = None
         if self._gpu_list:
-            # 如果 GPU 数量不足，某些并行进程需要共享 GPU
+            # If there are not enough GPUs, some parallel processes will share GPUs
             gpu_index = parallel_index % len(self._gpu_list)
             gpu_allocation = self._gpu_list[gpu_index]
         
-        # 分配 CPU（平均分配）
-        # 当任务数超过 max_parallel 时，使用取模复用资源槽位（如 3 个任务、max_parallel=2 时，任务 2 复用槽位 0）
+        # Allocate CPU (evenly distributed)
+        # When the number of tasks exceeds max_parallel, use modulo to reuse resource slots
+        # (e.g., with 3 tasks and max_parallel=2, task 2 reuses slot 0)
         cpu_allocation = None
         if self._cpu_list:
             total_cpus = len(self._cpu_list)
@@ -110,7 +111,7 @@ class ResourceAllocator:
                 effective_index = parallel_index % self.max_parallel
                 start_index = effective_index * cpus_per_parallel
                 end_index = start_index + cpus_per_parallel - 1
-                # 处理最后一个并行进程，分配剩余的所有 CPU
+                # Handle the last parallel process: allocate all remaining CPUs
                 if effective_index == self.max_parallel - 1:
                     end_index = total_cpus - 1
                 
@@ -119,7 +120,7 @@ class ResourceAllocator:
                     if len(allocated_cpus) == 1:
                         cpu_allocation = str(allocated_cpus[0])
                     else:
-                        # 检查是否连续
+                        # Check if the CPUs are contiguous
                         if allocated_cpus == list(range(allocated_cpus[0], allocated_cpus[-1] + 1)):
                             cpu_allocation = f"{allocated_cpus[0]}-{allocated_cpus[-1]}"
                         else:
@@ -128,23 +129,23 @@ class ResourceAllocator:
         return gpu_allocation, cpu_allocation
     
     def register_execution(self, parallel_index: int) -> None:
-        """注册一个执行任务
-        
+        """Register an execution task.
+
         Args:
-            parallel_index: 并行索引
-            
+            parallel_index: Parallel index.
+
         Raises:
-            RuntimeError: 如果已达到最大并行数量或该索引已在执行
+            RuntimeError: If the maximum parallel count is reached or the index is already executing.
         """
         with self._lock:
-            # 检查是否已达到最大并行数量
+            # Check if the maximum parallel count has been reached
             if len(self._active_executions) >= self.max_parallel:
                 raise RuntimeError(
                     f"已达到最大并行数量限制 ({self.max_parallel})。"
                     f"当前活跃执行数: {len(self._active_executions)}"
                 )
             
-            # 检查该索引是否已在执行
+            # Check if the index is already executing
             if parallel_index in self._active_executions:
                 raise RuntimeError(
                     f"并行索引 {parallel_index} 已在执行中，不能重复执行"
@@ -160,10 +161,10 @@ class ResourceAllocator:
                 )
     
     def unregister_execution(self, parallel_index: int) -> None:
-        """注销一个执行任务
-        
+        """Unregister an execution task.
+
         Args:
-            parallel_index: 并行索引
+            parallel_index: Parallel index.
         """
         with self._lock:
             if parallel_index in self._active_executions:
@@ -177,19 +178,19 @@ class ResourceAllocator:
 
 
 class LocalEnv(BaseEnv):
-    """本地环境实现
+    """Local environment implementation.
 
-    提供本地环境的底层操作接口：
-    - 命令执行
-    - 文件操作
-    - 工作空间管理
+    Provides the low-level operations interface for local environments:
+    - Command execution
+    - File operations
+    - Workspace management
     """
 
     def __init__(self, config: LocalEnvConfig | None = None):
-        """初始化本地环境
+        """Initialize the local environment.
 
         Args:
-            config: 本地环境配置
+            config: Local environment configuration.
         """
         if config is None:
             raise ValueError("LocalEnv requires LocalEnvConfig with session_config")
@@ -199,7 +200,7 @@ class LocalEnv(BaseEnv):
         self._init_resource_allocator()
     
     def _init_resource_allocator(self) -> None:
-        """初始化资源分配器"""
+        """Initialize the resource allocator."""
         session_config = self.config.session_config
         parallel_config = getattr(session_config, 'parallel', None)
         
@@ -220,10 +221,10 @@ class LocalEnv(BaseEnv):
             )
 
     def _is_split_workspace_enabled(self) -> bool:
-        """检查是否启用了 split_workspace_for_exp
-        
+        """Check if split_workspace_for_exp is enabled.
+
         Returns:
-            是否启用了实验独立工作空间
+            Whether independent experiment workspaces are enabled.
         """
         session_config = self.config.session_config
         parallel_config = getattr(session_config, 'parallel', None)
@@ -232,20 +233,20 @@ class LocalEnv(BaseEnv):
         return False
 
     def setup(self) -> None:
-        """初始化本地环境"""
+        """Initialize the local environment."""
         if self._is_ready:
             self.logger.warning("Environment already setup")
             return
 
         self.logger.info("Setting up local environment")
         
-        # 确保工作目录存在
+        # Ensure the workspace directory exists
         workspace = Path(self.config.session_config.workspace_path)
         workspace.mkdir(parents=True, exist_ok=True)
         
-        # 创建软链接（如果有配置）
-        # 当 split_workspace_for_exp 启用时，跳过主工作空间的软链接创建
-        # 软链接会在每个 exp 独立工作空间中创建（通过 setup_exp_workspace）
+        # Create symlinks (if configured)
+        # When split_workspace_for_exp is enabled, skip symlink creation for the main workspace
+        # Symlinks will be created in each experiment's independent workspace (via setup_exp_workspace)
         if not self._is_split_workspace_enabled():
             session_config = self.config.session_config
             if hasattr(session_config, 'symlinks') and session_config.symlinks:
@@ -260,18 +261,18 @@ class LocalEnv(BaseEnv):
         self.logger.info("Local environment setup complete")
 
     def setup_exp_workspace(self, exp_workspace_path: str) -> None:
-        """创建实验专属的工作空间目录
-        
-        当 split_workspace_for_exp 启用时，为每个实验创建独立的工作空间子目录，
-        并在其中创建软链接（如果有配置）。
-        
+        """Create an experiment-specific workspace directory.
+
+        When split_workspace_for_exp is enabled, creates an independent workspace
+        subdirectory for each experiment, and creates symlinks within it (if configured).
+
         Args:
-            exp_workspace_path: 实验工作空间的绝对路径
+            exp_workspace_path: Absolute path of the experiment workspace.
         """
         workspace = Path(exp_workspace_path)
         workspace.mkdir(parents=True, exist_ok=True)
         
-        # 在 exp 工作空间中创建软链接
+        # Create symlinks in the experiment workspace
         session_config = self.config.session_config
         if hasattr(session_config, 'symlinks') and session_config.symlinks:
             self._create_symlinks(workspace, session_config.symlinks)
@@ -279,7 +280,7 @@ class LocalEnv(BaseEnv):
         self.logger.info(f"创建实验独立工作空间: {exp_workspace_path}")
 
     def teardown(self) -> None:
-        """清理本地环境资源"""
+        """Clean up local environment resources."""
         if not self._is_ready:
             return
 
@@ -288,7 +289,7 @@ class LocalEnv(BaseEnv):
         self.logger.info("Local environment teardown complete")
 
     def get_session(self) -> Any:
-        """获取 Session（LocalEnv 不直接提供 Session，由调用方管理）"""
+        """Get a Session (LocalEnv does not provide Sessions directly; managed by the caller)."""
         raise NotImplementedError("LocalEnv does not provide session directly")
 
     def submit_job(
@@ -297,30 +298,30 @@ class LocalEnv(BaseEnv):
         job_type: str = "debug",
         **kwargs: Any,
     ) -> str:
-        """提交作业（LocalEnv 不直接支持作业调度）"""
+        """Submit a job (LocalEnv does not support job scheduling directly)."""
         raise NotImplementedError("LocalEnv does not support job submission")
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
-        """查询作业状态（LocalEnv 不直接支持作业调度）"""
+        """Query job status (LocalEnv does not support job scheduling directly)."""
         raise NotImplementedError("LocalEnv does not support job status")
 
     def cancel_job(self, job_id: str) -> None:
-        """取消作业（LocalEnv 不直接支持作业调度）"""
+        """Cancel a job (LocalEnv does not support job scheduling directly)."""
         raise NotImplementedError("LocalEnv does not support job cancellation")
 
     def _create_symlinks(self, workspace: Path, symlinks: dict[str, str]) -> None:
-        """创建软链接
-        
+        """Create symlinks.
+
         Args:
-            workspace: 工作空间路径
-            symlinks: 软链接配置，格式：{源目录路径: 工作空间内的目标路径}
+            workspace: Workspace path.
+            symlinks: Symlink configuration, format: {source_directory_path: target_path_within_workspace}.
         """
-        # 获取项目根目录，用于解析相对路径
-        # 优先从配置文件目录向上查找项目根目录（包含 evomaster 目录的目录）
+        # Get the project root directory, used for resolving relative paths
+        # Prefer searching upward from the config file directory for the project root (directory containing evomaster)
         project_root = None
         if hasattr(self.config.session_config, 'config_dir') and self.config.session_config.config_dir:
             config_dir = Path(self.config.session_config.config_dir)
-            # 从配置文件目录向上查找项目根目录
+            # Search upward from the config file directory for the project root
             current = config_dir.resolve()
             while current != current.parent:
                 if (current / "evomaster").exists() and (current / "evomaster").is_dir():
@@ -328,7 +329,7 @@ class LocalEnv(BaseEnv):
                     break
                 current = current.parent
         
-        # 如果没找到项目根目录，尝试使用当前工作目录
+        # If project root was not found, try using the current working directory
         if project_root is None:
             current = Path.cwd()
             while current != current.parent:
@@ -338,80 +339,80 @@ class LocalEnv(BaseEnv):
                 current = current.parent
         
         for source_dir, target_rel_path in symlinks.items():
-            # 解析源路径：如果是相对路径，则相对于项目根目录解析；如果是绝对路径，则直接使用
+            # Resolve source path: if relative, resolve against the project root; if absolute, use directly
             source_path = Path(source_dir)
             if not source_path.is_absolute():
-                # 相对路径：如果找到了项目根目录，则相对于项目根目录；否则相对于当前工作目录
+                # Relative path: resolve against project root if found, otherwise against current working directory
                 if project_root is not None:
                     source_path = (project_root / source_dir).resolve()
-                    self.logger.debug(f"相对路径 '{source_dir}' 解析为: {source_path} (相对于项目根目录 {project_root})")
+                    self.logger.debug(f"Relative path '{source_dir}' resolved to: {source_path} (relative to project root {project_root})")
                 else:
                     source_path = Path(source_dir).resolve()
-                    self.logger.debug(f"相对路径 '{source_dir}' 解析为: {source_path} (相对于当前工作目录)")
+                    self.logger.debug(f"Relative path '{source_dir}' resolved to: {source_path} (relative to current working directory)")
             else:
-                # 绝对路径：直接使用
+                # Absolute path: use directly
                 source_path = source_path.resolve()
-                self.logger.debug(f"绝对路径 '{source_dir}' 解析为: {source_path}")
+                self.logger.debug(f"Absolute path '{source_dir}' resolved to: {source_path}")
             
             if not source_path.exists():
-                self.logger.warning(f"源目录不存在，跳过软链接: {source_dir} (解析后: {source_path})")
+                self.logger.warning(f"Source directory does not exist, skipping symlink: {source_dir} (resolved: {source_path})")
                 continue
-            
+
             if not source_path.is_dir():
-                self.logger.warning(f"源路径不是目录，跳过软链接: {source_dir} (解析后: {source_path})")
+                self.logger.warning(f"Source path is not a directory, skipping symlink: {source_dir} (resolved: {source_path})")
                 continue
-            
-            # 目标路径是相对于工作空间的
+
+            # Target path is relative to the workspace
             target_path = workspace / target_rel_path
-            
-            # 如果目标路径已存在，先删除（可能是之前的软链接或文件）
+
+            # If the target path already exists, remove it first (may be a previous symlink or file)
             if target_path.exists() or target_path.is_symlink():
                 if target_path.is_symlink():
                     target_path.unlink()
-                    self.logger.debug(f"删除已存在的软链接: {target_path}")
+                    self.logger.debug(f"Removed existing symlink: {target_path}")
                 else:
-                    # 如果是目录，需要递归删除
+                    # If it is a directory, remove it recursively
                     shutil.rmtree(target_path)
-                    self.logger.debug(f"删除已存在的目录: {target_path}")
-            
-            # 确保目标路径的父目录存在
+                    self.logger.debug(f"Removed existing directory: {target_path}")
+
+            # Ensure the parent directory of the target path exists
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # 创建目标目录（如果不存在）
+
+            # Create the target directory (if it does not exist)
             target_path.mkdir(parents=True, exist_ok=True)
-            
-            # 确保 _generated/ 子目录存在于源目录（playground/configs），
-            # 以便 agent_builder 生成的文件通过 symlink 直接写入项目根目录
+
+            # Ensure the _generated/ subdirectory exists in the source directory (playground/configs),
+            # so that files generated by agent_builder are written directly to the project root via symlink
             if source_path.name in ("playground", "configs"):
                 generated_dir = source_path / "_generated"
                 if not generated_dir.exists():
                     generated_dir.mkdir(exist_ok=True)
 
-            # 将源目录下的所有内容链接到目标目录
+            # Link all contents from the source directory to the target directory
             self._link_directory_contents(source_path, target_path)
-            self.logger.info(f"创建软链接: {source_dir} 下的内容 -> {target_path}")
+            self.logger.info(f"Created symlinks: contents of {source_dir} -> {target_path}")
     
     def _link_directory_contents(self, source_dir: Path, target_dir: Path) -> None:
-        """将源目录下的所有内容链接到目标目录
-        
+        """Link all contents from the source directory to the target directory.
+
         Args:
-            source_dir: 源目录路径
-            target_dir: 目标目录路径
+            source_dir: Source directory path.
+            target_dir: Target directory path.
         """
         for item in source_dir.iterdir():
             source_item = source_dir / item.name
             target_item = target_dir / item.name
             
-            # 如果目标已存在，跳过
+            # If the target already exists, skip
             if target_item.exists() or target_item.is_symlink():
-                self.logger.debug(f"目标已存在，跳过: {target_item}")
+                self.logger.debug(f"Target already exists, skipping: {target_item}")
                 continue
             
             try:
                 os.symlink(source_item, target_item)
-                self.logger.debug(f"创建软链接: {source_item} -> {target_item}")
+                self.logger.debug(f"Created symlink: {source_item} -> {target_item}")
             except OSError as e:
-                self.logger.warning(f"创建软链接失败: {source_item} -> {target_item}, 错误: {e}")
+                self.logger.warning(f"Failed to create symlink: {source_item} -> {target_item}, error: {e}")
 
     def local_exec(
         self,
@@ -420,20 +421,20 @@ class LocalEnv(BaseEnv):
         workdir: str | None = None,
         parallel_index: int | None = None,
     ) -> dict[str, Any]:
-        """在本地执行命令
+        """Execute a command locally.
 
         Args:
-            command: 要执行的命令
-            timeout: 超时时间（秒）
-            workdir: 工作目录
-            parallel_index: 并行索引（可选，用于资源分配）
+            command: Command to execute.
+            timeout: Timeout in seconds.
+            workdir: Working directory.
+            parallel_index: Parallel index (optional, used for resource allocation).
 
         Returns:
-            执行结果字典，包含：
-            - stdout: 标准输出
-            - stderr: 标准错误
-            - exit_code: 退出码
-            - output: stdout + stderr 的组合
+            Result dictionary containing:
+            - stdout: Standard output
+            - stderr: Standard error
+            - exit_code: Exit code
+            - output: Combined stdout + stderr
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
@@ -441,11 +442,11 @@ class LocalEnv(BaseEnv):
         timeout = timeout or self.config.session_config.timeout
         workdir = workdir or self.config.session_config.workspace_path
 
-        # 检查工作目录是否存在
+        # Check if the working directory exists
         workspace = Path(workdir)
         cwd = workdir if workspace.exists() else None
 
-        # 如果启用了并行资源分配，使用资源分配器
+        # If parallel resource allocation is enabled, use the resource allocator
         gpu_allocation = None
         cpu_allocation = None
         
@@ -454,26 +455,26 @@ class LocalEnv(BaseEnv):
         gpu_devices = getattr(session_config, 'gpu_devices', None)
 
         if self._resource_allocator is not None and parallel_index is not None:
-            # 注册执行任务（检查并行限制）
+            # Register the execution task (check parallel limits)
             self._resource_allocator.register_execution(parallel_index)
             try:
-                # 分配资源
+                # Allocate resources
                 gpu_allocation, cpu_allocation = self._resource_allocator.allocate_resources(parallel_index)
                 self.logger.info(
                     f"并行索引 {parallel_index}: GPU={gpu_allocation}, CPU={cpu_allocation}"
                 )
-                # 当资源分配器返回 None 时（如 cpus_per_parallel=0），回退到原始 cpu_devices
+                # When the resource allocator returns None (e.g., cpus_per_parallel=0), fall back to the original cpu_devices
                 if cpu_allocation is None and cpu_devices is not None:
                     if isinstance(cpu_devices, str):
                         cpu_allocation = cpu_devices
                     elif isinstance(cpu_devices, list):
                         cpu_allocation = ",".join(str(cpu) for cpu in cpu_devices)
             finally:
-                # 注意：这里不能立即注销，因为命令还在执行
-                # 我们将在命令执行完成后注销
+                # Note: cannot unregister immediately because the command is still executing
+                # We will unregister after the command completes
                 pass
         else:
-            # 未启用并行资源分配，或 parallel_index 未设置，使用原始配置
+            # Parallel resource allocation not enabled, or parallel_index not set; use original config
             if gpu_devices is not None:
                 if isinstance(gpu_devices, str):
                     gpu_allocation = gpu_devices
@@ -486,20 +487,20 @@ class LocalEnv(BaseEnv):
                 elif isinstance(cpu_devices, list):
                     cpu_allocation = ",".join(str(cpu) for cpu in cpu_devices)
 
-        # 构建环境变量
+        # Build environment variables
         env = os.environ.copy()
         
-        # 设置 GPU 设备
+        # Set GPU devices
         if gpu_allocation is not None:
             env['CUDA_VISIBLE_DEVICES'] = gpu_allocation
             self.logger.debug(f"Setting CUDA_VISIBLE_DEVICES={gpu_allocation}")
 
-        # 构建 CPU 限制命令前缀
-        # 注意：taskset 无法直接执行 shell 内置命令（如 cd），需要包装在 sh -c 中
+        # Build CPU affinity command prefix
+        # Note: taskset cannot directly execute shell built-in commands (e.g., cd); they need to be wrapped in sh -c
         if cpu_allocation is not None and sys.platform != "win32":
-            # 使用 shlex.quote 来安全地转义命令，然后包装在 sh -c 中
+            # Use shlex.quote to safely escape the command, then wrap in sh -c
             final_command = f"taskset -c {cpu_allocation} sh -c {shlex.quote(command)}"
-            self.logger.info(f"应用 CPU 亲和性限制: taskset -c {cpu_allocation}")
+            self.logger.info(f"Applying CPU affinity restriction: taskset -c {cpu_allocation}")
         else:
             final_command = command
 
@@ -534,16 +535,16 @@ class LocalEnv(BaseEnv):
                 "output": str(e),
             }
         finally:
-            # 注销执行任务
+            # Unregister the execution task
             if self._resource_allocator is not None and parallel_index is not None:
                 self._resource_allocator.unregister_execution(parallel_index)
 
     def upload_file(self, local_path: str, remote_path: str) -> None:
-        """上传文件到本地环境
+        """Upload a file to the local environment.
 
         Args:
-            local_path: 本地文件路径
-            remote_path: 远程文件路径（本地环境中的路径）
+            local_path: Local file path.
+            remote_path: Remote file path (path in the local environment).
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
@@ -554,7 +555,7 @@ class LocalEnv(BaseEnv):
         if not local_file.exists():
             raise FileNotFoundError(f"Local file not found: {local_path}")
 
-        # 创建远程目录
+        # Create the remote directory
         remote_file.parent.mkdir(parents=True, exist_ok=True)
 
         if local_file.is_file():
@@ -565,14 +566,14 @@ class LocalEnv(BaseEnv):
             self.logger.debug(f"Uploaded directory {local_path} to {remote_path}")
 
     def download_file(self, remote_path: str, timeout: int | None = None) -> bytes:
-        """从本地环境下载文件
+        """Download a file from the local environment.
 
         Args:
-            remote_path: 远程文件路径（本地环境中的路径）
-            timeout: 超时时间（本地不使用）
+            remote_path: Remote file path (path in the local environment).
+            timeout: Timeout (not used for local).
 
         Returns:
-            文件内容（字节）
+            File content (bytes).
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
@@ -589,14 +590,14 @@ class LocalEnv(BaseEnv):
             return f.read()
 
     def read_file_content(self, remote_path: str, encoding: str = "utf-8") -> str:
-        """读取远程文件内容（文本）
+        """Read remote file content (text).
 
         Args:
-            remote_path: 远程文件路径（本地环境中的路径）
-            encoding: 文件编码
+            remote_path: Remote file path (path in the local environment).
+            encoding: File encoding.
 
         Returns:
-            文件内容（字符串）
+            File content (string).
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
@@ -613,33 +614,33 @@ class LocalEnv(BaseEnv):
             return f.read()
 
     def write_file_content(self, remote_path: str, content: str, encoding: str = "utf-8") -> None:
-        """写入内容到远程文件
+        """Write content to a remote file.
 
         Args:
-            remote_path: 远程文件路径（本地环境中的路径）
-            content: 文件内容
-            encoding: 文件编码
+            remote_path: Remote file path (path in the local environment).
+            content: File content.
+            encoding: File encoding.
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
 
         remote_file = Path(remote_path)
 
-        # 确保目录存在
+        # Ensure the directory exists
         remote_file.parent.mkdir(parents=True, exist_ok=True)
 
-        # 写入文件
+        # Write the file
         with open(remote_file, "w", encoding=encoding) as f:
             f.write(content)
 
     def path_exists(self, remote_path: str) -> bool:
-        """检查远程路径是否存在
+        """Check if a remote path exists.
 
         Args:
-            remote_path: 远程路径（本地环境中的路径）
+            remote_path: Remote path (path in the local environment).
 
         Returns:
-            是否存在
+            Whether the path exists.
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
@@ -647,13 +648,13 @@ class LocalEnv(BaseEnv):
         return os.path.exists(remote_path)
 
     def is_file(self, remote_path: str) -> bool:
-        """检查远程路径是否是文件
+        """Check if a remote path is a file.
 
         Args:
-            remote_path: 远程路径（本地环境中的路径）
+            remote_path: Remote path (path in the local environment).
 
         Returns:
-            是否是文件
+            Whether the path is a file.
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
@@ -661,13 +662,13 @@ class LocalEnv(BaseEnv):
         return os.path.isfile(remote_path)
 
     def is_directory(self, remote_path: str) -> bool:
-        """检查远程路径是否是目录
+        """Check if a remote path is a directory.
 
         Args:
-            remote_path: 远程路径（本地环境中的路径）
+            remote_path: Remote path (path in the local environment).
 
         Returns:
-            是否是目录
+            Whether the path is a directory.
         """
         if not self._is_ready:
             raise RuntimeError("Environment not ready")
