@@ -142,7 +142,7 @@ class FeishuBot:
             from evomaster.env.container_pool import ContainerPool
 
             server_start = datetime.now().strftime("%Y%m%d_%H%M%S")
-            shared_mount_host = str(self._project_root / "runs" / f"feishu_{server_start}")
+            shared_mount_host = str(self._project_root / "runs" / f"feishu_{server_start}" / "workspaces")
             self._container_pool = ContainerPool(config.container_pool, shared_mount_host)
             self._container_pool.start()
 

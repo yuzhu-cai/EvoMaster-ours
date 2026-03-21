@@ -153,7 +153,8 @@ class ContainerPool:
             relative = Path(user_workspace_host).relative_to(self._shared_mount_host)
             container_workspace = f"/workspaces/{relative.as_posix()}"
             self._docker_exec(
-                info.container_id, f"mkdir -p {container_workspace}"
+                info.container_id,
+                f"mkdir -p {container_workspace} && chmod 777 {container_workspace}",
             )
             logger.info(
                 "Acquired container %s for user_id=%s, workspace=%s",

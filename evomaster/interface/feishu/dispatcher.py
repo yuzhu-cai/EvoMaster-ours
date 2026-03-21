@@ -359,21 +359,22 @@ class TaskDispatcher:
 
         # Create hierarchical run directory: runs/feishu_{server_start}/{user_id}/{agent}_{timestamp}/
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        # 容器池模式：使用池的 shared_mount_host 作为 feishu_base，确保路径一致
+        # run_dir: 始终在 feishu_{ts}/{user_id}/ 下（容器池模式时不在挂载目录内）
         if self._container_pool is not None:
-            feishu_base = Path(self._container_pool.shared_mount_host)
+            feishu_run_base = Path(self._container_pool.shared_mount_host).parent
         else:
-            feishu_base = self._project_root / "runs" / f"feishu_{self._server_start_time}"
+            feishu_run_base = self._project_root / "runs" / f"feishu_{self._server_start_time}"
         user_dir = sender_open_id or "unknown"
-        run_dir = feishu_base / user_dir / f"{agent_name}_{timestamp}"
+        run_dir = feishu_run_base / user_dir / f"{agent_name}_{timestamp}"
         task_id = f"feishu_{agent_name}"
         playground.set_run_dir(run_dir, task_id=task_id)
 
         # 容器池模式：注入 use_existing_container
         if self._container_pool is not None and agent_name not in _LOCAL_ONLY_AGENTS:
-            # workspace = 用户根目录（不再嵌套 workspaces/feishu_<agent>）
+            # workspace = shared_mount_host（现在是 .../workspaces/）下的用户目录
             user_dir = sender_open_id or "unknown"
-            user_workspace_host = str((feishu_base / user_dir).absolute())
+            feishu_ws_base = Path(self._container_pool.shared_mount_host)
+            user_workspace_host = str((feishu_ws_base / user_dir).absolute())
             container_info = self._container_pool.acquire(
                 sender_open_id or "unknown", user_workspace_host
             )
