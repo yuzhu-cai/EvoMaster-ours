@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import requests
@@ -84,12 +85,17 @@ class WebFetchTool(BaseTool):
         self.logger.info("Web fetch URLs: %s, goal: %s", urls, goal)
 
         results = []
-        start_time = time.time()
-        for u in urls:
-            if time.time() - start_time > 300:
-                results.append(f"[web_fetch] Skipped {u}: total fetch time exceeded 5 minutes.")
-                continue
-            results.append(self._fetch_and_extract(u, goal, jina_api_key))
+        with ThreadPoolExecutor(max_workers=min(len(urls), 5)) as pool:
+            future_to_url = {
+                pool.submit(self._fetch_and_extract, u, goal, jina_api_key): u
+                for u in urls
+            }
+            for future in as_completed(future_to_url, timeout=300):
+                url = future_to_url[future]
+                try:
+                    results.append(future.result())
+                except Exception as e:
+                    results.append(f"[web_fetch] Failed {url}: {e}")
 
         response = "\n---\n".join(results)
         return response, {"urls": urls, "goal": goal}
