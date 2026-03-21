@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 import subprocess
 import tempfile
 import time
@@ -140,7 +141,20 @@ class DockerEnv(BaseEnv):
                     self.logger.warning(f"Error stopping/removing container: {e}")
                 self._container_id = None
             else:
-                # Keep-container mode: only mark as closed; container keeps running
+                # Keep-container mode: kill this instance's tmux session, keep container running
+                if self._tmux_session:
+                    try:
+                        self.docker_exec(
+                            f"tmux kill-session -t {self._tmux_session} 2>/dev/null || true",
+                            timeout=10,
+                        )
+                    except Exception:
+                        pass
+                    if self._tmux_log_path:
+                        try:
+                            self.docker_exec(f"rm -f {self._tmux_log_path}", timeout=10)
+                        except Exception:
+                            pass
                 self.logger.info(f"Environment closed (container {self._container_id[:12]} kept running for reuse)")
 
         self._is_ready = False
@@ -357,22 +371,17 @@ class DockerEnv(BaseEnv):
         if not self._container_id:
             raise RuntimeError("Container not started")
 
-        session_name = f"evo-{self._container_id[:8]}"
-        log_path = f"/tmp/evo-{self._container_id[:8]}.log"
+        suffix = uuid.uuid4().hex[:6]
+        session_name = f"evo-{self._container_id[:8]}-{suffix}"
+        log_path = f"/tmp/{session_name}.log"
 
         self._tmux_session = session_name
         self._tmux_log_path = log_path
-
-        # 清理旧的 tmux 日志文件（容器池复用场景）
-        self.docker_exec(f"rm -f {log_path}")
 
         # 安装 tmux（先检查是否已安装，跳过不必要的 apt-get update）
         check = self.docker_exec("which tmux", timeout=10)
         if check.get("exit_code") != 0:
             self.docker_exec("apt-get update && apt-get install -y tmux || true", timeout=120)
-
-        # 杀掉可能残留的同名 tmux session（容器池复用场景）
-        self.docker_exec(f"tmux kill-session -t {session_name} 2>/dev/null || true", timeout=10)
 
         # Create tmux session
         self.docker_exec(f"tmux new-session -d -s {session_name} 'bash -i'")
