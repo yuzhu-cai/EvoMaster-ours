@@ -1,0 +1,11 @@
+[
+  {
+    "id": "task_001",
+    "prompt": "请输出一句 hello，并说明你做了什么。"
+  },
+  {
+    "id": "task_002",
+    "prompt": "请列出当前工作目录中的文件，并给出简短总结。",
+    "openclaw_timeout_sec": 600
+  }
+]
