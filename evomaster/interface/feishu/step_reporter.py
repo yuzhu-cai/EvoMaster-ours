@@ -182,6 +182,10 @@ class FeishuStepReporter:
         self._step_count = step_number
         self._max_steps = max_steps
 
+        # Lazy retry: if document creation failed initially, retry during early steps
+        if not self._document_url and not self._document_id and step_number <= 3:
+            self._create_trajectory_document(self._task_text or "")
+
         # Check TODO completion markers (via the think tool's PROGRESS marker)
         self._check_todo_progress(step_record)
 
@@ -450,34 +454,41 @@ class FeishuStepReporter:
     # ------------------------------------------------------------------
 
     def _create_trajectory_document(self, task_text: str) -> None:
-        """Create a Feishu document for storing the full trajectory. Silently degrades on failure."""
+        """Create a Feishu document for storing the full trajectory. Retries on failure to handle API rate limits."""
         if not self._doc_writer:
             return
 
-        try:
-            doc_id = self._doc_writer.create_document(
-                title=f"Agent Trajectory: {task_text[:100]}"
-            )
-            if not doc_id:
-                return
+        max_retries = 3
+        doc_id = None
+        for attempt in range(max_retries):
+            try:
+                doc_id = self._doc_writer.create_document(
+                    title=f"Agent Trajectory: {task_text[:100]}"
+                )
+                if doc_id:
+                    break
+            except Exception:
+                logger.warning("create_document attempt %d failed", attempt + 1, exc_info=True)
+            if attempt < max_retries - 1:
+                time.sleep(1 * (attempt + 1))  # 1s, 2s backoff
 
+        if not doc_id:
+            logger.warning("Failed to create trajectory document after %d attempts", max_retries)
+            return
+
+        try:
             self._document_id = doc_id
             self._doc_writer.set_public_editable(doc_id)
             self._document_url = self._doc_writer.get_document_url(doc_id)
 
-            # Transfer document ownership to the message sender
             if self._sender_open_id:
                 self._doc_writer.transfer_ownership(doc_id, self._sender_open_id)
 
-            # Write document title and task description
             self._doc_writer.append_heading(doc_id, f"Task: {task_text[:500]}", level=1)
-            self._doc_writer.append_text(
-                doc_id,
-                f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}",
-            )
+            self._doc_writer.append_text(doc_id, f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
             self._doc_writer.append_divider(doc_id)
         except Exception:
-            logger.exception("Failed to create trajectory document")
+            logger.exception("Failed to initialize trajectory document %s", doc_id)
 
     def _append_step_to_document(
         self, step_record: Any, step_num: int, max_steps: int
