@@ -47,7 +47,7 @@ feishu:
   # Docker 容器池配置（可选，启用后每个用户 session 分配独立容器）
   container_pool:
     enabled: true
-    image: "evomaster/base:latest"
+    image: "evomaster/base:bohrium"
     initial_size: 20
     max_size: 100
     memory_limit: "8g"
