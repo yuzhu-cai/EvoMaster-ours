@@ -46,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--python", default=sys.executable, help="Python executable.")
     parser.add_argument("--workers", type=int, default=8, help="Concurrent worker count.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N tasks.")
+    parser.add_argument(
+        "--lines",
+        default=None,
+        help="Comma-separated 1-based JSONL line numbers to run, e.g. 20,25,26",
+    )
     return parser.parse_args()
 
 
@@ -65,12 +70,43 @@ def build_task_markdown(problem: str, task_id: str, task_type: str) -> str:
     return "\n".join(header) + problem
 
 
-def load_rows(path: Path, limit: int | None) -> list[tuple[int, dict]]:
+def parse_lines_spec(spec: str | None) -> set[int] | None:
+    if spec is None:
+        return None
+
+    selected: set[int] = set()
+    for part in spec.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if "-" in token:
+            start_text, end_text = token.split("-", 1)
+            start = int(start_text.strip())
+            end = int(end_text.strip())
+            if start < 1 or end < 1:
+                raise ValueError("--lines values must be >= 1")
+            if start > end:
+                raise ValueError(f"Invalid --lines range: {token}")
+            selected.update(range(start, end + 1))
+        else:
+            value = int(token)
+            if value < 1:
+                raise ValueError("--lines values must be >= 1")
+            selected.add(value)
+
+    if not selected:
+        raise ValueError("--lines did not contain any valid line numbers")
+    return selected
+
+
+def load_rows(path: Path, limit: int | None, selected_lines: set[int] | None = None) -> list[tuple[int, dict]]:
     rows: list[tuple[int, dict]] = []
     with path.open("r", encoding="utf-8") as handle:
         for line_no, raw in enumerate(handle, start=1):
             line = raw.strip()
             if not line:
+                continue
+            if selected_lines is not None and line_no not in selected_lines:
                 continue
             row = json.loads(line)
             if not isinstance(row, dict):
@@ -98,13 +134,14 @@ def prepare_job(
     task_dir.mkdir(parents=True, exist_ok=True)
     task_md = task_dir / "task.md"
     task_json = task_dir / "task.json"
-    task_md.write_text(build_task_markdown(problem, task_group_id, subject), encoding="utf-8")
+    task_description = build_task_markdown(problem, task_group_id, subject)
+    task_md.write_text(task_description, encoding="utf-8")
     task_json.write_text(
         json.dumps(
             [
                 {
                     "id": task_group_id,
-                    "description": str(task_md),
+                    "description": task_description,
                 }
             ],
             ensure_ascii=False,
@@ -143,7 +180,16 @@ def main() -> int:
         print("[ERROR] --workers must be >= 1")
         return 1
 
-    rows = load_rows(args.jsonl, args.limit)
+    try:
+        selected_lines = parse_lines_spec(args.lines)
+    except ValueError as exc:
+        print(f"[ERROR] {exc}")
+        return 1
+
+    rows = load_rows(args.jsonl, args.limit, selected_lines=selected_lines)
+    if selected_lines is not None and not rows:
+        print(f"[ERROR] no matching rows found for --lines={args.lines}")
+        return 1
     args.base_run_dir.mkdir(parents=True, exist_ok=True)
 
     jobs: list[TaskJob] = []

@@ -233,7 +233,6 @@ class MCPTool(BaseTool):
                 name=self._tool_name,
                 description=self._tool_description,
                 parameters=self._input_schema,
-                strict=None,
             )
         )
 

@@ -8,12 +8,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${PROJECT_ROOT}"
 
-RUN_NAME="${RUN_NAME:-DeepSeek-v3.2_4}"
+RUN_NAME="${RUN_NAME:-GPT-5.4_1}"
 AGENT_NAME="${AGENT_NAME:-frontierscience}"
 JSONL_PATH="${JSONL_PATH:-playground/frontierscience/test/test.jsonl}"
 CONFIG_PATH="${CONFIG_PATH:-configs/frontierscience/config.yaml}"
-RUN_WORKERS="${RUN_WORKERS:-20}"
-EVAL_WORKERS="${EVAL_WORKERS:-20}"
+RUN_WORKERS="${RUN_WORKERS:-2}"
+EVAL_WORKERS="${EVAL_WORKERS:-10}"
 EVAL_REPEAT_COUNT="${EVAL_REPEAT_COUNT:-5}"
 EVAL_MODEL="${EVAL_MODEL:-Vendor2/GPT-5}"
 EVAL_BASE_URL="${EVAL_BASE_URL:-https://api.gpugeek.com/v1}"
@@ -70,14 +70,14 @@ run_eval_batch() {
   echo "============================================================"
 } | tee "${SUMMARY_LOG}"
 
-echo "[STEP 1/4] run" | tee -a "${SUMMARY_LOG}"
-python playground/frontierscience/scripts/run.py \
-  --jsonl "${JSONL_PATH}" \
-  --agent "${AGENT_NAME}" \
-  --config "${CONFIG_PATH}" \
-  --base-run-dir "${BASE_RUN_DIR}" \
-  --workers "${RUN_WORKERS}" \
-  2>&1 | tee -a "${SUMMARY_LOG}"
+# echo "[STEP 1/4] run" | tee -a "${SUMMARY_LOG}"
+# python playground/frontierscience/scripts/run.py \
+#   --jsonl "${JSONL_PATH}" \
+#   --agent "${AGENT_NAME}" \
+#   --config "${CONFIG_PATH}" \
+#   --base-run-dir "${BASE_RUN_DIR}" \
+#   --workers "${RUN_WORKERS}" \
+#   2>&1 | tee -a "${SUMMARY_LOG}"
 
 echo "[STEP 2/4] merge" | tee -a "${SUMMARY_LOG}"
 python playground/frontierscience/scripts/merge.py \

@@ -80,7 +80,7 @@ def _build_reflection_payload(question: str, draft_answer: str) -> dict[str, Any
         "Compare the current draft against that checklist and identify what is still missing, weakly supported, or vague.",
         "If any missing point depends on external evidence and retrieval is allowed, do another targeted tool pass before revising.",
         "Revise the answer completely rather than making only cosmetic edits; strengthen coverage, evidence, and precision.",
-        "Overwrite solution.md with the improved draft, then overwrite solution_refined.md with the best final version before finish.",
+        "Keep solution.md as the original pre-reflection draft. Apply post-reflection changes only to solution_refined.md so the refinement is easy to inspect before finish.",
     ]
 
     return {
@@ -122,7 +122,7 @@ def local_reflect_answer(
             "Next actions:",
             "1. Re-check the task against the current draft and identify missing deliverables.",
             "2. If needed, use tools again to fill evidence gaps or inspect the paper more precisely.",
-            "3. Rewrite and strengthen the answer, then overwrite solution.md and solution_refined.md.",
+            "3. Keep solution.md unchanged, and write all post-reflection improvements only into solution_refined.md.",
             "4. Only call finish after the revised answer is complete.",
             f"Reflection plan file: {reflection_path}",
             f"Checkpoint file: {output_path}",

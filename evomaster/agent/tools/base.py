@@ -125,7 +125,6 @@ class BaseTool(ABC):
                 name=self.name,
                 description=self.get_description(),
                 parameters=self.params_class.model_json_schema(),
-                strict=None,
             )
         )
 
@@ -326,4 +325,3 @@ def create_registry(
 
     registry.register_many(tools)
     return registry
-

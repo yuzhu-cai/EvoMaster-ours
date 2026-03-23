@@ -2,7 +2,7 @@ Please solve the following scientific task.
 
 Task ID: {task_id}
 Task Type: {task_type}
-Note: the complete task statement is already embedded below in `Description`. Do not search for or open `task.md`.
+Note: the complete task statement is already embedded below in `Description`.
 Description:
 {description}
 
@@ -10,16 +10,25 @@ Additional Information:
 {input_data}
 
 Execution requirements:
-1. Identify all required outputs, constraints, and sub-questions before drafting the answer.
+1. Identify all explicit outputs, constraints, sub-questions, quantity words, and formatting cues in `Description` before drafting the answer.
 2. Answer the task directly and completely, and make sure every requested part is covered explicitly.
 3. If `allow_external_retrieval=true`, use retrieval when it is needed for correctness, citations, paper-specific evidence, recent facts, or missing details.
 4. If retrieval is allowed:
    - Prefer `search_web` and `google_scholar` to locate relevant sources.
-   - Use `visit_web` only for `arxiv.org` URLs when full-paper access is needed.
-   - Prefer this route for papers: locate with search -> inspect arXiv with `visit_web` -> download `paper.pdf` -> read with `read_paper_pdf`.
+   - Use `visit_web` only to inspect `arxiv.org` abstract or landing pages and obtain the direct PDF link when full-paper access is needed.
+   - `read_paper_pdf` only reads local PDF files and cannot fetch remote URLs.
+   - When calling `read_paper_pdf`, first ensure the target PDF already exists in the current workspace; if it was just downloaded or there are multiple PDFs, pass the full absolute path to the local PDF file.
+   - Prefer this route for papers: locate with search -> inspect arXiv with `visit_web` -> `wget -O paper.pdf "<pdf_url>"` -> read local `paper.pdf` with `read_paper_pdf`.
    - If two consecutive retrieval attempts for the same missing fact return `No results` or `BLOCKED`, stop looping and continue with best-effort reasoning.
 5. If `allow_external_retrieval=false`, do not use external retrieval tools.
 6. If formulas or derivations are needed, include the essential intermediate steps.
 7. Make the final answer self-contained, scientifically grounded, and aligned with the requested format.
-8. Write a real draft to `solution.md`, call `reflect_answer`, then continue working for at least one more solve iteration if reflection reveals gaps.
-9. Before `finish`, ensure `solution_refined.md` contains the best post-reflection answer.
+8. Prefer an answer structure that follows the order of the task. If the prompt contains numbered questions or clearly separable parts, answer them in that same order.
+9. Satisfy explicit quantity and structure requirements exactly. For example, if the task asks for one example, give one clear example; if it asks for two examples, give two; if it asks for both values, provide both values explicitly.
+10. Keep background focused. Do not expand into large amounts of context, literature survey, or side discussion unless it directly helps answer a requested part of `Description`.
+11. If a precise value, threshold, example, formula, comparison, or conclusion is requested, state it explicitly rather than leaving it implicit.
+12. The final deliverables must be exactly two files in the workspace: `solution.md` and `solution_refined.md`.
+13. Write a real draft to `solution.md` in the workspace, call `reflect_answer`, then continue working for at least one more solve iteration if reflection reveals gaps.
+14. After `reflect_answer`, do not modify `solution.md`; keep it as the pre-reflection draft, and apply all improvements only to `solution_refined.md`.
+15. Before `finish`, ensure `solution_refined.md` contains the best post-reflection answer and that both files exist in the workspace.
+16. If you need to run Python code, feel free to create a `.py` file in the workspace and run it there. Prefer this over complex `python -c` one-liners when quoting or multi-line logic is involved.

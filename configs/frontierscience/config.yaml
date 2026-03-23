@@ -9,8 +9,8 @@ llm:
     temperature: 0.2
     max_tokens: 128000
     timeout: 12000
-    max_retries: 3
-    retry_delay: 1.0
+    max_retries: 10
+    retry_delay: 2.0
 
   local_sglang:
     provider: "deepseek"
@@ -27,7 +27,7 @@ llm:
 
 agents:
   solve:
-    llm: "local_sglang"
+    llm: "openai"
     max_turns: 800
     tools:
       builtin: ["*"]

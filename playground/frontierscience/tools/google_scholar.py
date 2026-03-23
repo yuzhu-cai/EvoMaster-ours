@@ -9,6 +9,8 @@ from __future__ import annotations
 import http.client
 import json
 import logging
+import socket
+import time
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -19,6 +21,11 @@ from evomaster.agent.tools.base import BaseTool, BaseToolParams
 from .common import call_external_function, ensure_text, get_external_script_path, get_serper_api_key
 
 logger = logging.getLogger(__name__)
+
+SERPER_HOST = "google.serper.dev"
+SERPER_TIMEOUT_SECONDS = 30
+SERPER_MAX_RETRIES = 3
+SERPER_RETRY_DELAY_SECONDS = 1.0
 
 
 class GoogleScholarParams(BaseToolParams):
@@ -84,13 +91,18 @@ def _scholar_one(query: str) -> str:
     )
     headers = {"X-API-KEY": key, "Content-Type": "application/json"}
 
-    conn = http.client.HTTPSConnection("google.serper.dev")
-    for i in range(5):
+    last_error: Exception | None = None
+    for attempt in range(1, SERPER_MAX_RETRIES + 1):
+        conn: http.client.HTTPSConnection | None = None
         try:
+            conn = http.client.HTTPSConnection(SERPER_HOST, timeout=SERPER_TIMEOUT_SECONDS)
             conn.request("POST", "/scholar", json.dumps(payload), headers)
             res = conn.getresponse()
             data = res.read()
             if res.status != 200:
+                if 500 <= res.status < 600 and attempt < SERPER_MAX_RETRIES:
+                    time.sleep(SERPER_RETRY_DELAY_SECONDS * attempt)
+                    continue
                 return f"[google_scholar] API error {res.status} for query '{query}'."
             results = json.loads(data.decode("utf-8"))
             organic = results.get("organic", [])
@@ -104,10 +116,25 @@ def _scholar_one(query: str) -> str:
                 line = f"{idx}. [{page.get('title','')}]({page.get('link','')}){date}{source}\n{snippet}"
                 snippets.append(line.replace("Your browser can't play this video.", ""))
             return f"### Google Scholar results for '{query}' ({len(snippets)} found):\n\n" + "\n\n".join(snippets)
+        except (TimeoutError, socket.timeout) as exc:
+            last_error = exc
+            if attempt < SERPER_MAX_RETRIES:
+                time.sleep(SERPER_RETRY_DELAY_SECONDS * attempt)
+                continue
+            return (
+                f"[google_scholar] Timeout after {SERPER_MAX_RETRIES} attempts for '{query}' "
+                f"(timeout={SERPER_TIMEOUT_SECONDS}s)."
+            )
         except Exception as exc:
-            if i == 4:
-                return f"[google_scholar] Error for '{query}': {exc}"
-    return f"[google_scholar] Failed for '{query}'."
+            last_error = exc
+            if attempt < SERPER_MAX_RETRIES:
+                time.sleep(SERPER_RETRY_DELAY_SECONDS * attempt)
+                continue
+            return f"[google_scholar] Error for '{query}' after {SERPER_MAX_RETRIES} attempts: {exc}"
+        finally:
+            if conn is not None:
+                conn.close()
+    return f"[google_scholar] Failed for '{query}': {last_error}"
 
 
 def local_google_scholar(query: str | list[str]) -> str:

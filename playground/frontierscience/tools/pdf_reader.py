@@ -20,7 +20,9 @@ class PdfReadParams(BaseToolParams):
     """Read a scientific PDF with a fixed, efficient workflow."""
 
     name: ClassVar[str] = "read_paper_pdf"
-    pdf_path: str = Field(description="Path to a local PDF file, usually `paper.pdf`.")
+    pdf_path: str = Field(
+        description="Path to a local PDF file only, usually `paper.pdf`. Remote URLs are not supported."
+    )
     goal: str = Field(description="The information goal to guide focused reading.")
     mode: str = Field(default="auto", description="One of `auto`, `overview`, `focus`, `pages`, `find`.")
     page_start: int | None = Field(default=None, description="1-based start page for `pages` mode.")
@@ -53,13 +55,23 @@ class PdfReaderTool(BaseTool):
 
 
 def _resolve_pdf_path(pdf_path: str) -> Path:
+    if pdf_path.startswith(("http://", "https://")):
+        raise ValueError(
+            "read_paper_pdf only supports local PDF files. "
+            "Download the PDF first, for example: wget -O paper.pdf \"<pdf_url>\", "
+            "then call read_paper_pdf with pdf_path='paper.pdf'."
+        )
     path = Path(pdf_path).expanduser()
     if path.exists():
         return path.resolve()
     cwd_path = Path.cwd() / pdf_path
     if cwd_path.exists():
         return cwd_path.resolve()
-    raise FileNotFoundError(f"PDF not found: {pdf_path}")
+    raise FileNotFoundError(
+        f"PDF not found: {pdf_path}. "
+        "If this is a remote paper, download it first, for example: "
+        "wget -O paper.pdf \"<pdf_url>\", then call read_paper_pdf with the local file."
+    )
 
 
 def _run_pdftotext(pdf_path: Path, txt_path: Path) -> tuple[bool, str]:

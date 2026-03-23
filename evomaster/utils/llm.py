@@ -426,7 +426,7 @@ class BaseLLM(ABC):
         Returns:
             API 格式的工具列表
         """
-        return [spec.model_dump() for spec in tool_specs]
+        return [spec.model_dump(exclude_none=True) for spec in tool_specs]
 
 
 class OpenAILLM(BaseLLM):
