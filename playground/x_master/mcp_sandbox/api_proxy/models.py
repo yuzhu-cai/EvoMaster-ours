@@ -1,4 +1,4 @@
-# Define request body models
+# 定义请求体的模型
 from pydantic import BaseModel
 
 

@@ -4,7 +4,6 @@ from typing import Any
 from typing import List, Dict, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type
-
 from evomaster import TaskInstance
 from evomaster.agent import BaseAgent
 from evomaster.core.exp import BaseExp
@@ -12,23 +11,23 @@ from .utils import strip_think_and_exec, extract_agent_response
 
 
 class CritiqueExp(BaseExp):
-    """Critique experiment implementation for X-Master.
+    """X-Master中Critique实验类实现
 
-    Implements the Critique stage workflow: analyze the initial solution and produce an improved result.
+    实现Critique阶段工作流：分析初始结果并改进后得到优化后的结果
     """
 
     @property
     def exp_name(self) -> str:
-        """Return the name of the experiment stage."""
+        """返回实验阶段名称"""
         return "Critiquing"
 
     def __init__(self, critic_agent,  config, index=0):
-        """Initialize the CritiqueExp experiment class.
+        """初始化CritiqueExp实验类
 
         Args:
-            critic_agent: Critic Agent instance
-            config: EvoMasterConfig instance
-            index: index assigned when running multiple identical experiments in parallel
+            critic_agent: Critic Agent 实例
+            config: EvoMasterConfig 实例
+            index: x-master需要并行多个exp, 因此需要为每个相同的exp定义一个编号
         """
         super().__init__(critic_agent, config)
         self.critic = critic_agent
@@ -39,17 +38,16 @@ class CritiqueExp(BaseExp):
         self.critic._current_exp_index = self.index
 
     def run(self, task_description:str,task_id:str = "exp_001",solution:str = None) -> dict:
-        """Run the critic experiment.
+        """运行critic实验
 
-        Workflow: a Critic Agent reviews and refines the initial solution.
+        工作流: 一个Critic Agent对初始答案进行更正生成
 
         Args:
-            task_description: the task description
-            task_id: the task identifier
-            solution: the solution received from the previous module
-
+            task_description: 任务描述
+            task_id: 任务 ID
+            solution: 接收到来自前一个模块的答案
         Returns:
-            A dictionary containing the execution results.
+            执行结果字典
         """
 
         results = {
@@ -82,7 +80,7 @@ class CritiqueExp(BaseExp):
                 original_format_kwargs = self.critic._prompt_format_kwargs.copy()
 
                 try:
-                    # Clean upstream solution using strip_think_and_exec
+                    # 使用 strip_think_and_exec 清理上游 solution
                     cleaned_solution = strip_think_and_exec(solution)
                     self.critic._prompt_format_kwargs.update({
                         's_solution': cleaned_solution
@@ -120,10 +118,10 @@ class CritiqueExp(BaseExp):
 
 
     def save_results(self, output_file: str):
-        """Save experiment results.
+        """保存实验结果
 
         Args:
-            output_file: output file path
+            output_file: 输出文件路径
         """
         import json
         from pathlib import Path

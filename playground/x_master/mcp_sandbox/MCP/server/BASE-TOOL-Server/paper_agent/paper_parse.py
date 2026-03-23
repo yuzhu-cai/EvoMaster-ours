@@ -17,20 +17,24 @@ def split_pdf_info(pdf_info: str, model: str):
     if "gpt" in model:
         tokenizer = tiktoken.encoding_for_model("gpt-4o")
         chunk_token_limit = 120000
-    elif model == "deepseek-r1":
-        tokenizer = AutoTokenizer.from_pretrained("deepseek-ai/deepseek-r1", trust_remote_code=True)
-        chunk_token_limit = 120000
+    elif "deepseek" in model.lower():
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        chunk_token_limit = 120000 
     else:
-        tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen-72B", trust_remote_code=True)
-        chunk_token_limit = 30000
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        chunk_token_limit = 120000
+    
+    # 编码并切分
     all_tokens = tokenizer.encode(pdf_info)
     chunks = []
     start = 0
+    
     while start < len(all_tokens):
         end = min(start + chunk_token_limit, len(all_tokens))
         chunk_tokens = all_tokens[start:end]
         chunks.append(tokenizer.decode(chunk_tokens))
         start = end
+    
     return chunks
 
 async def paper_qa_link(link: str, query: str, llm: str = None):
@@ -78,7 +82,7 @@ async def main():
     response = await paper_qa_link(
         "https://arxiv.org/pdf/2405.12229",
         "What is the main idea of the paper?",
-        llm="gpt-4o"
+        llm="GpuGeek/Qwen3-30B-A3B-Instruct-2507"
     )
     print(response)
 

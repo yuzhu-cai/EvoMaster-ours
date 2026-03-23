@@ -9,28 +9,27 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_i
 from evomaster import TaskInstance
 from evomaster.agent import BaseAgent
 from evomaster.core.exp import BaseExp
-from .utils import strip_think_and_exec, extract_agent_response
+from .utils import strip_think_and_exec, extract_final_response
 
 
 class SelectExp(BaseExp):
-    """Select experiment implementation for X-Master.
+    """X-Master中Select实验类实现
 
-    Implements the Selecting stage workflow: aggregate all solutions from the previous stage
-    and choose the best solution.
+    实现Select阶段工作流：汇总前一模块的所有答案，选择最佳的答案
     """
 
     @property
     def exp_name(self) -> str:
-        """Return the name of the experiment stage."""
+        """返回实验阶段名称"""
         return "Selecting"
 
     def __init__(self, selector_agent,  config , index=0):
-        """Initialize the SelectExp experiment class.
+        """初始化SelectExp实验类
 
         Args:
-            selector_agent: Selector Agent instance
-            config: EvoMasterConfig instance
-            index: index assigned when running multiple identical experiments in parallel
+            selector_agent: Selector Agent 实例
+            config: EvoMasterConfig 实例
+            index: x-master需要并行多个exp, 因此需要为每个相同的exp定义一个编号
         """
 
         super().__init__(selector_agent, config)
@@ -42,16 +41,16 @@ class SelectExp(BaseExp):
         self.selector._current_exp_index = self.index
 
     def run(self, task_description:str,task_id:str = "exp_001", solutions:List[str] = None) -> dict:
-            """Run the Selector experiment.
+            """运行Selector实验
 
-            Workflow: a Selector Agent aggregates all solutions from the previous module and selects the best one.
+            工作流: 一个Selector Agent汇总前一个模块的所有答案并选择最佳答案
 
             Args:
-                task_description: the task description
-                task_id: the task identifier
-                solutions: list of solutions received from the previous module
+                task_description: 任务描述
+                task_id: 任务 ID
+                solutions: 接收到来自前一个模块的所有答案
             Returns:
-                A dictionary containing execution results
+                执行结果字典
             """
             results = {
                 'task_id':task_id,
@@ -82,11 +81,11 @@ class SelectExp(BaseExp):
 
                     original_format_kwargs = self.selector._prompt_format_kwargs.copy()
 
-                    # Format solutions (clean each with strip_think_and_exec)
+                    # 格式化 solutions（使用 strip_think_and_exec 清理）
                     responses = self._format_solutions_prompt(solutions)
 
                     try:
-                        # Set current experiment info for trajectory recording
+                        # 设置当前exp信息，用于trajectory记录
                         BaseAgent.set_exp_info(exp_name=self.exp_name, exp_index=0)
                         self.selector._prompt_format_kwargs.update({
                             'Responses':responses
@@ -94,13 +93,13 @@ class SelectExp(BaseExp):
                         selector_trajectory = self.selector.run(selector_task)
                         results['selector_trajectory'] = selector_trajectory
 
-                        # Extract raw LLM response
-                        selector_response = extract_agent_response(selector_trajectory)
-                        results['selector_response'] = selector_response
+                        # 提取 LLM 的原始回复
+                        selector_response = extract_final_response(selector_trajectory)
+                        results['selector_result'] = selector_response
 
-                        # Parse selection result and return the chosen original solution
-                        selected_solution = self._parse_selector_choice(selector_response, solutions)
-                        results['selector_result'] = selected_solution
+                        # 解析选择结果，返回最终选中的答案
+                        # selected_solution = self._parse_selector_choice(selector_response, solutions)
+                        # results['selector_result'] = selected_solution
                         results['selected_index'] = self._get_selected_index(selector_response, len(solutions))
                         
                         self.logger.info("Selecting completed")
@@ -125,18 +124,20 @@ class SelectExp(BaseExp):
             return results
 
     def _format_solutions_prompt(self, solutions:List[str]) -> str:
-        """Format a list of solutions into a prompt string.
+        """格式化解决方案列表为prompt
 
         Args:
-            solutions: list of solution strings
-        Returns:
-            A prompt string in the format:
+            solutions: 方案列表
+        Reture:
+            返回的方案prompt:
+            格式：
             ## Response 1
             {solution_1}
             ## Response 2
             {solution_2}
             ## Response 3
             {solution_3}
+            ...
             ...
         """
 
@@ -145,7 +146,7 @@ class SelectExp(BaseExp):
 
         prompt_lines = []
         for i, solution in enumerate(solutions,1):
-            # Clean each solution using strip_think_and_exec
+            # 使用 strip_think_and_exec 清理每个 solution
             clean_solution = strip_think_and_exec(solution)
             if not clean_solution:
                 clean_solution = "empty solution"
@@ -156,43 +157,43 @@ class SelectExp(BaseExp):
         return "\n".join(prompt_lines).strip()
 
     def _parse_selector_choice(self, selector_response: str, solutions: List[str]) -> str:
-        """Parse the chosen solution from the Selector's response.
+        """从 Selector 的回复中解析选择的答案
 
-        Parse <select>Response X</select> tags and return the corresponding original solution.
+        解析 <select>Response X</select> 标签，返回对应的原始 solution
 
         Args:
-            selector_response: the Selector Agent's response text
-            solutions: the original solutions list
+            selector_response: Selector Agent 的回复文本
+            solutions: 原始 solutions 列表
 
         Returns:
-            The selected solution text
+            选中的 solution 原文
         """
         if not selector_response or not solutions:
             self.logger.warning("Empty selector_response or solutions, returning first solution")
             return solutions[0] if solutions else ""
 
-        # Regex match for <select>Response X</select>
+        # 正则匹配 <select>Response X</select>
         match = re.search(r'<select>Response\s*(\d+)</select>', selector_response, re.IGNORECASE)
         if not match:
             self.logger.warning("Could not parse selector's decision. Defaulting to Response 1.")
             return solutions[0]
 
-        idx = int(match.group(1)) - 1  # convert to 0-based index
-        # Ensure index is within valid range
+        idx = int(match.group(1)) - 1  # 转换为 0-based 索引
+        # 确保索引在有效范围内
         idx = max(0, min(len(solutions) - 1, idx))
 
         self.logger.info(f"Selector chose Response {idx + 1}")
         return solutions[idx]
 
     def _get_selected_index(self, selector_response: str, num_solutions: int) -> int:
-        """Extract the selected index from the Selector's response.
+        """从 Selector 的回复中提取选择的索引
 
         Args:
-            selector_response: the Selector Agent's response text
-            num_solutions: number of solutions
+            selector_response: Selector Agent 的回复文本
+            num_solutions: solutions 的数量
 
         Returns:
-            Selected index (0-based). Returns 0 if parsing fails.
+            选中的索引（0-based），解析失败返回 0
         """
         if not selector_response:
             return 0
@@ -207,10 +208,10 @@ class SelectExp(BaseExp):
 
 
     def save_results(self, output_file: str):
-        """Save experiment results.
+        """保存实验结果
 
         Args:
-            output_file: output file path
+            output_file: 输出文件路径
         """
         import json
         from pathlib import Path

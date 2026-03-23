@@ -2,8 +2,8 @@ from io import StringIO
 
 class OutputCapture:
     def __init__(self):
-        self.stdout = StringIO()  # Capture standard output
-        self.stderr = StringIO()  # Capture standard error
+        self.stdout = StringIO()  # 捕获标准输出
+        self.stderr = StringIO()  # 捕获标准错误
 
     def write(self, data: str):
         self.stdout.write(data)
@@ -22,7 +22,7 @@ class OutputCapture:
         self.stdout.close()
         self.stderr.close()
 
-# Thread-safe output manager
+# 线程安全的输出管理器
 class ThreadOutputManager:
     def get_capture(self) -> OutputCapture:
-        return OutputCapture()  # Return a new capture each time
+        return OutputCapture()  # 每次返回新的 capture
