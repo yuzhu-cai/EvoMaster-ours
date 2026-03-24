@@ -28,7 +28,7 @@ https://github.com/user-attachments/assets/590365c0-95a6-467e-a22b-3c373fb2bb8a
 </td>
 <td width="50%" align="center" style="vertical-align: top; padding: 10px;">
 
-<strong>Create a ML Agent</strong>
+<strong>Create an ML Agent</strong>
 
 https://github.com/user-attachments/assets/d5e2500b-f589-4676-b6cb-dce8ae000f2c
 

@@ -1,24 +1,24 @@
 # Playground
 
-Playground is where developers build their own research agents. Each playground defines a complete experimental workflow by inheriting EvoMaster's base components (`BasePlayground`, `BaseExp`) to implement specific scientific experiment automation.
+Playground is the workspace where developers build their own research agents. Each playground defines a full experimental workflow by inheriting EvoMaster’s base components (`BasePlayground`, `BaseExp`) to automate a specific scientific experiment.
 
-**Developers should create their own playground in this directory to implement their research agents.**
+**Developers should create their own playground under this directory and implement their research agents here.**
 
 ## Existing Examples
 
-| Playground | Type | Description | Docs |
-|---|---|---|---|
-| `minimal` | Single Agent | Minimal example, only inherits `BasePlayground`, ideal for learning the framework | [README](./minimal/README.md) |
-| `minimal_bohrium` | Single Agent | Bohrium platform scientific computing integration | [README](./minimal_bohrium/README.md) |
-| `minimal_multi_agent` | Multi-Agent | Planning + Coding dual-agent collaboration, demonstrates multi-agent workflow | [README](./minimal_multi_agent/README.md) |
-| `minimal_multi_agent_parallel` | Multi-Agent | Parallel multi-agent experiments using ThreadPoolExecutor | [README](./minimal_multi_agent_parallel/README.md) |
-| `minimal_openclaw_skill` | Single Agent + Skills | TypeScript-based OpenClaw skill integration via Node.js bridge | [README](./minimal_openclaw_skill/README.md) |
-| `minimal_kaggle` | Multi-Agent | Kaggle competition automation with 6 role agents (draft/debug/improve/research/knowledge/metric) | [README](./minimal_kaggle/README.md) |
-| `minimal_skill_task` | Single Agent + Skills | RAG-based Analyze → Plan → Search → Summarize workflow | [README](./minimal_skill_task/README.md) |
-| `ml_master` | Multi-Agent | ML-Master 1.0 with tree-search and adaptive memory for autonomous ML | [README](./ml_master/README.md) |
-| `ml_master_2` | Multi-Agent | ML-Master 2.0 with hierarchical cognitive caching for ultra-long-horizon ML | [README](./ml_master_2/README.md) |
-| `x_master` | Multi-Phase Parallel | Four-phase iterative workflow: Solve → Critique → Rewrite → Select, with MCP tool support | [README](./x_master/README.md) |
-| `browse_master` | Multi-Agent | Planner + Executor web search agent with MCP tools | [README](./browse_master/README.md) |
+| Playground | Description | Docs |
+|------------|-------------|------|
+| `minimal` | Basic single agent | [README](./minimal/README.md) |
+| `minimal_bohrium` | Bohrium platform scientific computing | [README](./minimal_bohrium/README.md) |
+| `minimal_kaggle` | Simple Kaggle competition automation | [README](./minimal_kaggle/README.md) |
+| `minimal_multi_agent` | Simple multi-agent | [README](./minimal_multi_agent/README.md) |
+| `minimal_multi_agent_parallel` | Parallel multi-agent experiments | [README](./minimal_multi_agent_parallel/README.md) |
+| `minimal_openclaw_skill` | TypeScript skill integration | [README](./minimal_openclaw_skill/README.md) |
+| `minimal_skill_task` | Anthropic native skill integration | [README](./minimal_skill_task/README.md) |
+| `ml_master` | ML-Master 1.0 autonomous machine learning | [README](./ml_master/README.md) |
+| `ml_master_2` | ML-Master 2.0 cognitive accumulation framework | [README](./ml_master_2/README.md) |
+| `x_master` | X-Master scientific agent | [README](./x_master/README.md) |
+| `browse_master` | Browse-Master web search agent | [README](./browse_master/README.md) |
 
 ## Quick Start: Create Your Playground
 
@@ -30,7 +30,7 @@ mkdir -p playground/my_agent/prompts
 mkdir -p configs/my_agent
 ```
 
-### 2. Implement Playground Class
+### 2. Implement the Playground Class
 
 `playground/my_agent/core/playground.py`:
 
@@ -48,7 +48,7 @@ class MyPlayground(BasePlayground):
         self.logger = logging.getLogger(self.__class__.__name__)
 ```
 
-This is the minimal implementation. For multi-agent or custom experiment flows, override `setup()`, `_create_exp()`, `run()` methods. See `minimal_multi_agent` and `x_master` for examples.
+This is the minimal setup. For multi-agent setups, custom tools, or custom experiment flows, see `minimal_multi_agent`, `x_master`, and `minimal_kaggle`.
 
 ### 3. Write Prompts
 
@@ -70,101 +70,10 @@ Description: {description}
 
 `configs/my_agent/config.yaml`:
 
-```yaml
-llm:
-  openai:
-    provider: "openai"
-    model: "gpt-4"
-    api_key: "your-api-key"
-    temperature: 0.7
-  default: "openai"
-
-agent:
-  llm: "openai"
-  max_turns: 50
-  enable_tools: true
-  system_prompt_file: "prompts/system_prompt.txt"
-  user_prompt_file: "prompts/user_prompt.txt"
-  context:
-    max_tokens: 128000
-    truncation_strategy: "latest_half"
-
-session:
-  type: "local"
-  local:
-    working_dir: "./workspace"
-
-logging:
-  level: "INFO"
-  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-```
-
 ### 5. Run
 
 ```bash
 python run.py --agent my_agent --task "your task description"
 ```
-
-## Development Guide
-
-### Three-Layer Architecture
-
-```
-Playground  →  Workflow orchestration, component initialization, lifecycle management
-    │
-   Exp       →  Single experiment execution logic
-    │
-  Agent      →  LLM + tool calling + context management
-```
-
-### Common Extension Patterns
-
-**Custom Experiment Flow** — Inherit `BaseExp`, override `run()`:
-
-```python
-from evomaster.core.exp import BaseExp
-
-class MyExp(BaseExp):
-    def run(self, task_description, task_id="exp_001"):
-        # Custom execution logic
-        ...
-```
-
-**Multi-Agent** — Override `setup()` to create multiple agents, override `_create_exp()` to use custom Exp:
-
-```python
-def setup(self):
-    llm_config = self._setup_llm_config()
-    self._setup_session()
-    self._setup_tools()
-    agents_config = getattr(self.config, 'agents', {})
-    self.agent_a = self._create_agent("a", agents_config['a'], llm_config=llm_config)
-    self.agent_b = self._create_agent("b", agents_config['b'], llm_config=llm_config)
-```
-
-**MCP Tool Integration** — Enable in config:
-
-```yaml
-mcp:
-  enabled: true
-  config_file: "mcp_config.json"
-```
-
-**Docker Environment** — Switch session type:
-
-```yaml
-session:
-  type: "docker"
-  docker:
-    image: "evomaster/base:latest"
-    working_dir: "/workspace"
-```
-
-### Key Principles
-
-- Reuse `BasePlayground`'s `_setup_*` and `_create_agent()` methods whenever possible
-- Each Agent uses an independent LLM instance, sharing Session and Tools
-- Use relative paths for prompt files (relative to playground directory)
-- Use `try-finally` in `run()` to ensure `cleanup()` is called
 
 For more details, see the [development documentation](../docs/architecture.md).
