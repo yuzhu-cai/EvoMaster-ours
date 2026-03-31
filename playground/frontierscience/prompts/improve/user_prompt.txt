@@ -1,0 +1,38 @@
+Question:
+{problem}
+
+Reference rubric style:
+{reference_rubric}
+
+Previous answer:
+{existing_answer}
+
+Current search state summary:
+{trajectory_summary}
+
+Shared tool memory from previous nodes:
+{shared_tool_memory}
+
+Worker workspace:
+{worker_workspace}
+
+Required solution file:
+{solution_path}
+Filename:
+{solution_filename}
+
+Improvement targets:
+{improvement_focus}
+
+Execution requirements:
+1. Re-check the task against the previous answer and identify what is still missing or weak.
+2. Improve factual correctness, evidence grounding, completeness, and scientific precision.
+3. If the task asks for numbered parts, explicit comparisons, formulas, or conclusions, ensure each is now covered clearly.
+4. Reuse relevant tool findings from shared memory before issuing new searches.
+5. For arXiv papers, use `visit_web` to get the `Downloaded PDF Path` and then pass that exact absolute path into `read_paper_pdf`. Do not use `execute_bash` to download PDFs.
+6. If retrieval is required, keep it targeted and evidence-driven.
+7. Make the revised answer clearly better under the rubric, especially on weak dimensions called out above.
+8. Before `finish`, ensure the improved answer can replace the previous node as a strictly better candidate.
+9. Do not `finish` with an intention statement or a revision plan; the `finish.message` must contain the actual revised answer.
+10. Before `finish`, save the exact same revised answer into `{solution_path}` using `str_replace_editor` or `execute_bash`.
+11. If the task or weakness list points to missing evidence grounding, use at least one focused retrieval tool call before `finish`.

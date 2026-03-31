@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, ClassVar
 from urllib.parse import quote, urlparse
@@ -58,7 +59,15 @@ class VisitWebTool(BaseTool):
             self.logger.info("visit_web called (url_count=%d)", url_count)
 
             enforce, allowed_domains = _get_allowlist_policy()
-            result = local_visit_web(params.url, params.goal, external_script_path=self.external_script_path)
+            workspace_path = session.get_workspace_path() if hasattr(session, "get_workspace_path") else None
+            if not workspace_path:
+                workspace_path = getattr(getattr(session, "config", None), "workspace_path", None)
+            result = local_visit_web(
+                params.url,
+                params.goal,
+                external_script_path=self.external_script_path,
+                workspace_path=workspace_path,
+            )
             mode = "external_script" if self.external_script_path is not None else "builtin"
             self.logger.info("visit_web completed via %s", mode)
             return ensure_text(result), {
@@ -123,7 +132,132 @@ def _build_paper_pdf_url(url: str) -> str | None:
 def _build_download_hint(pdf_url: str | None) -> str:
     if not pdf_url:
         return "N/A"
-    return f'wget -O paper.pdf "{pdf_url}"'
+    return "Handled automatically by visit_web for arXiv papers."
+
+
+def _slugify_title(title: str | None, fallback: str) -> str:
+    raw = (title or "").strip().lower()
+    raw = re.sub(r"^\[[^\]]+\]\s*", "", raw)
+    raw = re.sub(r"[^a-z0-9]+", "_", raw).strip("_")
+    raw = raw[:120].rstrip("_")
+    return raw or fallback
+
+
+def _trim_title_candidate(candidate: str) -> str:
+    text = " ".join((candidate or "").split()).strip(" -:\t")
+    if not text:
+        return ""
+    separators = [
+        " Authors:",
+        " Author:",
+        " Abstract",
+        " Comments:",
+        " Subjects:",
+        " Journal",
+        " DOI",
+        " MSC",
+        " ACM",
+        " Report number",
+        " View PDF",
+        " View a PDF",
+        " Full-text links",
+        " Submission history",
+        " Cite as",
+        " arXiv:",
+    ]
+    for sep in separators:
+        if sep in text:
+            text = text.split(sep, 1)[0].strip(" -:\t")
+    return text[:200].strip(" -:\t")
+
+
+def _extract_title_from_content(content: str, url: str) -> str | None:
+    arxiv_id = _extract_arxiv_id(url)
+    for raw_line in (content or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if arxiv_id and line.startswith(f"[{arxiv_id}]"):
+            candidate = _trim_title_candidate(line.split("]", 1)[-1].strip())
+            if candidate:
+                return candidate
+        if line.lower().startswith("title:"):
+            candidate = _trim_title_candidate(line.split(":", 1)[-1].strip())
+            if candidate:
+                return candidate
+    return None
+
+
+def _download_pdf_bytes(pdf_url: str) -> bytes:
+    import requests
+
+    timeout = int(os.getenv("FRONTIER_PDF_DOWNLOAD_TIMEOUT", "180"))
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.1",
+    }
+    response = requests.get(pdf_url, timeout=timeout, headers=headers)
+    response.raise_for_status()
+    return response.content
+
+
+def _validate_pdf_file(pdf_path: Path) -> tuple[bool, str]:
+    if not pdf_path.exists():
+        return False, "file_missing"
+    data = pdf_path.read_bytes()
+    if not data.startswith(b"%PDF-"):
+        return False, "missing_pdf_header"
+    if b"%%EOF" not in data[-4096:]:
+        return False, "missing_eof_marker"
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(pdf_path))
+        if len(reader.pages) <= 0:
+            return False, "zero_pages"
+    except Exception as exc:
+        return False, f"pypdf_validation_failed: {exc}"
+    return True, "ok"
+
+
+def _auto_download_pdf(
+    pdf_url: str | None,
+    *,
+    content: str,
+    workspace_path: str | None,
+    source_url: str,
+) -> tuple[str | None, str]:
+    if not pdf_url:
+        return None, "not_applicable"
+    if not workspace_path:
+        return None, "workspace_unavailable"
+
+    workspace = Path(workspace_path)
+    workspace.mkdir(parents=True, exist_ok=True)
+    fallback_name = _extract_arxiv_id(source_url) or "paper"
+    title = _extract_title_from_content(content, source_url)
+    filename = _slugify_title(title, fallback=fallback_name) + ".pdf"
+    target_path = workspace / filename
+
+    if target_path.exists():
+        is_valid, status = _validate_pdf_file(target_path)
+        if is_valid:
+            return str(target_path.resolve()), "cached_valid_pdf"
+        target_path.unlink(missing_ok=True)
+
+    tmp_path = target_path.with_suffix(target_path.suffix + ".part")
+    tmp_path.unlink(missing_ok=True)
+    try:
+        tmp_path.write_bytes(_download_pdf_bytes(pdf_url))
+        is_valid, status = _validate_pdf_file(tmp_path)
+        if not is_valid:
+            tmp_path.unlink(missing_ok=True)
+            return None, f"downloaded_file_invalid: {status}"
+        tmp_path.replace(target_path)
+        return str(target_path.resolve()), "downloaded_valid_pdf"
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        return None, f"download_failed: {exc}"
 
 
 def _format_policy(enforce: bool, allowed_domains: list[str], blocked: bool) -> str:
@@ -138,6 +272,9 @@ def _format_visit_result(
     enforce: bool,
     allowed_domains: list[str],
     paper_pdf_url: str | None,
+    local_pdf_path: str | None,
+    pdf_status: str,
+    paper_title: str | None,
     content: str,
     blocked: bool = False,
 ) -> str:
@@ -147,7 +284,10 @@ def _format_visit_result(
             header,
             f"URL: {url}",
             f"DomainPolicy: {_format_policy(enforce, allowed_domains, blocked=blocked)}",
+            f"Paper Title: {paper_title or 'N/A'}",
             f"Paper PDF: {paper_pdf_url or 'N/A'}",
+            f"Downloaded PDF Path: {local_pdf_path or 'N/A'}",
+            f"PDF Download Status: {pdf_status}",
             f"Download Hint: {_build_download_hint(paper_pdf_url)}",
             f"Goal: {goal}",
             "",
@@ -191,7 +331,7 @@ def _fetch_builtin_content(url: str) -> tuple[str, str]:
     return "direct", text.strip()[:max_chars]
 
 
-def _visit_one(url: str, goal: str, external_script_path: Path | None = None) -> str:
+def _visit_one(url: str, goal: str, external_script_path: Path | None = None, workspace_path: str | None = None) -> str:
     normalized_url = _normalize_url(url)
     enforce, allowed_domains = _get_allowlist_policy()
     paper_pdf_url = _build_paper_pdf_url(normalized_url)
@@ -204,81 +344,71 @@ def _visit_one(url: str, goal: str, external_script_path: Path | None = None) ->
             enforce=enforce,
             allowed_domains=allowed_domains,
             paper_pdf_url=paper_pdf_url,
+            local_pdf_path=None,
+            pdf_status="blocked",
+            paper_title=None,
             content="[visit_web] Request blocked before network call.",
             blocked=True,
         )
 
+    content = ""
+    source = "error"
     if external_script_path is not None:
         try:
             content = str(call_external_function(external_script_path, "visit_web", normalized_url, goal))
-            return _format_visit_result(
-                source="external_script",
-                url=normalized_url,
-                goal=goal,
-                enforce=enforce,
-                allowed_domains=allowed_domains,
-                paper_pdf_url=paper_pdf_url,
-                content=content,
-                blocked=False,
-            )
+            source = "external_script"
         except Exception as ext_exc:
             logger.warning("visit_web external script failed, fallback to builtin: %s", ext_exc)
             try:
                 source, text = _fetch_builtin_content(normalized_url)
-                merged = f"{text[:6000]}\n\n[external visit_web error] {ext_exc}"
-                return _format_visit_result(
-                    source=source,
-                    url=normalized_url,
-                    goal=goal,
-                    enforce=enforce,
-                    allowed_domains=allowed_domains,
-                    paper_pdf_url=paper_pdf_url,
-                    content=merged,
-                    blocked=False,
-                )
+                content = f"{text[:6000]}\n\n[external visit_web error] {ext_exc}"
             except Exception as fetch_exc:
-                return _format_visit_result(
-                    source="error",
-                    url=normalized_url,
-                    goal=goal,
-                    enforce=enforce,
-                    allowed_domains=allowed_domains,
-                    paper_pdf_url=paper_pdf_url,
-                    content=f"[visit_web] Failed to fetch '{normalized_url}': {fetch_exc}",
-                    blocked=False,
-                )
+                content = f"[visit_web] Failed to fetch '{normalized_url}': {fetch_exc}"
+                source = "error"
+    else:
+        try:
+            source, text = _fetch_builtin_content(normalized_url)
+            content = text[:6000]
+        except Exception as exc:
+            content = f"[visit_web] Failed to fetch '{normalized_url}': {exc}"
+            source = "error"
 
-    try:
-        source, text = _fetch_builtin_content(normalized_url)
-        return _format_visit_result(
-            source=source,
-            url=normalized_url,
-            goal=goal,
-            enforce=enforce,
-            allowed_domains=allowed_domains,
-            paper_pdf_url=paper_pdf_url,
-            content=text[:6000],
-            blocked=False,
-        )
-    except Exception as exc:
-        return _format_visit_result(
-            source="error",
-            url=normalized_url,
-            goal=goal,
-            enforce=enforce,
-            allowed_domains=allowed_domains,
-            paper_pdf_url=paper_pdf_url,
-            content=f"[visit_web] Failed to fetch '{normalized_url}': {exc}",
-            blocked=False,
-        )
+    paper_title = _extract_title_from_content(content, normalized_url)
+    local_pdf_path, pdf_status = _auto_download_pdf(
+        paper_pdf_url,
+        content=content,
+        workspace_path=workspace_path,
+        source_url=normalized_url,
+    )
+    return _format_visit_result(
+        source=source,
+        url=normalized_url,
+        goal=goal,
+        enforce=enforce,
+        allowed_domains=allowed_domains,
+        paper_pdf_url=paper_pdf_url,
+        local_pdf_path=local_pdf_path,
+        pdf_status=pdf_status,
+        paper_title=paper_title,
+        content=content,
+        blocked=False,
+    )
 
 
-def local_visit_web(url: str | list[str], goal: str, external_script_path: Path | None = None) -> str:
+def local_visit_web(
+    url: str | list[str],
+    goal: str,
+    external_script_path: Path | None = None,
+    workspace_path: str | None = None,
+) -> str:
     if url is None or goal is None:
         return "[visit_web] Invalid request: missing url or goal."
     if isinstance(url, str):
-        return _visit_one(url, goal, external_script_path=external_script_path)
+        return _visit_one(url, goal, external_script_path=external_script_path, workspace_path=workspace_path)
     if isinstance(url, list) and all(isinstance(u, str) for u in url):
-        parts = [_visit_one(one, goal, external_script_path=external_script_path) for one in url]
+        parts = [
+            _visit_one(one, goal, external_script_path=external_script_path, workspace_path=workspace_path)
+            for one in url
+        ]
         return "\n\n---\n\n".join(parts)
     return "[visit_web] Invalid url: expected string or list of strings."

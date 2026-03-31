@@ -12,10 +12,7 @@ from pathlib import Path
 
 TASK_DIR_PATTERN = re.compile(r"^(\d{4})_(physics|chemistry|biology)([0-9a-f\-]+)$")
 SUBJECTS = ("physics", "chemistry", "biology")
-MODES = (
-    ("draft", "solution_scored"),
-    ("final", "solution_refined_scored"),
-)
+MODES = (("final", "solution_refined_scored"),)
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,25 +39,6 @@ def load_trajectory_steps(path: Path) -> list[dict]:
     return data if isinstance(data, list) else []
 
 
-def find_reflect_step(steps: list[dict]) -> int | None:
-    for item in steps:
-        if not isinstance(item, dict):
-            continue
-        trajectory = item.get("trajectory") or {}
-        dialogs = trajectory.get("dialogs") or []
-        for dialog in dialogs:
-            messages = dialog.get("messages") or []
-            for message in messages:
-                tool_calls = message.get("tool_calls") or []
-                for call in tool_calls:
-                    function = call.get("function") or {}
-                    if function.get("name") == "reflect_answer":
-                        step_no = item.get("steps")
-                        if isinstance(step_no, int):
-                            return step_no
-    return None
-
-
 def extract_step_stats(path: Path) -> dict[str, int] | None:
     steps = load_trajectory_steps(path)
     if not steps:
@@ -71,13 +49,7 @@ def extract_step_stats(path: Path) -> dict[str, int] | None:
         total_steps = last["steps"]
     else:
         total_steps = len(steps)
-    reflect_step = find_reflect_step(steps)
-    return {
-        "total_steps": total_steps,
-        "pre_reflect_steps": reflect_step - 1 if reflect_step else total_steps,
-        "reflect_extra_steps": total_steps - reflect_step + 1 if reflect_step else 0,
-        "reflect_called": 1 if reflect_step else 0,
-    }
+    return {"total_steps": total_steps}
 
 
 def safe_mean(values: list[float]) -> float:
@@ -102,8 +74,6 @@ def summarize_steps(runs_dir: Path) -> dict[str, dict[str, list[int]]]:
     overall = {
         "draft": [],
         "final": [],
-        "reflect_extra": [],
-        "reflect_called": [],
     }
     by_subject = {
         key: defaultdict(list)
@@ -117,14 +87,10 @@ def summarize_steps(runs_dir: Path) -> dict[str, dict[str, list[int]]]:
         stats = extract_step_stats(path)
         if not stats:
             continue
-        overall["draft"].append(stats["pre_reflect_steps"])
+        overall["draft"].append(stats["total_steps"])
         overall["final"].append(stats["total_steps"])
-        overall["reflect_extra"].append(stats["reflect_extra_steps"])
-        overall["reflect_called"].append(stats["reflect_called"])
-        by_subject["draft"][subject].append(stats["pre_reflect_steps"])
+        by_subject["draft"][subject].append(stats["total_steps"])
         by_subject["final"][subject].append(stats["total_steps"])
-        by_subject["reflect_extra"][subject].append(stats["reflect_extra_steps"])
-        by_subject["reflect_called"][subject].append(stats["reflect_called"])
 
     return {"overall": overall, "by_subject": by_subject}
 
@@ -139,8 +105,6 @@ def summarize_eval(eval_repeat_dir: Path) -> dict[str, dict[str, float]]:
             rows = load_scored_rows(path)
             if not rows:
                 continue
-            score_key = "solution_refined" if mode == "final" else "solution"
-            del score_key
             overall_scores.append(sum(int(row.get("score", 0)) for row in rows) / len(rows))
             for subject in SUBJECTS:
                 subject_rows = [row for row in rows if row.get("subject") == subject]
@@ -172,15 +136,10 @@ def main() -> int:
         f"[final] avg_steps={format_float(safe_mean(step_stats['overall']['final']))} "
         f"count={len(step_stats['overall']['final'])}"
     )
-    print(
-        f"[reflect_extra] avg_steps={format_float(safe_mean(step_stats['overall']['reflect_extra']))} "
-        f"reflect_call_rate={format_float(safe_mean(step_stats['overall']['reflect_called']))}"
-    )
     for subject in SUBJECTS:
         print(
             f"  {subject}: draft={format_float(safe_mean(step_stats['by_subject']['draft'][subject]))} "
-            f"final={format_float(safe_mean(step_stats['by_subject']['final'][subject]))} "
-            f"reflect_extra={format_float(safe_mean(step_stats['by_subject']['reflect_extra'][subject]))}"
+            f"final={format_float(safe_mean(step_stats['by_subject']['final'][subject]))}"
         )
     for mode, _ in MODES:
         if mode in eval_stats:

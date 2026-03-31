@@ -1,0 +1,58 @@
+Evaluate the candidate answer and trajectory for FrontierScience.
+
+Problem:
+{problem}
+
+Evaluation mode: {evaluation_mode}
+Action type: {action_type}
+
+Reference rubric style:
+{reference_rubric}
+
+Trajectory summary:
+{trajectory_summary}
+
+Trajectory features JSON:
+{trajectory_features_json}
+
+Previous answer:
+{previous_answer}
+
+Candidate answer:
+{final_answer}
+
+Scoring weights:
+{weights_json}
+
+Required output schema:
+{{
+  "overall_score": 0.0,
+  "final_answer_score": 0.0,
+  "trajectory_score": 0.0,
+  "subscores": {{
+    "task_completion": 0,
+    "factual_correctness": 0,
+    "evidence_grounding": 0,
+    "completeness": 0,
+    "scientific_reasonableness": 0,
+    "clarity": 0,
+    "retrieval_quality": 0,
+    "evidence_usage": 0,
+    "reasoning_consistency": 0,
+    "revision_effectiveness": 0,
+    "exploration_efficiency": 0
+  }},
+  "strengths": ["..."],
+  "weaknesses": ["..."],
+  "improvement_suggestions": ["..."],
+  "is_valid": true,
+  "reason": "short reason"
+}}
+
+Rules:
+1. Use a multi-dimensional rubric in the style of FrontierScience benchmark rubrics: explicit partial credit, evidence-aware judgement, and complete coverage of requested parts.
+2. Each subscore must be in [0, 5].
+3. `overall_score`, `final_answer_score`, and `trajectory_score` must be normalized to [0, 1].
+4. Penalize unsupported claims, missing sub-questions, ineffective improve steps, repeated loops, and weak evidence usage.
+5. For intermediate nodes, judge only from available evidence. Do not imagine missing future work.
+6. Output pure JSON only.

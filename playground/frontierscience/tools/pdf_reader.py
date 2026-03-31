@@ -21,7 +21,7 @@ class PdfReadParams(BaseToolParams):
 
     name: ClassVar[str] = "read_paper_pdf"
     pdf_path: str = Field(
-        description="Path to a local PDF file only, usually `paper.pdf`. Remote URLs are not supported."
+        description="Path to a local PDF file only, preferably named from the paper title such as `attention_is_all_you_need.pdf`. Remote URLs are not supported."
     )
     goal: str = Field(description="The information goal to guide focused reading.")
     mode: str = Field(default="auto", description="One of `auto`, `overview`, `focus`, `pages`, `find`.")
@@ -58,19 +58,24 @@ def _resolve_pdf_path(pdf_path: str) -> Path:
     if pdf_path.startswith(("http://", "https://")):
         raise ValueError(
             "read_paper_pdf only supports local PDF files. "
-            "Download the PDF first, for example: wget -O paper.pdf \"<pdf_url>\", "
-            "then call read_paper_pdf with pdf_path='paper.pdf'."
+            "First call visit_web on the arXiv landing page so it downloads the PDF locally, "
+            "then call read_paper_pdf with the returned local pdf path."
         )
     path = Path(pdf_path).expanduser()
     if path.exists():
         return path.resolve()
+    if path.is_absolute():
+        for parent in list(path.parents)[1:]:
+            candidate = parent / path.name
+            if candidate.exists():
+                return candidate.resolve()
     cwd_path = Path.cwd() / pdf_path
     if cwd_path.exists():
         return cwd_path.resolve()
     raise FileNotFoundError(
         f"PDF not found: {pdf_path}. "
-        "If this is a remote paper, download it first, for example: "
-        "wget -O paper.pdf \"<pdf_url>\", then call read_paper_pdf with the local file."
+        "If this is a remote paper, call visit_web on the arXiv landing page first so it downloads "
+        "the PDF and returns the local path."
     )
 
 

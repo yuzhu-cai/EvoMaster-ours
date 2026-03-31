@@ -63,7 +63,6 @@ def build_task_markdown(problem: str, task_id: str, task_type: str) -> str:
         "[frontierscience_task_meta]",
         f"task_id={task_id}",
         f"task_type={task_type}",
-        "allow_external_retrieval=true",
         "[/frontierscience_task_meta]",
         "",
     ]

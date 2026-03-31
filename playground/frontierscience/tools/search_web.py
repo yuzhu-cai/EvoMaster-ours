@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import http.client
 import json
-import logging
 import socket
 import time
 from pathlib import Path
@@ -19,8 +18,6 @@ from pydantic import Field
 from evomaster.agent.tools.base import BaseTool, BaseToolParams
 
 from .common import call_external_function, ensure_text, get_external_script_path, get_serper_api_key
-
-logger = logging.getLogger(__name__)
 
 SERPER_HOST = "google.serper.dev"
 SERPER_TIMEOUT_SECONDS = 30

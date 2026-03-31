@@ -1,0 +1,33 @@
+Question:
+{problem}
+
+Reference rubric style:
+{reference_rubric}
+
+Current search state summary:
+{trajectory_summary}
+
+Shared tool memory from previous nodes:
+{shared_tool_memory}
+
+Worker workspace:
+{worker_workspace}
+
+Required solution file:
+{solution_path}
+Filename:
+{solution_filename}
+
+Execution requirements:
+1. Identify all explicit deliverables before drafting.
+2. Answer the task directly and completely, in the same order as the prompt when possible.
+3. If retrieval is needed, keep it focused and use the minimum evidence required to support the answer.
+4. Make major claims traceable to retrieved evidence or paper content when applicable.
+5. Reuse useful tool findings from shared memory instead of repeating the same search unless there is a clear gap.
+6. For arXiv papers, use `visit_web` to get the `Downloaded PDF Path` and then pass that exact absolute path into `read_paper_pdf`. Do not use `execute_bash` to download PDFs.
+7. Avoid unsupported broad background, vague conclusions, or missing sub-parts.
+8. Produce a serious candidate answer that can score well on both final-answer and trajectory-based rubric dimensions.
+9. Before `finish`, ensure the answer is complete enough to be judged as a standalone draft node.
+10. Do not `finish` with an intention statement such as "I will now proceed" or "here is the structure"; the `finish.message` must contain the actual complete answer.
+11. Before `finish`, save the exact same final answer into `{solution_path}` using `str_replace_editor` or `execute_bash`.
+12. If the question already provides named papers, numbered references, or other citation cues, use at least one retrieval tool call before `finish`.

@@ -14,36 +14,54 @@ llm:
 
   local_sglang:
     provider: "deepseek"
-    model: "deepseek-v3.2"
-    api_key: "${DEEPSEEK_API_KEY}"
+    model: "DeepSeek/DeepSeek-V3-0324"
+    api_key: "${DEEPSEEK_API_KEY}"  # 本地部署可使用占位符
     base_url: "${DEEPSEEK_API_BASE}"
-    temperature: 0.5
+    temperature: 0.7
     max_tokens: 16384
-    timeout: 300
+    timeout: 300  
     max_retries: 3
     retry_delay: 1.0
 
-  default: "local_sglang"
-
 agents:
-  solve:
+  draft:
     llm: "openai"
-    max_turns: 800
+    max_turns: 80
     tools:
       builtin: ["*"]
-      mcp: ""
     context:
-      max_tokens: 200000
+      max_tokens: 128000
       truncation_strategy: "summary"
       preserve_system_messages: true
       preserve_recent_turns: 5
+    system_prompt_file: "prompts/draft/system_prompt.txt"
+    user_prompt_file: "prompts/draft/user_prompt.txt"
 
-    system_prompt_file: "prompts/solve_system_prompt.txt"
-    user_prompt_file: "prompts/solve_user_prompt.txt"
+  improve:
+    llm: "openai"
+    max_turns: 80
+    tools:
+      builtin: ["*"]
+    context:
+      max_tokens: 128000
+      truncation_strategy: "summary"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    system_prompt_file: "prompts/improve/system_prompt.txt"
+    user_prompt_file: "prompts/improve/user_prompt.txt"
 
-mcp:
-  config_file: "mcp_config.json"
-  enabled: false
+  metric:
+    llm: "openai"
+    max_turns: 8
+    tools:
+      builtin: []
+    context:
+      max_tokens: 64000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 2
+    system_prompt_file: "prompts/metric/system_prompt.txt"
+    user_prompt_file: "prompts/metric/user_prompt.txt"
 
 session:
   type: "local"
@@ -51,23 +69,10 @@ session:
   local:
     working_dir: "./playground/frontierscience/workspace"
     timeout: 120
-    gpu_devices: null
-    cpu_devices: null
-    symlinks: {}
-
-  docker:
-    image: "evomaster/base:latest"
-    container_name: null
-    use_existing_container: null
-    working_dir: "/workspace"
-    memory_limit: "64g"
-    cpu_limit: 16.0
-    gpu_devices: null
-    network_mode: "host"
-    volumes: {"./playground/frontierscience/workspace": "/workspace"}
-    env_vars: {}
-    auto_remove: false
-    timeout: 300
+    parallel:
+      enabled: true
+      max_parallel: 1
+      split_workspace_for_exp: true
 
 llm_output:
   show_in_console: true
@@ -76,11 +81,39 @@ llm_output:
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  file: null
-  console: true
   log_path: "./logs/evomaster.log"
 
-project_root: "."
-workspace: "./workspace"
-results_dir: "./results"
-debug: false
+frontierscience:
+  mcts:
+    num_drafts: 3
+    max_total_nodes: 10
+    max_depth: 10
+    max_children_per_node: 2
+    exploration_weight: 1.414
+    allow_repeat_improve: false
+    use_light_eval_for_intermediate: true
+    use_full_eval_for_final: true
+
+  metric:
+    weights:
+      overall:
+        final_answer: 0.7
+        trajectory: 0.3
+      final_answer:
+        task_completion: 1.2
+        factual_correctness: 1.3
+        evidence_grounding: 1.2
+        completeness: 1.0
+        scientific_reasonableness: 1.0
+        clarity: 0.8
+      trajectory:
+        retrieval_quality: 1.0
+        evidence_usage: 1.2
+        reasoning_consistency: 1.0
+        revision_effectiveness: 0.9
+        exploration_efficiency: 0.9
+      penalties:
+        missing_evidence: 0.08
+        repeated_loop: 0.06
+        no_improvement: 0.05
+        empty_answer: 0.4
