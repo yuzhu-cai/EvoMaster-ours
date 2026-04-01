@@ -35,31 +35,40 @@ class EmboMasterPlayground(BasePlayground):
     def setup(self) -> None:
         self.logger.info("Setting up EmboMaster playground...")
 
-        llm_config_dict = self._setup_llm_config()
-        self._llm_config_dict = llm_config_dict
+        # BasePlayground handles LLM/tool/skill setup via per-agent methods.
         self._setup_session()
-        self._setup_tools()
-
+        self._create_agents()
+        # Operate on coding agent's registry for custom tool injection and policy filtering.
+        self.tools = self.coding_agent.tools if self.coding_agent is not None else None
         self._register_custom_tools()
         self._apply_tool_policy()
-        self._create_agents(llm_config_dict)
         self._create_services()
         self._wire_tool_services()
 
         self.logger.info("EmboMaster playground setup complete")
 
+    def _agent_tool_registries(self) -> list[Any]:
+        registries: list[Any] = []
+        if self.coding_agent is not None and getattr(self.coding_agent, "tools", None) is not None:
+            registries.append(self.coding_agent.tools)
+        if self.feedback_agent is not None and getattr(self.feedback_agent, "tools", None) is not None:
+            if self.feedback_agent.tools not in registries:
+                registries.append(self.feedback_agent.tools)
+        return registries
+
     def _register_custom_tools(self) -> None:
         debug_cfg = self._config_section("debug_test")
         if debug_cfg.get("enabled", True):
-            tool = DebugTestTool(
-                default_timeout=int(debug_cfg.get("default_timeout", 120)),
-                default_env_init=str(debug_cfg.get("default_env_init", "")),
-                k8s_runner=None,
-                use_k8s_debug_pod=bool(debug_cfg.get("use_k8s_debug_pod", False)),
-                k8s_fallback_to_local=bool(debug_cfg.get("k8s_fallback_to_local", True)),
-            )
-            self.tools.register(tool)
-            self.logger.info("Custom tool registered: %s", tool.name)
+            for registry in self._agent_tool_registries():
+                tool = DebugTestTool(
+                    default_timeout=int(debug_cfg.get("default_timeout", 120)),
+                    default_env_init=str(debug_cfg.get("default_env_init", "")),
+                    k8s_runner=None,
+                    use_k8s_debug_pod=bool(debug_cfg.get("use_k8s_debug_pod", False)),
+                    k8s_fallback_to_local=bool(debug_cfg.get("k8s_fallback_to_local", True)),
+                )
+                registry.register(tool)
+            self.logger.info("Custom tool registered: %s", DebugTestTool.name)
 
         video_cfg = self._config_section("video_descriptor")
         if video_cfg.get("enabled", True):
@@ -70,18 +79,21 @@ class EmboMasterPlayground(BasePlayground):
                 or base_llm_cfg.get("base_url")
                 or "http://127.0.0.1:30030/v1"
             )
-            tool = VideoDescriptorTool(
-                api_key=api_key,
-                base_url=str(base_url) if base_url else None,
-                model=str(
-                    video_cfg.get("model", "Qwen/Qwen3-VL-235B-A22B-Instruct")
-                ).strip(),
-                temperature=float(video_cfg.get("temperature", 0.2)),
-                max_tokens=int(video_cfg.get("max_tokens", 1024)),
-                timeout=int(video_cfg.get("timeout", 120)),
-            )
-            self.tools.register(tool)
-            self.logger.info("Custom tool registered: %s", tool.name)
+            for registry in self._agent_tool_registries():
+                tool = VideoDescriptorTool(
+                    api_key=api_key,
+                    base_url=str(base_url) if base_url else None,
+                    model=str(
+                        video_cfg.get("model", "Qwen/Qwen3-VL-235B-A22B-Instruct")
+                    ).strip(),
+                    temperature=float(video_cfg.get("temperature", 0.2)),
+                    max_tokens=int(video_cfg.get("max_tokens", 1024)),
+                    timeout=int(video_cfg.get("timeout", 120)),
+                    max_frames=int(video_cfg.get("max_frames", 12)),
+                    input_mode=str(video_cfg.get("input_mode", "auto")).strip(),
+                )
+                registry.register(tool)
+            self.logger.info("Custom tool registered: %s", VideoDescriptorTool.name)
 
     def _apply_tool_policy(self) -> None:
         """Apply tool allow/deny policy from config.
@@ -123,18 +135,23 @@ class EmboMasterPlayground(BasePlayground):
         enabled_names = sorted(self.tools.get_tool_names())
         self.logger.info("Tool policy applied. Enabled tools: %s", ", ".join(enabled_names))
 
-    def _create_agents(self, llm_config_dict: dict[str, Any]) -> None:
-        agents_config = getattr(self.config, "agents", {})
+    def _create_agents(self) -> None:
+        agents_config = self._get_agents_config()
         if not agents_config or "coding" not in agents_config:
             raise ValueError("Missing `agents.coding` configuration.")
 
         coding_cfg = agents_config["coding"]
+        coding_llm_cfg = self._setup_agent_llm("coding")
+        # Keep a reference for custom tool defaults (api_key/base_url fallback).
+        self._llm_config_dict = coding_llm_cfg
+        coding_tool_cfg = self._setup_agent_tools("coding")
+        coding_skill_cfg = self._setup_agent_skills("coding")
         self.coding_agent = self._create_agent(
             name="coding",
             agent_config=coding_cfg,
-            enable_tools=bool(coding_cfg.get("enable_tools", True)),
-            llm_config_dict=llm_config_dict,
-            skill_registry=None,
+            llm_config=coding_llm_cfg,
+            tool_config=coding_tool_cfg,
+            skill_config=coding_skill_cfg,
         )
         # BasePlayground defaults still use self.agent in some paths.
         self.agent = self.coding_agent
@@ -142,12 +159,15 @@ class EmboMasterPlayground(BasePlayground):
 
         feedback_cfg = agents_config.get("feedback")
         if feedback_cfg:
+            feedback_llm_cfg = self._setup_agent_llm("feedback")
+            feedback_tool_cfg = self._setup_agent_tools("feedback")
+            feedback_skill_cfg = self._setup_agent_skills("feedback")
             self.feedback_agent = self._create_agent(
                 name="feedback",
                 agent_config=feedback_cfg,
-                enable_tools=bool(feedback_cfg.get("enable_tools", False)),
-                llm_config_dict=llm_config_dict,
-                skill_registry=None,
+                llm_config=feedback_llm_cfg,
+                tool_config=feedback_tool_cfg,
+                skill_config=feedback_skill_cfg,
             )
             self.logger.info("Feedback Agent created")
 

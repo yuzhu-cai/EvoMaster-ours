@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EmboMaster Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero panel">
+      <div class="hero-copy">
+        <p class="eyebrow">EmboMaster Monitor</p>
+        <h1>实验可视化控制台</h1>
+        <p id="runMeta" class="hero-meta">载入中</p>
+        <p id="runWarn" class="hero-warn"></p>
+      </div>
+      <div class="hero-controls">
+        <label class="field">
+          <span>Run</span>
+          <select id="runSelect"></select>
+        </label>
+        <div class="btn-row">
+          <button id="reloadRunsBtn">刷新 Run</button>
+          <button id="refreshBtn">刷新数据</button>
+          <button id="autoBtn" class="primary">自动刷新: 开</button>
+        </div>
+      </div>
+    </header>
+
+    <section class="stats-grid">
+      <article class="stat panel">
+        <p>总轮数</p>
+        <strong id="statRounds">0</strong>
+      </article>
+      <article class="stat panel">
+        <p>最佳指标</p>
+        <strong id="statBestMetric">-</strong>
+      </article>
+      <article class="stat panel">
+        <p>最佳轮次</p>
+        <strong id="statBestRound">-</strong>
+      </article>
+      <article class="stat panel">
+        <p>Debug Tests</p>
+        <strong id="statDebugTests">0</strong>
+      </article>
+      <article class="stat panel">
+        <p>Pods / Jobs</p>
+        <strong id="statPods">0 / 0</strong>
+      </article>
+      <article class="stat panel">
+        <p>状态</p>
+        <strong id="statStatus">-</strong>
+      </article>
+    </section>
+
+    <section class="main-grid">
+      <article class="panel route-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Agent Route</p>
+            <h2>探索路线</h2>
+          </div>
+          <p class="panel-note">workspace 继承链、指标演化、失效轮次一眼可见</p>
+        </div>
+        <div class="panel-tools route-tools">
+          <label class="field inline compact">
+            <span>显示</span>
+            <select id="routeFilterSelect">
+              <option value="all">全部</option>
+              <option value="best">仅最佳</option>
+              <option value="valid">仅有效</option>
+              <option value="invalid">仅失效</option>
+              <option value="active">运行中/未知</option>
+            </select>
+          </label>
+          <label class="field grow">
+            <span>检索</span>
+            <input id="routeSearchInput" type="text" placeholder="workspace / parent choice / round">
+          </label>
+        </div>
+        <div class="route-legend">
+          <span><i class="dot good"></i> 有效</span>
+          <span><i class="dot bad"></i> 失效</span>
+          <span><i class="dot warn"></i> 运行中 / 未知</span>
+          <span><i class="dot best"></i> 当前最佳</span>
+        </div>
+        <div class="route-canvas">
+          <svg id="routeSvg" viewBox="0 0 900 260" preserveAspectRatio="xMidYMid meet"></svg>
+          <div id="routeEmpty" class="empty">暂无 round 路线数据</div>
+        </div>
+      </article>
+
+      <article class="panel rounds-panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Rounds</p>
+            <h2>轮次摘要</h2>
+          </div>
+          <p class="panel-note">点击任意轮次查看细节、日志和产物</p>
+        </div>
+        <div id="roundList" class="round-list"></div>
+      </article>
+    </section>
+
+    <section class="detail-stack-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Round Detail</p>
+            <h2>轮次详情</h2>
+          </div>
+          <p id="selectedRoundTag" class="panel-note">未选择</p>
+        </div>
+        <div id="roundDetail" class="detail-stack empty">请选择左侧轮次</div>
+      </article>
+    </section>
+
+    <section class="detail-stack-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Agent Stream</p>
+            <h2>探索步骤</h2>
+          </div>
+          <p class="panel-note">按 step 观察 agent 查询、tool 调用和 debug_test 结果</p>
+        </div>
+        <div class="stream-layout">
+          <div id="streamList" class="stream-list empty">请选择轮次后加载</div>
+          <div id="entryDetail" class="entry-detail empty">点击 step 查看细节</div>
+        </div>
+      </article>
+    </section>
+
+    <section class="detail-stack-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">K8S</p>
+            <h2>Pods 与日志</h2>
+          </div>
+          <div class="pod-controls">
+            <label class="field inline compact">
+              <span>Tail</span>
+              <input id="podTailInput" type="number" min="20" max="5000" value="300">
+            </label>
+            <label class="field inline compact">
+              <span>Round</span>
+              <select id="podRoundFilter">
+                <option value="all">全部</option>
+                <option value="selected">当前轮</option>
+              </select>
+            </label>
+            <label class="field inline compact">
+              <span>Source</span>
+              <select id="podSourceFilter">
+                <option value="all">全部</option>
+                <option value="job_pod">job pod</option>
+                <option value="job">job</option>
+                <option value="debug">debug</option>
+              </select>
+            </label>
+            <label class="field inline compact">
+              <span>Status</span>
+              <select id="podStatusFilter">
+                <option value="all">全部</option>
+                <option value="running">running</option>
+                <option value="succeeded">succeeded</option>
+                <option value="failed">failed</option>
+                <option value="ready">ready</option>
+                <option value="unknown">unknown</option>
+              </select>
+            </label>
+            <label class="field grow">
+              <span>检索</span>
+              <input id="podSearchInput" type="text" placeholder="pod / job / node / namespace">
+            </label>
+            <button id="podRefreshBtn">强制刷新 K8S</button>
+          </div>
+        </div>
+        <p id="podCacheMeta" class="panel-note panel-note-inline">缓存状态载入中</p>
+        <div class="pods-layout">
+          <div id="podTable" class="pod-table empty">暂无 pod / job 数据</div>
+          <pre id="podLog" class="log-box">选择 pod 或 job 查看日志</pre>
+        </div>
+      </article>
+    </section>
+
+    <section class="detail-stack-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Artifacts</p>
+            <h2>实验产物</h2>
+          </div>
+          <p class="panel-note">eval_result、submission、checkpoint 等输出目录按需展开</p>
+        </div>
+        <div class="artifact-layout">
+          <div id="artifactList" class="artifact-list empty">请选择轮次后加载</div>
+          <pre id="artifactPreview" class="log-box">点击文本文件预览内容</pre>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</body>
+</html>

@@ -41,6 +41,15 @@ class DebugTestToolParams(BaseToolParams):
         default="",
         description="Optional shell init command, e.g. conda activation.",
     )
+    fresh_pod: bool = Field(
+        default=False,
+        description=(
+            "Only for k8s debug pod mode. If true, recreate a clean debug pod before "
+            "running the command and delete it after execution. Use for stateful or "
+            "complex validations such as training, evaluation, package installation, "
+            "or commands that may leave residual processes or files."
+        ),
+    )
 
 
 class DebugTestTool(BaseTool):
@@ -104,6 +113,7 @@ class DebugTestTool(BaseTool):
                     working_dir=str(run_dir),
                     env_init=env_init,
                     workspace_path=str(workspace),
+                    fresh_pod=bool(params.fresh_pod),
                 )
                 return self._build_observation(
                     result=k8s_result,

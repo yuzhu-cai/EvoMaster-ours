@@ -17,6 +17,7 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 LARGE_DIR_KEYWORDS = ["assets", "data", "ckpt", "checkpoint"]
+VENV_DIR_PREFIX = ".venv"
 DEFAULT_SIZE_THRESHOLD_MB = 30
 DEFAULT_SIZE_THRESHOLD_BYTES = DEFAULT_SIZE_THRESHOLD_MB * 1024 * 1024
 COPY_EXCLUDE_PATTERNS = [
@@ -31,11 +32,12 @@ COPY_EXCLUDE_PATTERNS = [
     ".embomaster_copy_plan.json",
 ]
 COPY_EXCLUDE_DIR_NAMES = {
+    "checkpoints",
     "eval_result",
     "__pycache__",
     ".git",
+    "logs",
     "run_results",
-    ".venv",
     "venv",
     "env",
     ".conda",
@@ -49,7 +51,6 @@ COPY_EXCLUDE_DIR_NAMES = {
     "wandb",
 }
 COPY_EXCLUDE_REL_PREFIXES = [
-    "policy/pi0/.venv",
     "XDG_CACHE_HOME/uv/archive-v0",
     "policy/TinyVLA/model_param",
     "policy/TinyVLA/src/nvidia-curobo",
@@ -60,7 +61,8 @@ LOCAL_WORKSPACE_DIR_PREFIXES = [
 ]
 UV_EPHEMERAL_SEGMENT_PREFIXES = ("git-v", "sdists-v", "simple-v", ".tmp")
 COPY_PLAN_CACHE_FILENAME = ".embomaster_copy_plan.json"
-COPY_PLAN_VERSION = 4
+COPY_PLAN_VERSION = 7
+WORKSPACE_OUTPUT_DIR_NAMES = ("eval_result", "run_results", "checkpoints")
 CopyPlanProgressCallback = Callable[[int, int, int, str], None]
 
 
@@ -90,6 +92,11 @@ def get_dir_size(path: Path) -> int:
 def _contains_keyword(name: str) -> bool:
     name_lower = name.lower()
     return any(kw in name_lower for kw in LARGE_DIR_KEYWORDS)
+
+
+def _is_venv_dir_name(name: str) -> bool:
+    name_lower = name.lower()
+    return name_lower == VENV_DIR_PREFIX or name_lower.startswith(f"{VENV_DIR_PREFIX}_")
 
 
 def _normalize_rel_path(rel_path: str) -> str:
@@ -134,11 +141,20 @@ def _should_exclude_file(name: str, rel_path: str | None = None) -> bool:
 
 
 def _should_exclude_dir(name: str, rel_path: str | None = None) -> bool:
+    if _is_venv_dir_name(name):
+        return False
     if name.lower() in COPY_EXCLUDE_DIR_NAMES:
         return True
     if rel_path and _is_excluded_rel_path(rel_path):
         return True
     return False
+
+
+def _should_exclude_dir_rel_path(rel_path: str) -> bool:
+    rel_norm = _normalize_rel_path(rel_path)
+    if not rel_norm:
+        return False
+    return _should_exclude_dir(Path(rel_norm).name, rel_path=rel_norm)
 
 
 def _find_large_dirs_recursive(
@@ -174,7 +190,7 @@ def _find_large_dirs_recursive(
 
         dir_size = get_dir_size(src_path)
         dir_size_mb = dir_size / 1024 / 1024
-        if dir_size > size_threshold and _contains_keyword(entry.name):
+        if _is_venv_dir_name(entry.name) or (dir_size > size_threshold and _contains_keyword(entry.name)):
             dst_path.mkdir(parents=True, exist_ok=True)
             large_dirs.append(
                 {"src": str(src_path), "rel": rel_path, "size_mb": round(dir_size_mb, 1)}
@@ -223,16 +239,29 @@ def _collect_large_dirs_recursive(
     progress_state: dict[str, int] | None = None,
     progress_callback: CopyPlanProgressCallback | None = None,
 ) -> None:
-    for entry in src_dir.iterdir():
+    try:
+        entries = list(src_dir.iterdir())
+    except (PermissionError, OSError) as e:
+        logger.warning("Skip unreadable directory while building copy plan: %s (%s)", src_dir, e)
+        return
+
+    for entry in entries:
         rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
         src_path = entry
 
-        if entry.is_file():
+        try:
+            is_file = entry.is_file()
+            is_dir = entry.is_dir()
+        except (PermissionError, OSError) as e:
+            logger.warning("Skip unreadable path while building copy plan: %s (%s)", entry, e)
+            continue
+
+        if is_file:
             if _should_exclude_file(entry.name, rel_path=rel_path):
                 continue
             continue
 
-        if not entry.is_dir():
+        if not is_dir:
             continue
         if _should_exclude_dir(entry.name, rel_path=rel_path):
             continue
@@ -248,7 +277,7 @@ def _collect_large_dirs_recursive(
 
         dir_size = get_dir_size(src_path)
         dir_size_mb = dir_size / 1024 / 1024
-        if dir_size > size_threshold and _contains_keyword(entry.name):
+        if _is_venv_dir_name(entry.name) or (dir_size > size_threshold and _contains_keyword(entry.name)):
             large_dirs.append(
                 {"src": str(src_path.resolve()), "rel": rel_path, "size_mb": round(dir_size_mb, 1)}
             )
@@ -275,9 +304,20 @@ def _collect_large_dirs_recursive(
 
 def _count_scannable_dirs(src_dir: Path, rel_prefix: str = "") -> int:
     total = 0
-    for entry in src_dir.iterdir():
+    try:
+        entries = list(src_dir.iterdir())
+    except (PermissionError, OSError) as e:
+        logger.warning("Skip unreadable directory while counting copy plan entries: %s (%s)", src_dir, e)
+        return 0
+
+    for entry in entries:
         rel_path = f"{rel_prefix}/{entry.name}" if rel_prefix else entry.name
-        if not entry.is_dir():
+        try:
+            is_dir = entry.is_dir()
+        except (PermissionError, OSError) as e:
+            logger.warning("Skip unreadable path while counting copy plan entries: %s (%s)", entry, e)
+            continue
+        if not is_dir:
             continue
         if _should_exclude_dir(entry.name, rel_path=rel_path):
             continue
@@ -317,7 +357,7 @@ def _normalize_large_dirs(large_dirs: list[dict], src_root: Path) -> list[dict]:
         rel_raw = str(item.get("rel", "")).strip().strip("/")
         if not rel_raw or rel_raw in seen:
             continue
-        if _is_excluded_rel_path(rel_raw):
+        if _is_excluded_rel_path(rel_raw) or _should_exclude_dir_rel_path(rel_raw):
             continue
         src_raw = str(item.get("src", "")).strip()
         src_path = Path(src_raw).expanduser() if src_raw else (src_root / rel_raw)
@@ -419,9 +459,13 @@ def _copytree_with_filters(src_root: Path, src_path: Path, dst_path: Path) -> No
 
 def _copy_from_plan(src: Path, dst: Path, large_dirs: list[dict]) -> None:
     large_rel_set: set[str] = {
-        str(item.get("rel", "")).strip().strip("/")
-        for item in large_dirs
-        if isinstance(item, dict) and str(item.get("rel", "")).strip()
+        rel
+        for rel in (
+            str(item.get("rel", "")).strip().strip("/")
+            for item in large_dirs
+            if isinstance(item, dict) and str(item.get("rel", "")).strip()
+        )
+        if rel and not _should_exclude_dir_rel_path(rel)
     }
     large_rel_set = {rel for rel in large_rel_set if rel}
 
@@ -549,7 +593,7 @@ def _copy_from_parent_filtered(
         rel_path = str(item.get("rel", ""))
         if not rel_path:
             continue
-        if _is_excluded_rel_path(rel_path):
+        if _is_excluded_rel_path(rel_path) or _should_exclude_dir_rel_path(rel_path):
             continue
         target_dir = dst_dir / rel_path
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -645,6 +689,7 @@ def prepare_workspace_codebase(
     session_dir: Path,
     workspace_id: str,
     source_codebase_dir: Path | None = None,
+    bootstrap_codebase_dir: Path | None = None,
     parent_workspace_id: str | None = None,
     size_threshold: int = DEFAULT_SIZE_THRESHOLD_BYTES,
     copy_plan_cache_file: Path | None = None,
@@ -687,6 +732,23 @@ def prepare_workspace_codebase(
             parent_workspace_id=parent_workspace_id,
         )
 
+    if bootstrap_codebase_dir and bootstrap_codebase_dir.exists():
+        bootstrap_large_dirs = load_large_dirs(bootstrap_codebase_dir)
+        inherited_large_dirs = _copy_from_parent_filtered(
+            bootstrap_codebase_dir,
+            dest_codebase,
+            bootstrap_large_dirs,
+        )
+        save_large_dirs(dest_codebase, inherited_large_dirs)
+        _create_codebase_symlink(symlink_path, dest_codebase)
+        ensure_local_workspace_dirs(dest_codebase)
+        return WorkspaceCodebaseInfo(
+            path=dest_codebase,
+            large_dirs=inherited_large_dirs,
+            source_type="bootstrap",
+            parent_workspace_id=parent_workspace_id,
+        )
+
     if source_codebase_dir and source_codebase_dir.exists():
         large_dirs = smart_copy_codebase(
             source_codebase_dir,
@@ -717,17 +779,60 @@ def prepare_workspace_codebase(
     )
 
 
+def _collect_workspace_output_dirs(codebase_dir: Path, dirname: str) -> list[Path]:
+    if not codebase_dir.exists():
+        return []
+
+    matches: list[Path] = []
+    root_target = codebase_dir / dirname
+    if root_target.exists():
+        matches.append(root_target)
+
+    for path in sorted(codebase_dir.rglob(dirname), key=lambda p: len(p.parts), reverse=True):
+        if path == root_target:
+            continue
+        if path.exists():
+            matches.append(path)
+
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for path in matches:
+        resolved = path.resolve(strict=False)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(path)
+    return unique
+
+
 def cleanup_eval_result(codebase_dir: Path) -> dict[str, str]:
     status: dict[str, str] = {}
-    for dirname in ["eval_result", "run_results"]:
-        target = codebase_dir / dirname
-        if not target.exists():
+    for dirname in WORKSPACE_OUTPUT_DIR_NAMES:
+        targets = _collect_workspace_output_dirs(codebase_dir, dirname)
+        if not targets:
             status[dirname] = "missing"
             continue
-        try:
-            shutil.rmtree(target)
-            status[dirname] = "removed"
-        except OSError as e:
-            status[dirname] = "failed"
-            logger.warning("Failed to clean up workspace output %s: %s", target, e)
+
+        failed = False
+        removed_count = 0
+        for target in sorted(targets, key=lambda p: len(p.parts), reverse=True):
+            try:
+                if target.is_symlink():
+                    target.unlink()
+                else:
+                    shutil.rmtree(target)
+                removed_count += 1
+            except OSError as e:
+                failed = True
+                logger.warning("Failed to clean up workspace output %s: %s", target, e)
+
+        status[dirname] = "failed" if failed else "removed"
+        if removed_count:
+            logger.info(
+                "Workspace cleanup removed %d '%s' director%s under %s",
+                removed_count,
+                dirname,
+                "y" if removed_count == 1 else "ies",
+                codebase_dir,
+            )
     return status

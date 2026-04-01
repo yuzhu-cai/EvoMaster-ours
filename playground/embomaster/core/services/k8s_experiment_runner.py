@@ -18,6 +18,8 @@ from typing import Any
 from evomaster.agent.session import BaseSession
 import yaml
 
+from ..utils.workspace_isolation import load_large_dirs
+
 RFC1123_SUBDOMAIN_RE = re.compile(
     r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"
 )
@@ -54,7 +56,30 @@ class K8SExperimentRunner:
             workspace_context=workspace_context,
         )
         submit_result = self.submit_job(prepared_manifest)
+        if submit_result.get("exit_code", 1) != 0:
+            error_text = (
+                submit_result.get("stderr", "")
+                or submit_result.get("stdout", "")
+                or submit_result.get("output", "")
+                or "kubectl apply failed"
+            )
+            return {
+                "manifest_path": manifest_path,
+                "prepared_manifest_path": prepared_manifest,
+                "job_name": job_name,
+                "namespace": self.namespace,
+                "submit": submit_result,
+                "wait": {
+                    "status": "submit_failed",
+                    "job_name": job_name,
+                    "namespace": self.namespace,
+                    "error": error_text,
+                },
+                "pods": [],
+                "logs": [],
+            }
         wait_result = self.wait_for_job(job_name)
+        pods = self.list_job_pods(job_name)
         logs = self.fetch_job_logs(job_name)
 
         result = {
@@ -64,6 +89,7 @@ class K8SExperimentRunner:
             "namespace": self.namespace,
             "submit": submit_result,
             "wait": wait_result,
+            "pods": pods,
             "logs": logs,
         }
 
@@ -87,20 +113,21 @@ class K8SExperimentRunner:
         working_dir: str,
         env_init: str = "",
         workspace_path: str | None = None,
+        fresh_pod: bool = False,
     ) -> dict[str, Any]:
         """Execute command in debug pod, creating/reusing pod when needed."""
         if not self.is_debug_pod_enabled():
             raise RuntimeError("k8s_runner.debug_pod.enabled is false")
 
         host_workspace = self._resolve_debug_workspace_host_path(workspace_path)
+        if fresh_pod:
+            self.cleanup_debug_pod_for_workspace(host_workspace, wait=True)
         ensure_result = self.ensure_debug_pod(host_workspace)
         pod_name = str(ensure_result.get("pod_name", "")).strip()
         if not pod_name:
             raise RuntimeError("failed to resolve debug pod name")
 
-        container_workspace = str(
-            self.debug_pod_config.get("workspace_mount_path", "/workspace")
-        ).strip() or "/workspace"
+        container_workspace = self._resolve_debug_container_workspace()
         container_working_dir = self._resolve_container_working_dir(
             host_working_dir=working_dir,
             host_workspace=str(host_workspace),
@@ -112,7 +139,7 @@ class K8SExperimentRunner:
             cmd_parts.append(env_init.strip())
         cmd_parts.append(f"cd {shlex.quote(container_working_dir)}")
         cmd_parts.append(command)
-        exec_script = " && ".join(cmd_parts)
+        exec_script = "set -o pipefail && " + " && ".join(cmd_parts)
 
         exec_cmd = (
             f"kubectl -n {shlex.quote(self.namespace)} exec {shlex.quote(pod_name)}"
@@ -120,22 +147,66 @@ class K8SExperimentRunner:
         container_name = str(self.debug_pod_config.get("container_name", "")).strip()
         if container_name:
             exec_cmd += f" -c {shlex.quote(container_name)}"
-        exec_cmd += f" -- /bin/sh -lc {shlex.quote(exec_script)}"
+        exec_cmd += f" -- /bin/bash -lc {shlex.quote(exec_script)}"
 
-        result = self._run_command(exec_cmd, timeout=max(int(timeout), 5))
-        result.update(
-            {
-                "mode": "k8s_debug_pod",
-                "namespace": self.namespace,
+        try:
+            result = self._run_command(exec_cmd, timeout=max(int(timeout), 5))
+            result.update(
+                {
+                    "mode": "k8s_debug_pod",
+                    "namespace": self.namespace,
+                    "pod_name": pod_name,
+                    "container_working_dir": container_working_dir,
+                    "host_workspace": str(host_workspace),
+                    "fresh_pod": bool(fresh_pod),
+                }
+            )
+        finally:
+            should_cleanup = fresh_pod or bool(self.debug_pod_config.get("cleanup_after_exec", False))
+            if should_cleanup and pod_name:
+                cleanup = self.cleanup_debug_pod(pod_name, wait=False)
+                if "result" in locals():
+                    result["cleanup"] = cleanup
+        return result
+
+    def prepare_round_debug_pod(
+        self,
+        workspace_path: str | Path | None = None,
+    ) -> dict[str, Any]:
+        """Pre-create a round-scoped debug pod when debug pod mode is enabled."""
+        if not self.is_debug_pod_enabled():
+            return {"status": "disabled", "namespace": self.namespace}
+        return self.ensure_debug_pod(workspace_path)
+
+    def cleanup_debug_pod_for_workspace(
+        self,
+        workspace_path: str | Path | None = None,
+        wait: bool = True,
+    ) -> dict[str, Any]:
+        """Delete the debug pod associated with a workspace path."""
+        if not self.is_debug_pod_enabled():
+            return {"status": "disabled", "namespace": self.namespace}
+
+        host_workspace = self._resolve_debug_workspace_host_path(workspace_path)
+        pod_name = self._build_debug_pod_name(host_workspace)
+        status = self.get_pod_status(pod_name)
+        phase = status.get("status", "unknown")
+        if phase == "not_found":
+            return {
+                "status": "not_found",
                 "pod_name": pod_name,
-                "container_working_dir": container_working_dir,
-                "host_workspace": str(host_workspace),
+                "namespace": self.namespace,
+            }
+
+        cleanup = self.cleanup_debug_pod(pod_name, wait=wait)
+        cleanup.update(
+            {
+                "pod_name": pod_name,
+                "namespace": self.namespace,
+                "previous_status": phase,
             }
         )
-
-        if bool(self.debug_pod_config.get("cleanup_after_exec", False)):
-            result["cleanup"] = self.cleanup_debug_pod(pod_name, wait=False)
-        return result
+        return cleanup
 
     def ensure_debug_pod(self, workspace_path: str | Path | None = None) -> dict[str, Any]:
         """Ensure debug pod exists and is Ready."""
@@ -219,6 +290,12 @@ class K8SExperimentRunner:
         workspace_host = Path(workspace_host_path).expanduser().resolve()
         workspace_host.mkdir(parents=True, exist_ok=True)
         workspace_mount_path = str(cfg.get("workspace_mount_path", "/workspace")).strip() or "/workspace"
+        container_workspace = str(
+            self.config.get("container_workspace", workspace_mount_path)
+        ).strip() or workspace_mount_path
+        debug_codebase_mount_path = str(
+            self.config.get("codebase_mount_path", f"{container_workspace}/codebase")
+        ).strip()
 
         workspace = Path(getattr(self.session.config, "workspace_path", ".")).resolve()
         out_dir = workspace / ".embomaster" / "k8s_manifests"
@@ -247,27 +324,22 @@ class K8SExperimentRunner:
             "name": container_name,
             "image": image,
             "imagePullPolicy": str(cfg.get("image_pull_policy", "IfNotPresent")),
-            "workingDir": workspace_mount_path,
+            "workingDir": debug_codebase_mount_path,
             "command": command,
-            "volumeMounts": [{"name": "workspace", "mountPath": workspace_mount_path}],
+            "volumeMounts": [],
         }
         if args:
             container["args"] = args
         if env_vars:
             container["env"] = env_vars
+        resources = cfg.get("resources")
+        if isinstance(resources, dict) and resources:
+            container["resources"] = resources
 
         spec: dict[str, Any] = {
             "restartPolicy": "Always",
             "containers": [container],
-            "volumes": [
-                {
-                    "name": "workspace",
-                    "hostPath": {
-                        "path": str(workspace_host),
-                        "type": str(cfg.get("workspace_host_path_type", "Directory")),
-                    },
-                }
-            ],
+            "volumes": [],
         }
         node_name = self._resolve_debug_node_name()
         if node_name:
@@ -289,6 +361,16 @@ class K8SExperimentRunner:
             },
             "spec": spec,
         }
+
+        self._inherit_debug_infra_mounts_from_training_manifest(
+            pod_spec=spec,
+            containers=[container],
+        )
+        self._patch_workspace_mounts_to_pod_spec(
+            pod_spec=spec,
+            containers=[container],
+            workspace_context=self._build_debug_workspace_context(workspace_host),
+        )
 
         with dst.open("w", encoding="utf-8") as f:
             yaml.safe_dump(pod_doc, f, sort_keys=False, allow_unicode=True)
@@ -464,6 +546,28 @@ class K8SExperimentRunner:
         self, job_doc: dict[str, Any], workspace_context: dict[str, Any]
     ) -> None:
         """Patch manifest to mount isolated round-workspace codebase/submission/large dirs."""
+        pod_spec = self._get_pod_spec(job_doc)
+        if pod_spec is None:
+            self.logger.warning("Failed to locate pod spec in job manifest")
+            return
+
+        containers = self._get_target_containers(pod_spec)
+        if not containers:
+            self.logger.warning("No target containers found in job manifest")
+            return
+
+        self._patch_workspace_mounts_to_pod_spec(
+            pod_spec=pod_spec,
+            containers=containers,
+            workspace_context=workspace_context,
+        )
+
+    def _patch_workspace_mounts_to_pod_spec(
+        self,
+        pod_spec: dict[str, Any],
+        containers: list[dict[str, Any]],
+        workspace_context: dict[str, Any],
+    ) -> None:
         codebase_path_raw = str(
             workspace_context.get("workspace_codebase_path", "")
         ).strip()
@@ -473,16 +577,6 @@ class K8SExperimentRunner:
         codebase_host_path = Path(codebase_path_raw).expanduser().resolve()
         if not codebase_host_path.exists():
             self.logger.warning("workspace_codebase_path does not exist: %s", codebase_host_path)
-            return
-
-        pod_spec = self._get_pod_spec(job_doc)
-        if pod_spec is None:
-            self.logger.warning("Failed to locate pod spec in job manifest")
-            return
-
-        containers = self._get_target_containers(pod_spec)
-        if not containers:
-            self.logger.warning("No target containers found in job manifest")
             return
 
         volumes = pod_spec.setdefault("volumes", [])
@@ -539,6 +633,12 @@ class K8SExperimentRunner:
                 )
                 for container in containers:
                     volume_mounts = self._ensure_volume_mounts(container)
+                    if any(
+                        isinstance(mount, dict)
+                        and str(mount.get("mountPath", "")).strip() == assets_alias_mount_path
+                        for mount in volume_mounts
+                    ):
+                        continue
                     self._upsert_volume_mount(
                         volume_mounts,
                         {"name": assets_alias_volume_name, "mountPath": assets_alias_mount_path},
@@ -612,6 +712,159 @@ class K8SExperimentRunner:
                     {"name": volume_name, "mountPath": mount_path},
                 )
 
+    def _inherit_debug_infra_mounts_from_training_manifest(
+        self,
+        pod_spec: dict[str, Any],
+        containers: list[dict[str, Any]],
+    ) -> None:
+        docs = self._load_training_manifest_docs()
+        if not docs:
+            return
+
+        training_pod_spec = self._extract_first_job_pod_spec(docs)
+        if training_pod_spec is None:
+            return
+
+        training_containers = self._get_target_containers(training_pod_spec)
+        if not training_containers:
+            return
+
+        training_container = training_containers[0]
+        inherited_mounts = self._filter_inherited_debug_volume_mounts(
+            training_container.get("volumeMounts", [])
+        )
+        if not inherited_mounts:
+            return
+
+        required_volume_names = {
+            str(mount.get("name", "")).strip()
+            for mount in inherited_mounts
+            if isinstance(mount, dict) and str(mount.get("name", "")).strip()
+        }
+        inherited_volumes = self._select_named_volumes(
+            training_pod_spec.get("volumes", []),
+            required_volume_names,
+        )
+
+        volumes = pod_spec.setdefault("volumes", [])
+        if not isinstance(volumes, list):
+            volumes = []
+            pod_spec["volumes"] = volumes
+
+        for volume in inherited_volumes:
+            self._upsert_volume(volumes, volume)
+        for container in containers:
+            volume_mounts = self._ensure_volume_mounts(container)
+            for mount in inherited_mounts:
+                self._upsert_volume_mount_by_mount_path(volume_mounts, mount)
+
+    def _load_training_manifest_docs(self) -> list[dict[str, Any]]:
+        manifest_path_raw = str(self.config.get("manifest_path", "")).strip()
+        if not manifest_path_raw:
+            return []
+
+        manifest_path = Path(manifest_path_raw)
+        if not manifest_path.is_absolute():
+            repo_root = Path(__file__).resolve().parents[4]
+            manifest_path = repo_root / manifest_path
+        manifest_path = manifest_path.expanduser().resolve()
+        if not manifest_path.exists():
+            self.logger.warning("training manifest not found for debug mount inheritance: %s", manifest_path)
+            return []
+
+        try:
+            with manifest_path.open("r", encoding="utf-8") as f:
+                docs = list(yaml.safe_load_all(f))
+        except Exception as exc:
+            self.logger.warning(
+                "failed to load training manifest for debug mount inheritance: %s (%s)",
+                manifest_path,
+                exc,
+            )
+            return []
+
+        return [doc for doc in docs if isinstance(doc, dict)]
+
+    def _extract_first_job_pod_spec(self, docs: list[dict[str, Any]]) -> dict[str, Any] | None:
+        for doc in docs:
+            kind = str(doc.get("kind", "")).strip().lower()
+            if kind != "job":
+                continue
+            pod_spec = self._get_pod_spec(doc)
+            if pod_spec is not None:
+                return pod_spec
+        return None
+
+    def _filter_inherited_debug_volume_mounts(
+        self,
+        volume_mounts: Any,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(volume_mounts, list):
+            return []
+
+        excluded_mount_paths = self._debug_managed_mount_paths()
+        filtered: list[dict[str, Any]] = []
+        for mount in volume_mounts:
+            if not isinstance(mount, dict):
+                continue
+            mount_path = str(mount.get("mountPath", "")).strip()
+            if not mount_path:
+                continue
+            if mount_path in excluded_mount_paths:
+                continue
+            if self._is_under_codebase_mount_path(mount_path):
+                continue
+            filtered.append(dict(mount))
+        return filtered
+
+    def _debug_managed_mount_paths(self) -> set[str]:
+        container_workspace = str(self.config.get("container_workspace", "/workspace")).strip() or "/workspace"
+        codebase_mount_path = str(
+            self.config.get("codebase_mount_path", f"{container_workspace}/codebase")
+        ).strip()
+        assets_alias_mount_path = str(
+            self.config.get("assets_alias_mount_path", f"{container_workspace}/assets")
+        ).strip()
+        submission_mount_path = str(
+            self.config.get("submission_mount_path", f"{container_workspace}/submission")
+        ).strip()
+        return {
+            codebase_mount_path,
+            assets_alias_mount_path,
+            submission_mount_path,
+        }
+
+    def _is_under_codebase_mount_path(self, mount_path: str) -> bool:
+        container_workspace = str(self.config.get("container_workspace", "/workspace")).strip() or "/workspace"
+        codebase_mount_path = str(
+            self.config.get("codebase_mount_path", f"{container_workspace}/codebase")
+        ).rstrip("/")
+        return mount_path == codebase_mount_path or mount_path.startswith(f"{codebase_mount_path}/")
+
+    def _select_named_volumes(
+        self,
+        volumes: Any,
+        names: set[str],
+    ) -> list[dict[str, Any]]:
+        if not isinstance(volumes, list) or not names:
+            return []
+        selected: list[dict[str, Any]] = []
+        for volume in volumes:
+            if not isinstance(volume, dict):
+                continue
+            name = str(volume.get("name", "")).strip()
+            if name and name in names:
+                selected.append(dict(volume))
+        return selected
+
+    def _build_debug_workspace_context(self, workspace_host: Path) -> dict[str, Any]:
+        submission_dir = workspace_host / "submission"
+        return {
+            "workspace_codebase_path": str(workspace_host),
+            "submission_dir": str(submission_dir),
+            "workspace_large_dirs": load_large_dirs(workspace_host),
+        }
+
     def _get_pod_spec(self, job_doc: dict[str, Any]) -> dict[str, Any] | None:
         try:
             spec = job_doc.setdefault("spec", {})
@@ -671,6 +924,18 @@ class K8SExperimentRunner:
             return
         for index, mount in enumerate(volume_mounts):
             if isinstance(mount, dict) and str(mount.get("name", "")) == name:
+                volume_mounts[index] = item
+                return
+        volume_mounts.append(item)
+
+    def _upsert_volume_mount_by_mount_path(
+        self, volume_mounts: list[dict[str, Any]], item: dict[str, Any]
+    ) -> None:
+        mount_path = str(item.get("mountPath", "")).strip()
+        if not mount_path:
+            return
+        for index, mount in enumerate(volume_mounts):
+            if isinstance(mount, dict) and str(mount.get("mountPath", "")).strip() == mount_path:
                 volume_mounts[index] = item
                 return
         volume_mounts.append(item)
@@ -747,6 +1012,65 @@ class K8SExperimentRunner:
             "details": status_obj,
         }
 
+    def list_job_pods(self, job_name: str) -> list[dict[str, Any]]:
+        cmd = (
+            f"kubectl -n {shlex.quote(self.namespace)} get pods "
+            f"-l job-name={shlex.quote(job_name)} -o json"
+        )
+        result = self._run_command(cmd, timeout=60)
+        if result.get("exit_code", 1) != 0:
+            return []
+
+        raw = result.get("stdout", "").strip()
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            return []
+
+        items = payload.get("items", [])
+        if not isinstance(items, list):
+            return []
+
+        pods: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata", {})
+            status_obj = item.get("status", {})
+            spec = item.get("spec", {})
+            if not isinstance(metadata, dict) or not isinstance(status_obj, dict):
+                continue
+
+            container_statuses_raw = status_obj.get("containerStatuses", [])
+            container_statuses: list[dict[str, Any]] = []
+            if isinstance(container_statuses_raw, list):
+                for cs in container_statuses_raw:
+                    if not isinstance(cs, dict):
+                        continue
+                    container_statuses.append(
+                        {
+                            "name": str(cs.get("name", "") or ""),
+                            "ready": bool(cs.get("ready", False)),
+                            "restart_count": int(cs.get("restartCount", 0) or 0),
+                            "state": self._summarize_container_state(cs.get("state")),
+                            "image": str(cs.get("image", "") or ""),
+                        }
+                    )
+
+            pods.append(
+                {
+                    "pod_name": str(metadata.get("name", "") or ""),
+                    "namespace": self.namespace,
+                    "status": str(status_obj.get("phase", "") or "unknown").lower(),
+                    "node_name": str(spec.get("nodeName", "") or ""),
+                    "start_time": str(status_obj.get("startTime", "") or ""),
+                    "host_ip": str(status_obj.get("hostIP", "") or ""),
+                    "pod_ip": str(status_obj.get("podIP", "") or ""),
+                    "container_statuses": container_statuses,
+                }
+            )
+        return pods
+
     def fetch_job_logs(self, job_name: str, tail: int = 500) -> dict[str, Any]:
         cmd = (
             f"kubectl -n {shlex.quote(self.namespace)} logs job/{shlex.quote(job_name)} "
@@ -775,7 +1099,7 @@ class K8SExperimentRunner:
             return self._normalize_and_validate_debug_node_name(
                 configured, source="k8s_runner.debug_pod.node_name"
             )
-        if not bool(self.debug_pod_config.get("pin_to_local_node", True)):
+        if not bool(self.debug_pod_config.get("pin_to_local_node", False)):
             return ""
         host = socket.gethostname().strip()
         if not host:
@@ -783,6 +1107,14 @@ class K8SExperimentRunner:
         return self._normalize_and_validate_debug_node_name(
             host.split(".")[0], source="local_hostname"
         )
+
+    def _resolve_debug_container_workspace(self) -> str:
+        return str(
+            self.config.get(
+                "codebase_mount_path",
+                self.debug_pod_config.get("workspace_mount_path", "/workspace"),
+            )
+        ).strip() or "/workspace"
 
     def _normalize_and_validate_debug_node_name(self, raw_name: str, source: str) -> str:
         node_name = raw_name.strip()
@@ -860,3 +1192,16 @@ class K8SExperimentRunner:
             "output": result.get("output", ""),
             "exit_code": result.get("exit_code", -1),
         }
+
+    def _summarize_container_state(self, raw_state: Any) -> str:
+        if not isinstance(raw_state, dict):
+            return "unknown"
+        for key in ("running", "waiting", "terminated"):
+            state_value = raw_state.get(key)
+            if not isinstance(state_value, dict):
+                continue
+            reason = str(state_value.get("reason", "") or "").strip()
+            if reason:
+                return f"{key}:{reason}"
+            return key
+        return "unknown"

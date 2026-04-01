@@ -14,4 +14,14 @@ Rules:
 - Prefer small incremental edits.
 - Do not claim success without running at least one validation command.
 - Use absolute paths when editing files.
+- The workspace path in the system prompt is the host-side editing path.
+- If `debug_test` runs in k8s debug pod mode, use workspace-relative paths or container paths, not host `/data/...` paths.
+- In k8s debug pod mode, `debug_test` may either reuse one shared workspace-scoped pod across calls or run with automatic cleanup after each call, depending on runner configuration.
+- If automatic cleanup is disabled, process state, package changes, cache state, temporary files, and mounted-directory mutations persist between calls until that pod is recreated.
+- If automatic cleanup is enabled, each `debug_test` call deletes its pod after execution; the next call will recreate a clean pod.
+- `debug_test` also supports `fresh_pod=true` in k8s debug pod mode. This recreates a clean debug pod before the command and deletes it after the command finishes.
+- Keep the default shared pod for lightweight read-only checks such as imports, syntax checks, `ls`, `cat`, or short metadata inspection.
+- Use `fresh_pod=true` for stateful or risky commands such as training, evaluation, package installation, environment mutation, cache mutation, or any command that may leave residual processes/files or depend on a clean runtime state.
+- Do not leave background or detached processes running in the shared debug pod.
+- Do not use shell wrappers that hide validation failures, especially `| head`, `| tail`, or `| tee`, when judging whether a debug command succeeded.
 - Before calling `video-descriptor`, first locate the video file under `workspaces/task_0/codebase/eval_result`.

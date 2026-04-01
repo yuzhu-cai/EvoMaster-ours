@@ -11,7 +11,7 @@
   --config: 指定配置文件路径（可选，默认使用 configs/{agent}/config.yaml）
   --task: 任务描述（可选，如不提供则进入交互式输入）
   --interactive: 交互式模式（可选）
-  --run-dir: 指定 run 目录（可选，默认自动创建 ./playground/{agent}/workspaces/{experiment}_{timestamp}/）
+  --run-dir: 指定 run 目录（可选，不指定时自动创建默认目录）
 """
 
 import argparse
@@ -20,6 +20,7 @@ import sys
 import importlib
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 import yaml
 
 # 添加项目根目录到 sys.path
@@ -86,7 +87,10 @@ def parse_args():
 
     parser.add_argument(
         "--run-dir",
-        help="指定 run 目录（默认自动创建 ./playground/{agent}/workspaces/{experiment}_{timestamp}/）"
+        help=(
+            "指定 run 目录（默认自动创建；embomaster 将按 "
+            "simulator/task/model/date 分层）"
+        ),
     )
 
     parser.add_argument(
@@ -382,18 +386,31 @@ def _sanitize_experiment_name(value: str) -> str:
     return text or "experiment"
 
 
-def _resolve_run_dir_base(agent_name: str, config_path: Path) -> Path:
-    """Resolve default run-dir base from config, with sensible fallback."""
-    fallback = project_root / "playground" / agent_name / "workspaces"
+def _sanitize_path_part(value: str, fallback: str) -> str:
+    text = _sanitize_experiment_name(value).strip("-_")
+    if not text:
+        return fallback
+    return text.lower()
 
+
+def _load_config_data(config_path: Path) -> dict[str, Any]:
     try:
         with config_path.open("r", encoding="utf-8") as f:
-            config_data = yaml.safe_load(f) or {}
+            payload = yaml.safe_load(f) or {}
     except Exception:
-        return fallback
+        return {}
+    if isinstance(payload, dict):
+        return payload
+    return {}
 
-    if not isinstance(config_data, dict):
-        return fallback
+
+def _resolve_run_dir_base(
+    agent_name: str, config_path: Path, config_data: dict[str, Any] | None = None
+) -> Path:
+    """Resolve default run-dir base from config, with sensible fallback."""
+    fallback = project_root / "playground" / agent_name / "workspaces"
+    if config_data is None:
+        config_data = _load_config_data(config_path)
 
     raw_base = str(config_data.get("run_dir_base", "")).strip()
     if not raw_base:
@@ -405,13 +422,71 @@ def _resolve_run_dir_base(agent_name: str, config_path: Path) -> Path:
     return base_path
 
 
+def _extract_embomaster_simulator(config_data: dict[str, Any]) -> str:
+    workspace_cfg = config_data.get("workspace_isolation", {})
+    if isinstance(workspace_cfg, dict):
+        source_codebase = str(workspace_cfg.get("source_codebase_dir", "")).strip()
+        if source_codebase:
+            return _sanitize_path_part(Path(source_codebase).name, "unknown-simulator")
+    return "unknown-simulator"
+
+
+def _extract_embomaster_task(config_data: dict[str, Any], config_path: Path) -> str:
+    k8s_cfg = config_data.get("k8s_runner", {})
+    if isinstance(k8s_cfg, dict):
+        manifest_env = k8s_cfg.get("manifest_env", {})
+        if isinstance(manifest_env, dict):
+            for key in ("TASK_NAME", "task_name", "TASK", "task"):
+                value = str(manifest_env.get(key, "")).strip()
+                if value:
+                    return _sanitize_path_part(value, "unknown-task")
+
+    config_stem = config_path.stem
+    if config_stem.lower().startswith("config_"):
+        config_stem = config_stem[len("config_") :]
+    return _sanitize_path_part(config_stem, "unknown-task")
+
+
+def _extract_embomaster_model(config_data: dict[str, Any]) -> str:
+    llm_cfg = config_data.get("llm", {})
+    agents_cfg = config_data.get("agents", {})
+    if not isinstance(llm_cfg, dict) or not isinstance(agents_cfg, dict):
+        return "unknown-model"
+
+    coding_cfg = agents_cfg.get("coding", {})
+    if not isinstance(coding_cfg, dict):
+        return "unknown-model"
+
+    model_name = ""
+    llm_key = str(coding_cfg.get("llm", "")).strip()
+    if llm_key:
+        llm_profile = llm_cfg.get(llm_key, {})
+        if isinstance(llm_profile, dict):
+            model_name = str(llm_profile.get("model", "")).strip()
+
+    if not model_name:
+        default_key = str(llm_cfg.get("default", "")).strip()
+        if default_key:
+            llm_profile = llm_cfg.get(default_key, {})
+            if isinstance(llm_profile, dict):
+                model_name = str(llm_profile.get("model", "")).strip()
+
+    if not model_name and llm_key:
+        model_name = llm_key
+    return _sanitize_path_part(model_name, "unknown-model")
+
+
 def _default_run_dir(agent_name: str, config_path: Path) -> Path:
     """Build default run directory under shared workspace root.
 
-    Pattern:
-      ./playground/{agent}/workspaces/{experiment_name}_{YYYYMMDD_HHMMSS}
+    Default:
+      - generic agents:
+        ./playground/{agent}/workspaces/{experiment_name}_{YYYYMMDD_HHMMSS}
+      - embomaster:
+        ./playground/embomaster/workspaces/{simulator}/{task}/{model}/{YYYYMMDD}/{experiment_name}_{HHMMSS}
     """
-    workspace_root = _resolve_run_dir_base(agent_name, config_path)
+    config_data = _load_config_data(config_path)
+    workspace_root = _resolve_run_dir_base(agent_name, config_path, config_data)
     config_stem = config_path.stem
     if config_stem and config_stem.lower() != "config":
         experiment_name = f"{agent_name}_{config_stem}"
@@ -419,7 +494,16 @@ def _default_run_dir(agent_name: str, config_path: Path) -> Path:
         experiment_name = agent_name
     experiment_name = _sanitize_experiment_name(experiment_name)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return workspace_root / f"{experiment_name}_{timestamp}"
+    run_name = f"{experiment_name}_{timestamp}"
+
+    if agent_name != "embomaster":
+        return workspace_root / run_name
+
+    date_tag = datetime.now().strftime("%Y%m%d")
+    simulator_tag = _extract_embomaster_simulator(config_data)
+    task_tag = _extract_embomaster_task(config_data, config_path)
+    model_tag = _extract_embomaster_model(config_data)
+    return workspace_root / simulator_tag / task_tag / model_tag / date_tag / run_name
 
 
 def main():
@@ -549,7 +633,8 @@ def main():
         if len(tasks) > 1:
             logger.info(f"  - Workspaces: {run_dir}/workspaces/")
         else:
-            logger.info(f"  - Workspace: {run_dir}/workspace/")
+            workspace_task_id = tasks[0]["id"] if tasks else "task_0"
+            logger.info(f"  - Workspace: {run_dir}/workspaces/{workspace_task_id}/")
         logger.info("=" * 60)
 
         return 0 if failed_count == 0 else 1

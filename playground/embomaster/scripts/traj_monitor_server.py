@@ -978,8 +978,13 @@ class RunManager:
     def _discover_run_candidates(self) -> list[tuple[Path, Path | None, str | None]]:
         src = self.source_path.expanduser().resolve()
         candidates: list[tuple[Path, Path | None, str | None]] = []
+        seen_paths: set[Path] = set()
 
         def add_candidate(path: Path) -> None:
+            path = path.resolve()
+            if path in seen_paths:
+                return
+            seen_paths.add(path)
             task_id: str | None = None
             run_dir: Path | None = None
             if len(path.parents) >= 3 and path.parents[1].name == "trajectories":
@@ -987,14 +992,11 @@ class RunManager:
                 run_dir = path.parents[2]
             candidates.append((path, run_dir, task_id))
 
-        if src.is_file():
-            add_candidate(src)
-            return candidates
-
-        # 1) src is a run directory
-        run_trajectories = src / "trajectories"
-        if run_trajectories.exists() and run_trajectories.is_dir():
-            for task_dir in sorted(run_trajectories.iterdir()):
+        def collect_from_run_dir(run_dir: Path) -> None:
+            tr_dir = run_dir / "trajectories"
+            if not tr_dir.exists() or not tr_dir.is_dir():
+                return
+            for task_dir in sorted(tr_dir.iterdir()):
                 if not task_dir.is_dir():
                     continue
                 jsonl_file = task_dir / "trajectory.jsonl"
@@ -1003,25 +1005,32 @@ class RunManager:
                     add_candidate(jsonl_file)
                 elif json_file.exists():
                     add_candidate(json_file)
+
+        if src.is_file():
+            add_candidate(src)
             return candidates
 
-        # 2) src is workspace root containing many run directories
+        # 1) src is a run directory
+        collect_from_run_dir(src)
+        if candidates:
+            return candidates
+
+        # 2) src is workspace root containing many run directories (flat legacy layout)
         if src.exists() and src.is_dir():
             for run_dir in sorted(src.iterdir()):
                 if not run_dir.is_dir():
                     continue
-                tr_dir = run_dir / "trajectories"
-                if not tr_dir.exists() or not tr_dir.is_dir():
+                collect_from_run_dir(run_dir)
+
+            if candidates:
+                return candidates
+
+            # 3) recursive scan for grouped layout:
+            # workspace_root/simulator/task/model/date/run_id/trajectories/task_x/trajectory.jsonl
+            for tr_dir in sorted(src.rglob("trajectories")):
+                if not tr_dir.is_dir():
                     continue
-                for task_dir in sorted(tr_dir.iterdir()):
-                    if not task_dir.is_dir():
-                        continue
-                    jsonl_file = task_dir / "trajectory.jsonl"
-                    json_file = task_dir / "trajectory.json"
-                    if jsonl_file.exists():
-                        add_candidate(jsonl_file)
-                    elif json_file.exists():
-                        add_candidate(json_file)
+                collect_from_run_dir(tr_dir.parent)
 
         return candidates
 
@@ -1045,8 +1054,17 @@ class RunManager:
                 fmt = "jsonl" if path.suffix.lower() == ".jsonl" else "json"
 
                 if run_dir and task_id:
-                    run_id_base = f"{run_dir.name}:{task_id}"
-                    label = f"{run_dir.name} / {task_id} ({fmt})"
+                    run_key = run_dir.name
+                    try:
+                        source_root = self.source_path.expanduser().resolve()
+                        rel_run_dir = run_dir.resolve().relative_to(source_root)
+                        rel_text = str(rel_run_dir).strip()
+                        if rel_text and rel_text != ".":
+                            run_key = rel_text
+                    except Exception:
+                        pass
+                    run_id_base = f"{run_key}:{task_id}"
+                    label = f"{run_key} / {task_id} ({fmt})"
                 else:
                     run_id_base = path.stem
                     label = f"{path.name} ({fmt})"

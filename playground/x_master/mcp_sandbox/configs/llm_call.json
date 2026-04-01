@@ -1,4 +1,9 @@
 {
+    "Vendor2/Claude-4.6-Opus": {
+        "url": "https://api.gpugeek.com/v1",
+        "authorization": "u0rgjezq53e5tv01000dg95v0yqn2eecv02b7z3r",
+        "retry_time": 3
+    },
     "gpt-4o":{
         "url": "",
         "authorization": "",

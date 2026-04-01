@@ -14,6 +14,7 @@ from evomaster.core.exp import BaseExp
 from evomaster.utils.types import TaskInstance
 
 from .services import K8SExperimentRunner
+from .monitoring import EmboMasterMonitorWriter
 from .utils import WorkspaceCodebaseInfo, cleanup_eval_result, prepare_workspace_codebase
 
 
@@ -37,11 +38,18 @@ class EmboMasterExp(BaseExp):
     def exp_name(self) -> str:
         return "EmboMaster"
 
-    def run(self, task_description: str, task_id: str = "exp_001") -> dict:
+    def run(
+        self,
+        task_description: str,
+        task_id: str = "exp_001",
+        images: list[str] | None = None,
+    ) -> dict:
         self.logger.info("Starting EmboMaster experiment")
         settings = self._get_experiment_settings()
         k8s_cfg = self._get_k8s_config()
         workspace_cfg = self._get_workspace_isolation_config()
+        parent_selection_cfg = self._get_parent_selection_config()
+        result_validation_cfg = self._get_result_validation_config()
         max_rounds = int(settings.get("steps", 1))
         time_limit_seconds = int(settings.get("time_limit_seconds", 0))
 
@@ -52,6 +60,7 @@ class EmboMasterExp(BaseExp):
         previous_feedback = "N/A"
         start_time = time.monotonic()
         stopped_reason = "completed_all_rounds"
+        monitor_writer = self._create_monitor_writer(task_id)
 
         for round_index in range(1, max_rounds + 1):
             if time_limit_seconds > 0 and (time.monotonic() - start_time) >= time_limit_seconds:
@@ -61,8 +70,12 @@ class EmboMasterExp(BaseExp):
             self.logger.info("=== Round %s/%s ===", round_index, max_rounds)
             BaseAgent.set_exp_info(exp_name=self.exp_name, exp_index=round_index)
 
-            parent_workspace_id = self._choose_parent_workspace_id(
-                workspace_cfg, previous_workspace_id, best_round
+            parent_decision = self._choose_parent_workspace(
+                workspace_cfg=workspace_cfg,
+                parent_selection_cfg=parent_selection_cfg,
+                previous_workspace_id=previous_workspace_id,
+                best_round=best_round,
+                last_round=(round_results[-1] if round_results else None),
             )
             round_result = self._run_one_round(
                 task_description=task_description,
@@ -71,10 +84,15 @@ class EmboMasterExp(BaseExp):
                 max_rounds=max_rounds,
                 previous_feedback=previous_feedback,
                 best_metric=best_metric,
+                best_round=best_round,
                 k8s_cfg=k8s_cfg,
                 metric_cfg=settings,
                 workspace_cfg=workspace_cfg,
-                parent_workspace_id=parent_workspace_id,
+                parent_workspace_id=parent_decision.get("workspace_id"),
+                parent_decision=parent_decision,
+                round_history=round_results,
+                parent_selection_cfg=parent_selection_cfg,
+                result_validation_cfg=result_validation_cfg,
             )
             round_results.append(round_result)
             previous_workspace_id = round_result.get("workspace_id")
@@ -88,14 +106,38 @@ class EmboMasterExp(BaseExp):
             if feedback_text:
                 previous_feedback = feedback_text
 
+            if monitor_writer is not None:
+                try:
+                    monitor_writer.record_round(
+                        round_result=round_result,
+                        best_metric=best_metric,
+                        best_round_index=(
+                            best_round.get("round_index") if isinstance(best_round, dict) else None
+                        ),
+                        total_rounds_so_far=len(round_results),
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed to persist monitor round snapshot for round %s: %s",
+                        round_index,
+                        exc,
+                    )
+
             if settings.get("stop_on_job_failed", False):
                 if round_result.get("k8s_status") in {"failed", "timeout"}:
                     stopped_reason = f"stop_on_{round_result.get('k8s_status')}"
                     break
 
+        valid_rounds = [r for r in round_results if bool(r.get("result_valid", True))]
+        invalid_rounds = [r for r in round_results if not bool(r.get("result_valid", True))]
+
         status = "completed"
         if not round_results:
             status = "failed"
+        elif invalid_rounds and not valid_rounds:
+            status = "failed"
+        elif invalid_rounds:
+            status = "completed_with_invalid_rounds"
 
         result: dict[str, Any] = {
             "status": status,
@@ -106,6 +148,7 @@ class EmboMasterExp(BaseExp):
             "best_metric": best_metric,
             "best_round_index": best_round.get("round_index") if best_round else None,
             "best_round": best_round,
+            "invalid_round_count": len(invalid_rounds),
         }
 
         total_steps = sum(int(r.get("steps", 0)) for r in round_results)
@@ -118,6 +161,14 @@ class EmboMasterExp(BaseExp):
                 "trajectory": trajectories,
             }
         )
+        if monitor_writer is not None:
+            try:
+                monitor_writer.record_final_result(
+                    result=result,
+                    task_description=task_description,
+                )
+            except Exception as exc:
+                self.logger.warning("Failed to persist final monitor snapshot: %s", exc)
         return result
 
     def _run_one_round(
@@ -128,10 +179,15 @@ class EmboMasterExp(BaseExp):
         max_rounds: int,
         previous_feedback: str,
         best_metric: float | None,
+        best_round: dict[str, Any] | None,
         k8s_cfg: dict[str, Any],
         metric_cfg: dict[str, Any],
         workspace_cfg: dict[str, Any],
         parent_workspace_id: str | None,
+        parent_decision: dict[str, Any],
+        round_history: list[dict[str, Any]],
+        parent_selection_cfg: dict[str, Any],
+        result_validation_cfg: dict[str, Any],
     ) -> dict[str, Any]:
         workspace_context = self._build_round_workspace_context(
             task_id=task_id,
@@ -148,6 +204,13 @@ class EmboMasterExp(BaseExp):
         )
 
         original_kwargs = self.coding_agent._prompt_format_kwargs.copy()
+        debug_container_codebase_path = "N/A"
+        if isinstance(k8s_cfg, dict):
+            debug_container_codebase_path = str(
+                k8s_cfg.get("codebase_mount_path")
+                or k8s_cfg.get("container_workspace")
+                or "N/A"
+            )
         self.coding_agent._prompt_format_kwargs.update(
             {
                 "round_index": round_index,
@@ -157,6 +220,7 @@ class EmboMasterExp(BaseExp):
                 "workspace_id": workspace_context.get("workspace_id", "N/A"),
                 "parent_workspace_id": workspace_context.get("parent_workspace_id", "N/A"),
                 "workspace_codebase_path": workspace_context.get("workspace_codebase_path", "N/A"),
+                "debug_container_codebase_path": debug_container_codebase_path,
                 "workspace_source_type": workspace_context.get("source_type", "N/A"),
                 "workspace_large_dirs_count": workspace_context.get("large_dirs_count", 0),
             }
@@ -164,12 +228,43 @@ class EmboMasterExp(BaseExp):
         session = getattr(self.coding_agent, "session", None)
         original_workspace_path = None
         workspace_codebase_path = workspace_context.get("workspace_codebase_path")
+        debug_pod_prepare_result: dict[str, Any] | None = None
+        debug_pod_cleanup_before_submit: dict[str, Any] | None = None
+        debug_pod_cleanup_final: dict[str, Any] | None = None
+        trajectory = None
         if session and workspace_codebase_path:
             original_workspace_path = getattr(session.config, "workspace_path", None)
             session.config.workspace_path = str(workspace_codebase_path)
         try:
+            if self.k8s_runner and workspace_codebase_path:
+                try:
+                    debug_pod_prepare_result = self.k8s_runner.prepare_round_debug_pod(
+                        workspace_codebase_path
+                    )
+                except Exception as exc:
+                    debug_pod_prepare_result = {
+                        "status": "prepare_failed",
+                        "error": str(exc),
+                    }
+                    self.logger.warning(
+                        "Failed to prepare debug pod for round %s: %s",
+                        round_index,
+                        exc,
+                    )
             trajectory = self.coding_agent.run(coding_task)
         finally:
+            if trajectory is None and self.k8s_runner and workspace_codebase_path:
+                try:
+                    self.k8s_runner.cleanup_debug_pod_for_workspace(
+                        workspace_codebase_path,
+                        wait=False,
+                    )
+                except Exception as exc:
+                    self.logger.warning(
+                        "Failed debug pod cleanup after coding exception in round %s: %s",
+                        round_index,
+                        exc,
+                    )
             if session and original_workspace_path is not None:
                 session.config.workspace_path = str(original_workspace_path)
             self.coding_agent._prompt_format_kwargs = original_kwargs
@@ -186,49 +281,121 @@ class EmboMasterExp(BaseExp):
             "feedback": "",
             "workspace_id": workspace_context.get("workspace_id"),
             "parent_workspace_id": workspace_context.get("parent_workspace_id"),
+            "parent_choice_used": parent_decision.get("choice", "previous"),
+            "parent_choice_reason": parent_decision.get("reason", ""),
             "workspace_codebase_path": workspace_context.get("workspace_codebase_path"),
             "workspace_source_type": workspace_context.get("source_type"),
             "workspace_large_dirs_count": workspace_context.get("large_dirs_count", 0),
+            "workspace_large_dirs": workspace_context.get("workspace_large_dirs", []),
+            "submission_dir": workspace_context.get("submission_dir"),
+            "session_dir": workspace_context.get("session_dir"),
+            "metric_valid": False,
+            "artifacts_summary": {},
+            "parent_recommendation": None,
+            "result_valid": True,
+            "validation_errors": [],
         }
+        if debug_pod_prepare_result is not None:
+            round_result["debug_pod_prepare"] = debug_pod_prepare_result
 
-        if self.k8s_runner and k8s_cfg.get("enabled", False):
-            manifest_path = str(k8s_cfg.get("manifest_path", "")).strip()
-            job_prefix = str(k8s_cfg.get("job_name_prefix", "embomaster-job")).strip()
-            if manifest_path:
-                suffix = datetime.utcnow().strftime("%H%M%S%f")
-                workspace_tag = (workspace_context.get("workspace_id", "") or "")[:8]
-                if workspace_tag:
-                    job_name = f"{job_prefix}-r{round_index}-{workspace_tag}-{suffix}".lower()
+        try:
+            if self.k8s_runner and k8s_cfg.get("enabled", False):
+                manifest_path = str(k8s_cfg.get("manifest_path", "")).strip()
+                job_prefix = str(k8s_cfg.get("job_name_prefix", "embomaster-job")).strip()
+                if manifest_path:
+                    suffix = datetime.utcnow().strftime("%H%M%S%f")
+                    workspace_tag = (workspace_context.get("workspace_id", "") or "")[:8]
+                    if workspace_tag:
+                        job_name = f"{job_prefix}-r{round_index}-{workspace_tag}-{suffix}".lower()
+                    else:
+                        job_name = f"{job_prefix}-r{round_index}-{suffix}".lower()
+                    job_name = re.sub(r"[^a-z0-9-]+", "-", job_name).strip("-")[:63]
+                    env_map = k8s_cfg.get("manifest_env", {})
+                    if not isinstance(env_map, dict):
+                        env_map = {}
+                    if workspace_codebase_path:
+                        debug_pod_cleanup_before_submit = self.k8s_runner.cleanup_debug_pod_for_workspace(
+                            workspace_codebase_path,
+                            wait=True,
+                        )
+                        round_result["debug_pod_cleanup_before_submit"] = (
+                            debug_pod_cleanup_before_submit
+                        )
+                        cleanup_exit_code = int(
+                            debug_pod_cleanup_before_submit.get("exit_code", 0)
+                        )
+                        cleanup_status = str(
+                            debug_pod_cleanup_before_submit.get("status", "")
+                        ).lower()
+                        if cleanup_exit_code != 0 and cleanup_status not in {
+                            "not_found",
+                            "disabled",
+                        }:
+                            raise RuntimeError(
+                                "failed to cleanup debug pod before job submission: "
+                                + (
+                                    debug_pod_cleanup_before_submit.get("stderr", "")
+                                    or debug_pod_cleanup_before_submit.get("output", "")
+                                    or str(debug_pod_cleanup_before_submit)
+                                )
+                            )
+                    self.logger.info("Submitting K8S job for round %s: %s", round_index, job_name)
+                    k8s_result = self.k8s_runner.run(
+                        manifest_path=manifest_path,
+                        job_name=job_name,
+                        manifest_env={str(k): str(v) for k, v in env_map.items()},
+                        workspace_context=workspace_context,
+                    )
+                    round_result["k8s_result"] = k8s_result
+                    round_result["k8s_status"] = k8s_result.get("wait", {}).get("status", "unknown")
+                    metric_value, metric_source = self._extract_metric_from_k8s(k8s_result, metric_cfg)
+                    round_result["metric_value"] = metric_value
+                    round_result["metric_source"] = metric_source
                 else:
-                    job_name = f"{job_prefix}-r{round_index}-{suffix}".lower()
-                job_name = re.sub(r"[^a-z0-9-]+", "-", job_name).strip("-")[:63]
-                env_map = k8s_cfg.get("manifest_env", {})
-                if not isinstance(env_map, dict):
-                    env_map = {}
-                self.logger.info("Submitting K8S job for round %s: %s", round_index, job_name)
-                k8s_result = self.k8s_runner.run(
-                    manifest_path=manifest_path,
-                    job_name=job_name,
-                    manifest_env={str(k): str(v) for k, v in env_map.items()},
-                    workspace_context=workspace_context,
-                )
-                round_result["k8s_result"] = k8s_result
-                round_result["k8s_status"] = k8s_result.get("wait", {}).get("status", "unknown")
-                metric_value, metric_source = self._extract_metric_from_k8s(k8s_result, metric_cfg)
-                round_result["metric_value"] = metric_value
-                round_result["metric_source"] = metric_source
-            else:
-                self.logger.warning("k8s_runner.enabled=true but manifest_path is empty")
-                round_result["k8s_status"] = "skipped_missing_manifest"
+                    self.logger.warning("k8s_runner.enabled=true but manifest_path is empty")
+                    round_result["k8s_status"] = "skipped_missing_manifest"
+        finally:
+            if self.k8s_runner and workspace_codebase_path:
+                try:
+                    debug_pod_cleanup_final = self.k8s_runner.cleanup_debug_pod_for_workspace(
+                        workspace_codebase_path,
+                        wait=False,
+                    )
+                except Exception as exc:
+                    debug_pod_cleanup_final = {
+                        "status": "cleanup_failed",
+                        "error": str(exc),
+                    }
+                    self.logger.warning(
+                        "Failed final debug pod cleanup for round %s: %s",
+                        round_index,
+                        exc,
+                    )
+                round_result["debug_pod_cleanup_final"] = debug_pod_cleanup_final
+
+        round_result["metric_valid"] = round_result.get("metric_value") is not None
+        round_result["artifacts_summary"] = self._collect_artifacts_summary(
+            round_result=round_result,
+            k8s_cfg=k8s_cfg,
+        )
+        self._apply_result_validation(
+            round_result=round_result,
+            result_validation_cfg=result_validation_cfg,
+        )
 
         if self.feedback_agent:
-            feedback = self._run_feedback_round(
+            feedback_result = self._run_feedback_round(
                 task_description=task_description,
                 task_id=task_id,
                 round_index=round_index,
                 round_result=round_result,
+                best_round=best_round,
+                metric_cfg=metric_cfg,
+                round_history=round_history,
+                parent_selection_cfg=parent_selection_cfg,
             )
-            round_result["feedback"] = feedback
+            round_result["feedback"] = feedback_result.get("text", "")
+            round_result["parent_recommendation"] = feedback_result.get("parent_recommendation")
 
         return round_result
 
@@ -238,11 +405,17 @@ class EmboMasterExp(BaseExp):
         task_id: str,
         round_index: int,
         round_result: dict[str, Any],
-    ) -> str:
+        best_round: dict[str, Any] | None,
+        metric_cfg: dict[str, Any],
+        round_history: list[dict[str, Any]],
+        parent_selection_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
         logs = ""
         if isinstance(round_result.get("k8s_result"), dict):
             logs = str(round_result["k8s_result"].get("logs", {}).get("output", ""))
         logs_tail = logs[-3000:] if logs else "N/A"
+        best_candidate = self._candidate_best_round(best_round, round_result, metric_cfg)
+        recent_rounds = list(round_history[-int(parent_selection_cfg.get("recent_rounds", 3)) :])
 
         task = TaskInstance(
             task_id=f"{task_id}_feedback_r{round_index}",
@@ -257,11 +430,21 @@ class EmboMasterExp(BaseExp):
                 "k8s_status": round_result.get("k8s_status", "unknown"),
                 "metric_value": round_result.get("metric_value"),
                 "k8s_log_tail": logs_tail,
+                "candidate_last_summary": self._format_round_summary(round_result, label="last"),
+                "candidate_best_summary": self._format_round_summary(best_candidate, label="best"),
+                "recent_round_summaries": self._format_recent_round_summaries(recent_rounds),
+                "parent_decision_constraints": self._format_parent_constraints(
+                    parent_selection_cfg
+                ),
             }
         )
         try:
             trajectory = self.feedback_agent.run(task)
-            return self._extract_agent_response(trajectory)
+            feedback_text = self._extract_agent_response(trajectory)
+            return {
+                "text": feedback_text,
+                "parent_recommendation": self._parse_parent_recommendation(feedback_text),
+            }
         finally:
             self.feedback_agent._prompt_format_kwargs = original_kwargs
 
@@ -366,27 +549,409 @@ class EmboMasterExp(BaseExp):
         workspace_cfg.setdefault("parent_strategy", "previous")
         workspace_cfg.setdefault("submission_subdir", "submission")
         workspace_cfg.setdefault("source_codebase_dir", "")
+        workspace_cfg.setdefault("bootstrap_codebase_dir", "")
         workspace_cfg.setdefault("session_dir", "")
         workspace_cfg.setdefault("copy_plan_cache_enabled", True)
         workspace_cfg.setdefault("copy_plan_cache_file", ".embomaster_copy_plan.json")
         workspace_cfg.setdefault("copy_plan_rebuild", False)
         return workspace_cfg
 
-    def _choose_parent_workspace_id(
+    def _get_parent_selection_config(self) -> dict[str, Any]:
+        if hasattr(self.config, "model_dump"):
+            cfg_dict = self.config.model_dump()
+        else:
+            cfg_dict = dict(self.config)
+
+        selection_cfg = cfg_dict.get("parent_selection", {})
+        if not isinstance(selection_cfg, dict):
+            selection_cfg = {}
+
+        selection_cfg.setdefault("enabled", True)
+        selection_cfg.setdefault("allow_none", True)
+        selection_cfg.setdefault("fallback_strategy", "best")
+        selection_cfg.setdefault("require_valid_eval_for_last", True)
+        selection_cfg.setdefault("require_metric_for_last", True)
+        selection_cfg.setdefault("reject_last_on_k8s_status", ["failed", "timeout"])
+        selection_cfg.setdefault("max_feedback_chars", 1200)
+        selection_cfg.setdefault("recent_rounds", 3)
+        return selection_cfg
+
+    def _get_result_validation_config(self) -> dict[str, Any]:
+        if hasattr(self.config, "model_dump"):
+            cfg_dict = self.config.model_dump()
+        else:
+            cfg_dict = dict(self.config)
+
+        validation_cfg = cfg_dict.get("result_validation", {})
+        if not isinstance(validation_cfg, dict):
+            validation_cfg = {}
+
+        validation_cfg.setdefault("enabled", False)
+        validation_cfg.setdefault("require_eval_dir", True)
+        validation_cfg.setdefault("require_success_rate_txt", True)
+        validation_cfg.setdefault("require_checkpoint", True)
+        validation_cfg.setdefault("require_dataset_stats", True)
+        validation_cfg.setdefault("invalidate_metric_on_failure", True)
+        validation_cfg.setdefault("invalid_k8s_status", "invalid_artifacts")
+        return validation_cfg
+
+    def _choose_parent_workspace(
         self,
         workspace_cfg: dict[str, Any],
+        parent_selection_cfg: dict[str, Any],
         previous_workspace_id: str | None,
         best_round: dict[str, Any] | None,
-    ) -> str | None:
+        last_round: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         strategy = str(workspace_cfg.get("parent_strategy", "previous")).strip().lower()
         if strategy == "none":
-            return None
+            return {"choice": "none", "workspace_id": None, "reason": "configured parent_strategy=none"}
         if strategy == "best":
             best_workspace_id = None
             if isinstance(best_round, dict):
                 best_workspace_id = best_round.get("workspace_id")
-            return best_workspace_id or previous_workspace_id
-        return previous_workspace_id
+            return {
+                "choice": "best",
+                "workspace_id": best_workspace_id or previous_workspace_id,
+                "reason": "configured parent_strategy=best",
+            }
+        if strategy == "advisor":
+            if not bool(parent_selection_cfg.get("enabled", True)):
+                return {
+                    "choice": "last",
+                    "workspace_id": previous_workspace_id,
+                    "reason": "advisor disabled, falling back to previous",
+                }
+            return self._choose_parent_workspace_with_advisor(
+                parent_selection_cfg=parent_selection_cfg,
+                previous_workspace_id=previous_workspace_id,
+                best_round=best_round,
+                last_round=last_round,
+            )
+        return {
+            "choice": "last",
+            "workspace_id": previous_workspace_id,
+            "reason": "configured parent_strategy=previous",
+        }
+
+    def _choose_parent_workspace_with_advisor(
+        self,
+        parent_selection_cfg: dict[str, Any],
+        previous_workspace_id: str | None,
+        best_round: dict[str, Any] | None,
+        last_round: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        recommendation = None
+        if isinstance(last_round, dict):
+            recommendation = last_round.get("parent_recommendation")
+        recommended_choice = ""
+        if isinstance(recommendation, dict):
+            recommended_choice = str(recommendation.get("choice", "")).strip().lower()
+
+        fallback_choice = str(parent_selection_cfg.get("fallback_strategy", "best")).strip().lower()
+        if fallback_choice not in {"best", "last", "none"}:
+            fallback_choice = "best"
+        if recommended_choice not in {"best", "last", "none"}:
+            recommended_choice = fallback_choice
+
+        resolved = self._resolve_parent_choice(
+            choice=recommended_choice,
+            parent_selection_cfg=parent_selection_cfg,
+            previous_workspace_id=previous_workspace_id,
+            best_round=best_round,
+            last_round=last_round,
+        )
+        if resolved is not None:
+            return resolved
+
+        fallback_resolved = self._resolve_parent_choice(
+            choice=fallback_choice,
+            parent_selection_cfg=parent_selection_cfg,
+            previous_workspace_id=previous_workspace_id,
+            best_round=best_round,
+            last_round=last_round,
+        )
+        if fallback_resolved is not None:
+            fallback_resolved["reason"] = (
+                f"advisor fallback to {fallback_choice}: invalid recommendation {recommended_choice}"
+            )
+            return fallback_resolved
+
+        return {
+            "choice": "none",
+            "workspace_id": None,
+            "reason": "advisor fallback exhausted, using none",
+        }
+
+    def _resolve_parent_choice(
+        self,
+        choice: str,
+        parent_selection_cfg: dict[str, Any],
+        previous_workspace_id: str | None,
+        best_round: dict[str, Any] | None,
+        last_round: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if choice == "none":
+            if not bool(parent_selection_cfg.get("allow_none", True)):
+                return None
+            return {"choice": "none", "workspace_id": None, "reason": "advisor selected none"}
+
+        if choice == "best":
+            best_workspace_id = None
+            if isinstance(best_round, dict):
+                best_workspace_id = best_round.get("workspace_id")
+            if not best_workspace_id:
+                return None
+            return {
+                "choice": "best",
+                "workspace_id": best_workspace_id,
+                "reason": "advisor selected best",
+            }
+
+        if choice == "last":
+            if not previous_workspace_id or not self._is_round_valid_for_last(
+                last_round, parent_selection_cfg
+            ):
+                return None
+            return {
+                "choice": "last",
+                "workspace_id": previous_workspace_id,
+                "reason": "advisor selected last",
+            }
+        return None
+
+    def _is_round_valid_for_last(
+        self, round_result: dict[str, Any] | None, parent_selection_cfg: dict[str, Any]
+    ) -> bool:
+        if not isinstance(round_result, dict):
+            return False
+        rejected_statuses = {
+            str(s).strip().lower()
+            for s in parent_selection_cfg.get("reject_last_on_k8s_status", [])
+            if str(s).strip()
+        }
+        k8s_status = str(round_result.get("k8s_status", "")).strip().lower()
+        if k8s_status in rejected_statuses:
+            return False
+
+        if bool(parent_selection_cfg.get("require_metric_for_last", True)):
+            if round_result.get("metric_value") is None:
+                return False
+
+        artifacts = round_result.get("artifacts_summary", {})
+        if bool(parent_selection_cfg.get("require_valid_eval_for_last", True)):
+            if not isinstance(artifacts, dict) or not artifacts.get("has_eval_artifacts", False):
+                return False
+        return True
+
+    def _candidate_best_round(
+        self,
+        best_round: dict[str, Any] | None,
+        current_round: dict[str, Any],
+        metric_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
+        if best_round is None:
+            return current_round
+        if self._is_better_metric(
+            best_round.get("metric_value"), current_round.get("metric_value"), metric_cfg
+        ):
+            return current_round
+        return best_round
+
+    def _collect_artifacts_summary(
+        self,
+        round_result: dict[str, Any],
+        k8s_cfg: dict[str, Any],
+    ) -> dict[str, Any]:
+        codebase_path_raw = str(round_result.get("workspace_codebase_path", "")).strip()
+        codebase_path = Path(codebase_path_raw) if codebase_path_raw else None
+        if not codebase_path or not codebase_path.exists():
+            return {
+                "has_metric": round_result.get("metric_value") is not None,
+                "has_eval_artifacts": False,
+                "has_task_eval_dir": False,
+                "has_result_txt": False,
+                "has_submission_csv": False,
+                "has_policy_best_ckpt": False,
+                "has_policy_last_ckpt": False,
+                "has_any_epoch_ckpt": False,
+                "has_dataset_stats": False,
+            }
+
+        manifest_env = k8s_cfg.get("manifest_env", {})
+        task_name = ""
+        if isinstance(manifest_env, dict):
+            task_name = str(manifest_env.get("TASK_NAME", "")).strip()
+
+        eval_root = codebase_path / "eval_result"
+        task_eval_dir = eval_root / task_name if task_name else eval_root
+        ckpt_root = codebase_path / "policy" / "ACT" / "act_ckpt"
+        submission_dir = codebase_path / "submission"
+
+        return {
+            "has_metric": round_result.get("metric_value") is not None,
+            "has_eval_artifacts": self._path_has_files(task_eval_dir),
+            "has_task_eval_dir": task_eval_dir.exists(),
+            "has_result_txt": self._tree_has_pattern(task_eval_dir, "_result.txt")
+            or self._tree_has_pattern(task_eval_dir, "result_*.txt"),
+            "has_submission_csv": self._tree_has_pattern(submission_dir, "submission_*.csv"),
+            "has_policy_best_ckpt": self._tree_has_named_file(ckpt_root, "policy_best.ckpt"),
+            "has_policy_last_ckpt": self._tree_has_named_file(ckpt_root, "policy_last.ckpt"),
+            "has_any_epoch_ckpt": self._tree_has_pattern(ckpt_root, "policy_epoch_*.ckpt"),
+            "has_dataset_stats": self._tree_has_named_file(ckpt_root, "dataset_stats.pkl"),
+        }
+
+    def _apply_result_validation(
+        self,
+        round_result: dict[str, Any],
+        result_validation_cfg: dict[str, Any],
+    ) -> None:
+        if not bool(result_validation_cfg.get("enabled", True)):
+            return
+
+        artifacts = round_result.get("artifacts_summary", {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+
+        errors: list[str] = []
+        if bool(result_validation_cfg.get("require_eval_dir", True)):
+            if not artifacts.get("has_task_eval_dir", False):
+                errors.append("missing_task_eval_dir")
+        if bool(result_validation_cfg.get("require_success_rate_txt", True)):
+            if not artifacts.get("has_result_txt", False):
+                errors.append("missing_success_rate_txt")
+        if bool(result_validation_cfg.get("require_checkpoint", True)):
+            has_checkpoint = any(
+                bool(artifacts.get(key, False))
+                for key in ("has_policy_best_ckpt", "has_policy_last_ckpt", "has_any_epoch_ckpt")
+            )
+            if not has_checkpoint:
+                errors.append("missing_checkpoint")
+        if bool(result_validation_cfg.get("require_dataset_stats", True)):
+            if not artifacts.get("has_dataset_stats", False):
+                errors.append("missing_dataset_stats")
+
+        round_result["validation_errors"] = errors
+        round_result["result_valid"] = not errors
+
+        if not errors:
+            return
+
+        invalid_status = str(result_validation_cfg.get("invalid_k8s_status", "invalid_artifacts")).strip()
+        if invalid_status:
+            round_result["k8s_status"] = invalid_status
+        round_result["status"] = "invalid_artifacts"
+        round_result["metric_valid"] = False
+        if bool(result_validation_cfg.get("invalidate_metric_on_failure", True)):
+            round_result["metric_value"] = None
+            round_result["metric_source"] = "invalidated:artifact_validation"
+
+    def _path_has_files(self, path: Path) -> bool:
+        if not path.exists():
+            return False
+        for child in path.rglob("*"):
+            if child.is_file():
+                return True
+        return False
+
+    def _tree_has_named_file(self, root: Path, filename: str) -> bool:
+        if not root.exists():
+            return False
+        return any(root.rglob(filename))
+
+    def _tree_has_pattern(self, root: Path, pattern: str) -> bool:
+        if not root.exists():
+            return False
+        return any(root.rglob(pattern))
+
+    def _format_round_summary(
+        self, round_result: dict[str, Any] | None, label: str
+    ) -> str:
+        if not isinstance(round_result, dict):
+            return f"Candidate: {label}\n- unavailable"
+        artifacts = round_result.get("artifacts_summary", {})
+        if not isinstance(artifacts, dict):
+            artifacts = {}
+        coding_result = str(round_result.get("coding_result", "") or "").strip()
+        coding_result = re.sub(r"\s+", " ", coding_result)
+        coding_result = coding_result[:280] if coding_result else "N/A"
+        return (
+            f"Candidate: {label}\n"
+            f"- round_index: {round_result.get('round_index', 'N/A')}\n"
+            f"- workspace_id: {round_result.get('workspace_id', 'N/A')}\n"
+            f"- k8s_status: {round_result.get('k8s_status', 'unknown')}\n"
+            f"- metric: {round_result.get('metric_value', 'None')}\n"
+            f"- result_valid: {round_result.get('result_valid', True)}\n"
+            f"- validation_errors: {','.join(round_result.get('validation_errors', [])) or 'none'}\n"
+            f"- has_eval_artifacts: {artifacts.get('has_eval_artifacts', False)}\n"
+            f"- has_result_txt: {artifacts.get('has_result_txt', False)}\n"
+            f"- has_policy_best_ckpt: {artifacts.get('has_policy_best_ckpt', False)}\n"
+            f"- has_policy_last_ckpt: {artifacts.get('has_policy_last_ckpt', False)}\n"
+            f"- has_any_epoch_ckpt: {artifacts.get('has_any_epoch_ckpt', False)}\n"
+            f"- has_dataset_stats: {artifacts.get('has_dataset_stats', False)}\n"
+            f"- coding_summary: {coding_result}"
+        )
+
+    def _format_recent_round_summaries(self, rounds: list[dict[str, Any]]) -> str:
+        if not rounds:
+            return "No recent rounds."
+        lines: list[str] = []
+        for round_result in rounds:
+            artifacts = round_result.get("artifacts_summary", {})
+            if not isinstance(artifacts, dict):
+                artifacts = {}
+            lines.append(
+                (
+                    f"Round {round_result.get('round_index', 'N/A')}: "
+                    f"status={round_result.get('k8s_status', 'unknown')}, "
+                    f"metric={round_result.get('metric_value', 'None')}, "
+                    f"valid={round_result.get('result_valid', True)}, "
+                    f"eval={artifacts.get('has_eval_artifacts', False)}, "
+                    f"parent_used={round_result.get('parent_choice_used', 'N/A')}"
+                )
+            )
+        return "\n".join(lines)
+
+    def _format_parent_constraints(self, parent_selection_cfg: dict[str, Any]) -> str:
+        fallback_strategy = str(parent_selection_cfg.get("fallback_strategy", "best")).strip()
+        allow_none = bool(parent_selection_cfg.get("allow_none", True))
+        require_eval = bool(parent_selection_cfg.get("require_valid_eval_for_last", True))
+        require_metric = bool(parent_selection_cfg.get("require_metric_for_last", True))
+        reject_statuses = ", ".join(
+            str(s).strip()
+            for s in parent_selection_cfg.get("reject_last_on_k8s_status", [])
+            if str(s).strip()
+        ) or "none"
+        return (
+            f"- Allowed choices: best, last, none\n"
+            f"- Fallback strategy: {fallback_strategy}\n"
+            f"- Allow none: {allow_none}\n"
+            f"- last requires metric: {require_metric}\n"
+            f"- last requires eval artifacts: {require_eval}\n"
+            f"- last is rejected on k8s_status in: {reject_statuses}"
+        )
+
+    def _parse_parent_recommendation(self, feedback_text: str) -> dict[str, Any] | None:
+        content = str(feedback_text or "")
+        match = re.search(
+            r"##\s*Parent Recommendation\s*"
+            r"Choice:\s*(best|last|none)\s*"
+            r"Confidence:\s*([0-9]*\.?[0-9]+)\s*"
+            r"Reason:\s*(.+?)(?:\n\s*\n|\Z)",
+            content,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if not match:
+            return None
+
+        confidence = self._to_float(match.group(2))
+        if confidence is None:
+            confidence = 0.0
+        return {
+            "choice": match.group(1).strip().lower(),
+            "confidence": max(0.0, min(1.0, confidence)),
+            "reason": match.group(3).strip(),
+        }
 
     def _build_round_workspace_context(
         self,
@@ -399,6 +964,7 @@ class EmboMasterExp(BaseExp):
         workspace_path = self._get_workspace_path()
         session_dir = self._resolve_session_dir(workspace_path, workspace_cfg)
         source_codebase_dir = self._resolve_source_codebase_dir(workspace_path, workspace_cfg)
+        bootstrap_codebase_dir = self._resolve_bootstrap_codebase_dir(workspace_path, workspace_cfg)
         submission_subdir = (
             str(workspace_cfg.get("submission_subdir", "submission")).strip() or "submission"
         )
@@ -437,6 +1003,7 @@ class EmboMasterExp(BaseExp):
                 session_dir=session_dir,
                 workspace_id=workspace_id,
                 source_codebase_dir=source_codebase_dir,
+                bootstrap_codebase_dir=bootstrap_codebase_dir,
                 parent_workspace_id=parent_workspace_id,
                 size_threshold=size_threshold_bytes,
                 copy_plan_cache_file=copy_plan_cache_file,
@@ -517,3 +1084,26 @@ class EmboMasterExp(BaseExp):
         if workspace_codebase.exists():
             return workspace_codebase.resolve()
         return None
+
+    def _resolve_bootstrap_codebase_dir(
+        self, workspace_path: Path, workspace_cfg: dict[str, Any]
+    ) -> Path | None:
+        bootstrap_raw = str(workspace_cfg.get("bootstrap_codebase_dir", "")).strip()
+        if not bootstrap_raw:
+            return None
+        bootstrap_path = Path(bootstrap_raw).expanduser()
+        if not bootstrap_path.is_absolute():
+            bootstrap_path = (workspace_path / bootstrap_path).resolve()
+        if bootstrap_path.exists():
+            return bootstrap_path
+        self.logger.warning("Configured bootstrap_codebase_dir not found: %s", bootstrap_path)
+        return None
+
+    def _create_monitor_writer(self, task_id: str) -> EmboMasterMonitorWriter | None:
+        if not self.run_dir:
+            return None
+        try:
+            return EmboMasterMonitorWriter(run_dir=self.run_dir, task_id=task_id)
+        except Exception as exc:
+            self.logger.warning("Failed to initialize monitor writer: %s", exc)
+            return None

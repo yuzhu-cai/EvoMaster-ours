@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: robotwin-pi05-pick-banana-debug
+  namespace: robotwin
+spec:
+  restartPolicy: Never
+  containers:
+  - name: debug
+    image: 10.1.0.116:5000/robotwin@sha256:3c90ebd9fdbdef917e02baa92af1cd8dbef069ccbb3d31af0f8be5fb79834aed
+    imagePullPolicy: IfNotPresent
+    env:
+    - name: NVIDIA_DRIVER_CAPABILITIES
+      value: "compute,utility,graphics"
+    - name: TASK_NAME
+      value: "pick_banana"
+    - name: TASK_CONFIG
+      value: "demo_randomized_franka_openpi"
+    - name: TRAIN_CONFIG_NAME
+      value: "pi05_pick_banana_lora_mixed"
+    - name: MODEL_NAME
+      value: "pick_banana_lora_mixed_embomaster_20260312_170302"
+    - name: DATA_REPO_ID
+      value: "pick_banana_mixed"
+    - name: SEED
+      value: "0"
+    - name: GPU_ID
+      value: "0,1,2,3"
+    - name: SAVE_INTERVAL
+      value: "2000"
+    - name: TRAIN_TIMEOUT
+      value: "32400"
+    - name: XLA_PYTHON_CLIENT_MEM_FRACTION
+      value: "0.9"
+    - name: HF_LEROBOT_HOME
+      value: "/data/yuanshuo/cache/lerobot"
+    - name: XDG_CACHE_HOME
+      value: "/data/yuanshuo/cache"
+    - name: HF_HOME
+      value: "/data/yuanshuo/cache/huggingface"
+    resources:
+      limits:
+        nvidia.com/gpu: 4
+        cpu: "32"
+        memory: "320Gi"
+      requests:
+        nvidia.com/gpu: 4
+        cpu: "16"
+        memory: "160Gi"
+    volumeMounts:
+    - name: robowin-workspace
+      mountPath: /workspace/RoboTwin
+    - name: robowin-cache
+      mountPath: /data/yuanshuo/cache
+    - name: dshm
+      mountPath: /dev/shm
+    - name: submission
+      mountPath: /workspace/submission
+    command: ["/bin/bash", "-lc"]
+    args:
+    - |
+      set -euo pipefail
+      if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+        source /opt/conda/etc/profile.d/conda.sh
+        if conda activate openpi >/dev/null 2>&1; then
+          echo "[DEBUG] Activated conda env: openpi"
+        elif conda activate RoboTwin >/dev/null 2>&1; then
+          echo "[DEBUG] Activated conda env: RoboTwin (fallback)"
+        else
+          echo "[DEBUG] WARNING: failed to activate conda env openpi or RoboTwin"
+        fi
+      fi
+      export HF_LEROBOT_HOME="${HF_LEROBOT_HOME}"
+      export XDG_CACHE_HOME="${XDG_CACHE_HOME}"
+      export HF_HOME="${HF_HOME}"
+      export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION}"
+      export CUDA_VISIBLE_DEVICES="${GPU_ID}"
+      echo "[DEBUG] robotwin-pi05-pick-banana-debug is ready"
+      echo "[DEBUG] workspace: /workspace/RoboTwin/policy/pi05"
+      echo "[DEBUG] example train command:"
+      echo "cd /workspace/RoboTwin/policy/pi05 && export PYTHONPATH=src:\${PYTHONPATH} && python scripts/train.py ${TRAIN_CONFIG_NAME} --exp-name pick_banana_debug --data.repo-id ${DATA_REPO_ID} --batch-size 2 --num-train-steps 10 --save-interval ${SAVE_INTERVAL} --overwrite"
+      sleep infinity
+  volumes:
+  - name: robowin-workspace
+    hostPath:
+      path: /data/yuanshuo/embo-ml-master-sim2real/RoboTwin
+      type: Directory
+  - name: robowin-cache
+    hostPath:
+      path: /data/yuanshuo/cache
+      type: Directory
+  - name: submission
+    emptyDir: {}
+  - name: dshm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 200Gi

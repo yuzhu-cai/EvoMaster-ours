@@ -48,18 +48,42 @@ python run.py --agent embomaster \
 - `k8s_runner.manifest_path/job_name_prefix`: 启用 K8S 时必填
 - `k8s_runner.debug_pod.*`: debug pod 的镜像、名称前缀、挂载路径等参数
 
-## Trajectory 输出与监控
+## 结构化监控与 Dashboard
 
 - 默认轨迹文件已切换为 `trajectory.jsonl`（每行一个 step entry，增量追加）
 - 仍兼容读取历史 `trajectory.json`（旧格式 JSON 数组）
-- 监控页支持：
+- 新版 run 在执行过程中会额外写入结构化监控快照：
+  - `run_dir/monitor/tasks/<task_id>/rounds/round_XXX.json`
+  - `run_dir/monitor/tasks/<task_id>/latest.json`
+  - `run_dir/monitor/tasks/<task_id>/final.json`
+  - `run_dir/monitor/tasks/<task_id>/logs/round_XXX.k8s.log`
+- 新版 Dashboard 支持：
   - 选择不同 run / 不同 `trajectory.jsonl|json`
-  - 展开不同 `exp_index` 的内容
-  - 查询 `debug_test` 记录
-  - 查询 pod/job 并拉取 pod 运行日志
-  - 查看每轮运行结果（K8S status / metric / log tail）
+  - 查看 round 级探索路线（workspace 继承链 + metric / valid / k8s status）
+  - 按最佳轮次 / 有效性 / 关键词筛选探索路线，并可直接点击 route 节点切换 round
+  - 展开每轮代码摘要、feedback、manifest、K8S 日志、validation 状态
+  - 汇总 `debug_test`、debug pod、job pod
+  - 后台轮询缓存 pod 状态与日志，支持强制刷新、按 round/source/status/关键词筛选 pod
+  - 实时查看 pod 日志，优先命中缓存；live 不可用时回退到已存档的 round K8S 日志
+  - 浏览 `submission`、`eval_result`、`checkpoints` 等产物目录
+- 如果 run 还没有结构化监控文件，Dashboard 会自动回退到 trajectory/log/manifest 解析模式
 
-启动实时监控页面：
+启动新版 Dashboard：
+
+```bash
+python playground/embomaster/scripts/dashboard_server.py \
+  --source playground/embomaster/workspaces \
+  --host 127.0.0.1 \
+  --port 8766
+```
+
+然后打开：
+
+```text
+http://127.0.0.1:8766
+```
+
+旧版 trajectory monitor 仍然保留，适合只看 step 流：
 
 ```bash
 python playground/embomaster/scripts/traj_monitor_server.py \
@@ -73,12 +97,6 @@ python playground/embomaster/scripts/traj_monitor_server.py \
 ```bash
 python playground/embomaster/scripts/traj_monitor_server.py \
   --trajectory /path/to/trajectories/task_0/trajectory.jsonl
-```
-
-然后打开：
-
-```text
-http://127.0.0.1:8765
 ```
 
 ## 术语迁移

@@ -15,5 +15,16 @@ Metric:
 K8S Log Tail:
 {k8s_log_tail}
 
-Please provide improvement suggestions for the next round.
+Candidate Best Summary:
+{candidate_best_summary}
 
+Candidate Last Summary:
+{candidate_last_summary}
+
+Recent Round Summaries:
+{recent_round_summaries}
+
+Parent Decision Constraints:
+{parent_decision_constraints}
+
+Please provide improvement suggestions for the next round.

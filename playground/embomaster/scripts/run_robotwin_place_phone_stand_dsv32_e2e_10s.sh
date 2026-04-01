@@ -8,6 +8,6 @@ cd "${ROOT_DIR}"
 
 exec conda run --no-capture-output -n embomaster python run.py \
   --agent embomaster \
-  --config "${ROOT_DIR}/configs/embomaster/config_robotwin_adjust_bottle_dsv32_e2e_10s.yaml" \
-  --task "${ROOT_DIR}/playground/embomaster/PRDs/robotwin_task_2.md" \
+  --config "${ROOT_DIR}/configs/embomaster/config_robotwin_place_phone_stand_dsv32_e2e_10s.yaml" \
+  --task "${ROOT_DIR}/playground/embomaster/PRDs/robotwin_place_phone_stand_RDT.md" \
   "$@"

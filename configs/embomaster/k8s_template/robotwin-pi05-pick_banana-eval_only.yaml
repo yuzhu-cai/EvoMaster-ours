@@ -1,0 +1,200 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-eval-pi05-pick-banana-20k
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-eval
+        image: 10.1.0.116:5000/robotwin@sha256:3c90ebd9fdbdef917e02baa92af1cd8dbef069ccbb3d31af0f8be5fb79834aed
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "pick_banana"
+        - name: TASK_CONFIG
+          value: "demo_randomized_franka_openpi"
+        - name: TRAIN_CONFIG_NAME
+          value: "pi05_pick_banana_full_mixed"
+        - name: MODEL_NAME
+          value: "pick_banana_full_mixed_embomaster"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0,1,2,3,4,5,6,7"
+        - name: TARGET_CKPT
+          value: "20000"
+        - name: XLA_PYTHON_CLIENT_MEM_FRACTION
+          value: "0.9"
+        - name: HF_LEROBOT_HOME
+          value: "/data/yuanshuo/cache/lerobot"
+        - name: XDG_CACHE_HOME
+          value: "/data/yuanshuo/cache"
+        - name: HF_HOME
+          value: "/data/yuanshuo/cache/huggingface"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+            cpu: "64"
+            memory: "640Gi"
+          requests:
+            nvidia.com/gpu: 8
+            cpu: "32"
+            memory: "320Gi"
+
+        volumeMounts:
+        - name: robowin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: robowin-cache
+          mountPath: /data/yuanshuo/cache
+        - name: dshm
+          mountPath: /dev/shm
+        - name: submission
+          mountPath: /workspace/submission
+        - name: assets-mount
+          mountPath: /workspace/assets
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -euo pipefail
+
+          resolve_visible_gpus() {
+            local gpu_list="${CUDA_VISIBLE_DEVICES:-}"
+
+            if [ -n "${gpu_list}" ]; then
+              echo "${gpu_list}"
+              return 0
+            fi
+
+            if [ -n "${GPU_ID:-}" ]; then
+              echo "${GPU_ID}"
+              return 0
+            fi
+
+            if command -v nvidia-smi >/dev/null 2>&1; then
+              gpu_list="$(nvidia-smi --list-gpus | awk 'BEGIN { first = 1 } NF { if (!first) printf ","; printf NR - 1; first = 0 }')"
+              if [ -n "${gpu_list}" ]; then
+                echo "${gpu_list}"
+                return 0
+              fi
+            fi
+
+            return 1
+          }
+
+          count_visible_gpus() {
+            awk -F',' '{ count = 0; for (i = 1; i <= NF; ++i) if ($i != "") count++; print count }' <<<"$1"
+          }
+
+          if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+            source /opt/conda/etc/profile.d/conda.sh
+            if conda activate openpi >/dev/null 2>&1; then
+              echo "[Pi05 Eval] Activated conda env: openpi"
+            elif conda activate RoboTwin >/dev/null 2>&1; then
+              echo "[Pi05 Eval] Activated conda env: RoboTwin (fallback)"
+            else
+              echo "[Pi05 Eval] WARNING: failed to activate conda env openpi or RoboTwin"
+            fi
+          fi
+
+          VISIBLE_GPU_LIST="$(resolve_visible_gpus)"
+          if [ -z "${VISIBLE_GPU_LIST}" ]; then
+            echo "[Pi05 Eval] ERROR: failed to detect visible GPUs."
+            exit 1
+          fi
+
+          VISIBLE_GPU_COUNT="$(count_visible_gpus "${VISIBLE_GPU_LIST}")"
+          if [ "${VISIBLE_GPU_COUNT}" -le 0 ]; then
+            echo "[Pi05 Eval] ERROR: invalid visible GPU list: ${VISIBLE_GPU_LIST}"
+            exit 1
+          fi
+
+          export HF_LEROBOT_HOME="${HF_LEROBOT_HOME}"
+          export XDG_CACHE_HOME="${XDG_CACHE_HOME}"
+          export HF_HOME="${HF_HOME}"
+          export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION}"
+          export CUDA_VISIBLE_DEVICES="${VISIBLE_GPU_LIST}"
+          export PI05_VISIBLE_GPUS="${VISIBLE_GPU_LIST}"
+          export PI05_NUM_GPUS="${VISIBLE_GPU_COUNT}"
+
+          CODEBASE_PATH="/workspace/RoboTwin"
+          PI05_DIR="${CODEBASE_PATH}/policy/pi05"
+          CHECKPOINT_ROOT="${PI05_DIR}/checkpoints/${TRAIN_CONFIG_NAME}/${MODEL_NAME}"
+
+          echo "=============================================="
+          echo "[Pi05] Eval Only"
+          echo "=============================================="
+          echo "TASK_NAME:          ${TASK_NAME}"
+          echo "TASK_CONFIG:        ${TASK_CONFIG}"
+          echo "TRAIN_CONFIG_NAME:  ${TRAIN_CONFIG_NAME}"
+          echo "MODEL_NAME:         ${MODEL_NAME}"
+          echo "VISIBLE_GPUS:       ${PI05_VISIBLE_GPUS}"
+          echo "VISIBLE_GPU_COUNT:  ${PI05_NUM_GPUS}"
+          echo "TARGET_CKPT:        ${TARGET_CKPT}"
+          echo "HF_LEROBOT_HOME:    ${HF_LEROBOT_HOME}"
+          echo "XDG_CACHE_HOME:     ${XDG_CACHE_HOME}"
+          echo "HF_HOME:            ${HF_HOME}"
+          echo "=============================================="
+
+          cd "${PI05_DIR}"
+          export PYTHONPATH="src${PYTHONPATH:+:${PYTHONPATH}}"
+
+          if [ ! -d "${CHECKPOINT_ROOT}" ]; then
+            echo "[Pi05 Eval] ERROR: checkpoint root not found: ${CHECKPOINT_ROOT}"
+            exit 1
+          fi
+
+          if [ -d "${CHECKPOINT_ROOT}/${TARGET_CKPT}" ]; then
+            LATEST_CKPT="${TARGET_CKPT}"
+          else
+            LATEST_CKPT="$(find "${CHECKPOINT_ROOT}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | awk '/^[0-9]+$/ {print $1}' | sort -n | tail -1)"
+          fi
+
+          if [ -z "${LATEST_CKPT}" ]; then
+            echo "[Pi05 Eval] ERROR: no numeric checkpoint directory found under ${CHECKPOINT_ROOT}"
+            exit 1
+          fi
+
+          echo "[Pi05 Eval] Evaluation checkpoint: ${LATEST_CKPT}"
+          EVAL_START_TS="$(date +%s)"
+          bash eval_parallel.sh "${TASK_NAME}" "${TASK_CONFIG}" "${TRAIN_CONFIG_NAME}" "${MODEL_NAME}" "${SEED}" "${PI05_VISIBLE_GPUS}" "${LATEST_CKPT}"
+
+          RESULT_ROOT="${CODEBASE_PATH}/eval_result/${TASK_NAME}/pi05/${TASK_CONFIG}/${MODEL_NAME}"
+          LATEST_RESULT="$(find "${RESULT_ROOT}" -name '_result.txt' -printf '%T@ %p\n' | awk -v min_ts="${EVAL_START_TS}" '$1 >= (min_ts - 1) { print }' | sort -n | tail -1 | cut -d' ' -f2-)"
+          if [ -z "${LATEST_RESULT}" ]; then
+            echo "[Pi05 Eval] ERROR: evaluation did not produce a fresh _result.txt under ${RESULT_ROOT}"
+            exit 1
+          fi
+
+          echo "[Pi05 Eval] Latest result file: ${LATEST_RESULT}"
+          cat "${LATEST_RESULT}"
+          FINAL_METRIC="$(tail -n 1 "${LATEST_RESULT}" | tr -d '\r\n ')"
+          echo "FINAL_METRIC=${FINAL_METRIC}"
+
+      volumes:
+      - name: robowin-workspace
+        hostPath:
+          path: /data/zixing/code/simulators/RoboTwin
+          type: Directory
+      - name: robowin-cache
+        hostPath:
+          path: /data/yuanshuo/cache
+          type: Directory
+      - name: assets-mount
+        hostPath:
+          path: /data/yuanshuo/embo-ml-master-sim2real/assets
+          type: Directory
+      - name: submission
+        emptyDir: {}
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 400Gi

@@ -1,0 +1,174 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robotwin-train-pi05-pick-banana
+  namespace: robotwin
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robotwin-train
+        image: 10.1.0.116:5000/robotwin@sha256:3c90ebd9fdbdef917e02baa92af1cd8dbef069ccbb3d31af0f8be5fb79834aed
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "pick_banana"
+        - name: TASK_CONFIG
+          value: "demo_randomized_franka_openpi"
+        - name: TRAIN_CONFIG_NAME
+          value: "pi05_pick_banana_lora_mixed"
+        - name: MODEL_NAME
+          value: "pick_banana_lora_mixed_embomaster_8gpu_20260313_1525"
+        - name: DATA_REPO_ID
+          value: "pick_banana_mixed"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0,1,2,3,4,5,6,7"
+        - name: SAVE_INTERVAL
+          value: "2000"
+        - name: TRAIN_TIMEOUT
+          value: "32400"
+        - name: XLA_PYTHON_CLIENT_MEM_FRACTION
+          value: "0.9"
+        - name: HF_LEROBOT_HOME
+          value: "/data/yuanshuo/cache/lerobot"
+        - name: XDG_CACHE_HOME
+          value: "/data/yuanshuo/cache"
+        - name: HF_HOME
+          value: "/data/yuanshuo/cache/huggingface"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 8
+            cpu: "64"
+            memory: "640Gi"
+          requests:
+            nvidia.com/gpu: 8
+            cpu: "32"
+            memory: "320Gi"
+
+        volumeMounts:
+        - name: robowin-workspace
+          mountPath: /workspace/RoboTwin
+        - name: robowin-cache
+          mountPath: /data/yuanshuo/cache
+        - name: dshm
+          mountPath: /dev/shm
+        - name: submission
+          mountPath: /workspace/submission
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -euo pipefail
+
+          if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+            source /opt/conda/etc/profile.d/conda.sh
+            if conda activate openpi >/dev/null 2>&1; then
+              echo "[Pi05] Activated conda env: openpi"
+            elif conda activate RoboTwin >/dev/null 2>&1; then
+              echo "[Pi05] Activated conda env: RoboTwin (fallback)"
+            else
+              echo "[Pi05] WARNING: failed to activate conda env openpi or RoboTwin"
+            fi
+          fi
+
+          export HF_LEROBOT_HOME="${HF_LEROBOT_HOME}"
+          export XDG_CACHE_HOME="${XDG_CACHE_HOME}"
+          export HF_HOME="${HF_HOME}"
+          export XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION}"
+          export CUDA_VISIBLE_DEVICES="${GPU_ID}"
+
+          CODEBASE_PATH="/workspace/RoboTwin"
+          PI05_DIR="${CODEBASE_PATH}/policy/pi05"
+          CHECKPOINT_ROOT="${PI05_DIR}/checkpoints/${TRAIN_CONFIG_NAME}/${MODEL_NAME}"
+
+          echo "=============================================="
+          echo "[Pi05] RoboTwin Training & Evaluation"
+          echo "=============================================="
+          echo "TASK_NAME:          ${TASK_NAME}"
+          echo "TASK_CONFIG:        ${TASK_CONFIG}"
+          echo "TRAIN_CONFIG_NAME:  ${TRAIN_CONFIG_NAME}"
+          echo "MODEL_NAME:         ${MODEL_NAME}"
+          echo "DATA_REPO_ID:       ${DATA_REPO_ID}"
+          echo "GPU_ID:             ${GPU_ID}"
+          echo "SAVE_INTERVAL:      ${SAVE_INTERVAL}"
+          echo "TRAIN_TIMEOUT:      ${TRAIN_TIMEOUT}"
+          echo "HF_LEROBOT_HOME:    ${HF_LEROBOT_HOME}"
+          echo "XDG_CACHE_HOME:     ${XDG_CACHE_HOME}"
+          echo "HF_HOME:            ${HF_HOME}"
+          echo "=============================================="
+
+          cd "${PI05_DIR}"
+          export PYTHONPATH="src${PYTHONPATH:+:${PYTHONPATH}}"
+
+          TRAIN_EXIT=0
+          if timeout "${TRAIN_TIMEOUT}" python scripts/train.py "${TRAIN_CONFIG_NAME}" \
+            --exp-name "${MODEL_NAME}" \
+            --data.repo-id "${DATA_REPO_ID}" \
+            --batch-size 64 \
+            --fsdp-devices 8 \
+            --save-interval "${SAVE_INTERVAL}" \
+            --overwrite; then
+            echo "[Pi05] Training completed successfully."
+          else
+            TRAIN_EXIT=$?
+            if [ "${TRAIN_EXIT}" -eq 124 ]; then
+              echo "[Pi05] Training timed out after ${TRAIN_TIMEOUT} seconds."
+            else
+              echo "[Pi05] Training failed with exit code ${TRAIN_EXIT}."
+            fi
+            echo "[Pi05] Attempting evaluation with the latest available checkpoint."
+          fi
+
+          if [ ! -d "${CHECKPOINT_ROOT}" ]; then
+            echo "[Pi05] ERROR: checkpoint root not found: ${CHECKPOINT_ROOT}"
+            exit 1
+          fi
+
+          LATEST_CKPT="$(find "${CHECKPOINT_ROOT}" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | awk '/^[0-9]+$/ {print $1}' | sort -n | tail -1)"
+          if [ -z "${LATEST_CKPT}" ]; then
+            echo "[Pi05] ERROR: no numeric checkpoint directory found under ${CHECKPOINT_ROOT}"
+            exit 1
+          fi
+
+          echo "[Pi05] Latest checkpoint: ${LATEST_CKPT}"
+          EVAL_START_TS="$(date +%s)"
+          bash eval.sh "${TASK_NAME}" "${TASK_CONFIG}" "${TRAIN_CONFIG_NAME}" "${MODEL_NAME}" "${SEED}" 0 "${LATEST_CKPT}"
+
+          RESULT_ROOT="${CODEBASE_PATH}/eval_result/${TASK_NAME}/pi05/${TASK_CONFIG}/${MODEL_NAME}"
+          LATEST_RESULT="$(find "${RESULT_ROOT}" -name '_result.txt' -printf '%T@ %p\n' | awk -v min_ts="${EVAL_START_TS}" '$1 >= (min_ts - 1) { print }' | sort -n | tail -1 | cut -d' ' -f2-)"
+          if [ -z "${LATEST_RESULT}" ]; then
+            echo "[Pi05] ERROR: evaluation did not produce a fresh _result.txt under ${RESULT_ROOT}"
+            exit 1
+          fi
+
+          echo "[Pi05] Latest result file: ${LATEST_RESULT}"
+          cat "${LATEST_RESULT}"
+          FINAL_METRIC="$(tail -n 1 "${LATEST_RESULT}" | tr -d '\r\n ')"
+          echo "FINAL_METRIC=${FINAL_METRIC}"
+
+      volumes:
+      - name: robowin-workspace
+        hostPath:
+          path: /data/zixing/code/simulators/RoboTwin
+          type: Directory
+
+      - name: robowin-cache
+        hostPath:
+          path: /data/yuanshuo/cache
+          type: Directory
+
+      - name: submission
+        emptyDir: {}
+
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 400Gi

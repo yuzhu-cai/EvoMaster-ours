@@ -4,8 +4,26 @@ Round: {round_index}/{max_rounds}
 Workspace ID: {workspace_id}
 Parent Workspace ID: {parent_workspace_id}
 Workspace Codebase Path: {workspace_codebase_path}
+Debug Container Codebase Path: {debug_container_codebase_path}
 Workspace Source Type: {workspace_source_type}
 Workspace Large Dir Mount Count: {workspace_large_dirs_count}
+
+Path Rules:
+- Use `Workspace Codebase Path` for file editing with `str_replace_editor`.
+- When using `debug_test` in k8s debug pod mode, do not use host absolute paths such as `/data/...`.
+- In `debug_test`, use workspace-relative paths such as `policy/pi05/...`, or container paths under `Debug Container Codebase Path`.
+- Treat host paths mentioned inside the task description or PRD as reference only unless you are editing files directly with `str_replace_editor`.
+
+Debug Pod Rules:
+- In k8s debug pod mode, `debug_test` may either reuse a shared debug pod across calls or delete the pod after each call, depending on runner configuration.
+- If pod auto-cleanup is disabled, treat the debug pod as stateful: leftover processes, package installs, cache changes, checkpoint directories, and temporary files from earlier calls can affect later calls.
+- If pod auto-cleanup is enabled, each `debug_test` call starts from a recreated pod on the next invocation.
+- `debug_test` supports an optional `fresh_pod=true` flag in k8s debug pod mode. When set, the runner recreates a clean debug pod before the command and deletes it after the command.
+- Keep `fresh_pod=false` for lightweight read-only checks such as imports, syntax checks, directory listing, and quick metadata inspection.
+- Use `fresh_pod=true` for training, evaluation, package installation, environment mutation, checkpoint-writing commands, or any command that may leave residual state or needs a clean runtime.
+- Do not rely on pipelines such as `| head`, `| tail`, or `| tee` to judge command success or failure.
+- Do not leave background jobs, `nohup` processes, or detached shells running in the shared debug pod.
+
 Task Description:
 {description}
 

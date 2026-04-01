@@ -108,6 +108,7 @@ k8s_runner:
     image: ""
     pod_name_prefix: "embomaster-debug"
     container_name: "debug"
+    env: {}
     workspace_mount_path: "/workspace"
     command: ["sleep", "infinity"]
     ready_timeout_seconds: 120

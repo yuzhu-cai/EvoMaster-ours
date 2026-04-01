@@ -131,7 +131,7 @@ k8s_runner:
     image: "10.1.0.116:5000/robotwin:latest"
     pod_name_prefix: "robotwin-debug"
     container_name: "debug"
-    pin_to_local_node: true
+    pin_to_local_node: false
     node_name: ""
     workspace_mount_path: "/workspace"
     workspace_host_path_type: "Directory"
