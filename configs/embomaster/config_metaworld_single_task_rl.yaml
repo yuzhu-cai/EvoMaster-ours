@@ -142,7 +142,7 @@ k8s_runner:
   large_dir_volume_prefix: "large-dir"
   manifest_env:
     TASK_CONFIG: "hand_insert"
-    TRAIN_TIMEOUT: "1200"
+    TRAIN_TIMEOUT: "3600"
   debug_pod:
     enabled: true
     image: "10.1.0.117:5000/metaworld_rl:latest"
