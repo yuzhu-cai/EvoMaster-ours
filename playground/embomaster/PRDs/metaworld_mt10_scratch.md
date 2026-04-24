@@ -1,141 +1,140 @@
-
-
-
 # **PRD: Improving Metaworld MT10 Multi-Task PPO Training Performance**
 
-## **Task Descriptions**
+## **Role**
 
-You are given a empty reinforcement learning training script with TODO task based on an existing codebase.
-Your task is to complete the PPOConfig configuration so that training on MetaWorld MT10 converges stably and achieves reasonable performance.
+You are an RL training engineer working on MetaWorld MT10 PPO in EmboMaster.
 
-You are not implementing PPO from scratch. The PPO algorithm, rollout logic, logging, and training loop are already implemented in the codebase. Your responsibility is algorithm configuration and model setup only.
+You are given an incomplete reinforcement learning training script with TODOs based on an existing codebase. Your task is to complete PPOConfig and model setup so MT10 training converges stably and reaches reasonable multi-task performance.
 
----
+You are not implementing PPO from scratch. PPO algorithm, rollout logic, logging, and training loop already exist in the codebase. Your responsibility is algorithm configuration and model setup only.
+
+## **Validated Runner Baseline**
+
+Assume runner infrastructure is already correct (image, mount, cache, orchestration).
+
+- training/evaluation are runner-managed
+- environment identity remains MetaWorld MT10
+- budget scale remains at the original `total_steps` regime
+
+If a run fails due to environment/infrastructure issues, report clearly, but do not convert this task into infra work.
+
+## **Primary Target**
+
+Unless runner explicitly overrides, keep the default target:
+
+- task family: `metaworld_mt10`
+- training selector: `--task_config mt10`
+- evaluation call (actual template behavior):
+  `bash eval.sh "/workspace/submission" "${WORKSPACE_ID:-${HOSTNAME:-metaworld-job}}"`
 
 ## **Ground Rules (Agent Contract)**
 
-* **Environment must remain unchanged:**
-  No modification to any Metaworld environment code or success criteria.
-
-* **Training budget fixed:**
-  Total training steps cannot be increased (must keep the original `total_steps` scale).
-
-* **Modification scope restricted:**
-  Only approved source files may be edited.
-
----
+- Environment must remain unchanged: do not modify MetaWorld env code or success criteria.
+- Training budget is fixed: do not increase total training scale (`total_steps` level).
+- Modification scope is restricted: edit only approved source files.
+- Keep PPO line unchanged: do not replace with another algorithm/framework.
+- Keep hyperparameter changes moderate: avoid large disruptive jumps.
 
 ## **Codebase Path**
 
-The entire codebase has already been copied into your workspace.
-Your current working directory is the root of this codebase.
+The full codebase is already in workspace and current working directory is project root.
 
-You may inspect files using `file_editor` or `terminal`.
+## **Related Code**
 
+You may modify **only** this file:
 
-### Related Code
+1. `./examples/multi_task/ppo_mt10.py`
 
-You may modify **only** the following files:
+Default expectation:
 
+- Most successful solutions should only update PPOConfig and model setup in this file.
+- Do not create new files outside allowed scope.
 
-1. **Training script**
-   `./examples/multi_task/ppo_mt10.py`
+## **Tool Usage Instructions**
 
-### ⚠️ CRITICAL: How to Make Changes
+Follow this workflow, consistent with the new PRD style:
 
-**USE YOUR `file_editor` TOOL TO DIRECTLY MODIFY FILES!**
+1. Inspect current code in the allowed file first.
+2. Apply direct, minimal edits only within the approved scope.
+3. Re-open and verify the modified file content after edits.
+4. Let the runner/system execute training and evaluation automatically.
 
-You have access to the following tools:
-- `file_editor` - Use this to view and edit files directly, `old_str` is required for command: str_replace.
-- `terminal` - Use this to run commands and inspect the codebase
-- `task_tracker` - Use this to track your progress
-## Tool Call Format
-**You MUST use the standard structured tool calling interface to invoke tools.**
-- Use formal tool calls provided by the API.
-- DO NOT embed tool calls as plain text in your response unless you are unable to use the structured interface.
-"""
+Do not turn this task into infrastructure work, and do not rewrite unrelated modules.
 
-### Example Tool Calls (Native Format):
-Your tool calls should be handled by the model's native function calling mechanism.
+## **Recommended Workflow**
 
-**1. To view the file:**
-- tool: `file_editor`
-- arguments: {{ "command": "view", "path": "{codebase_dir}/policy/DP/diffusion_policy/config/robot_dp_14.yaml", "security_risk": "LOW" }}
+### **Step 1: Inspect Before Editing**
 
-**2. To modify a file:**
-IMPORTANT: Please strictly follow the calling format to modify a file, or it will cause fatal erros! Espeacially, the old_str parameter is needed. You can view the original file to get old_str.
-- tool: `file_editor`
-- arguments: {{ 
-    "command": "str_replace", 
-    "path": "{codebase_dir}/policy/DP/diffusion_policy/config/robot_dp_14.yaml",
-    "old_str": "lr: 1.0e-4",
-    "new_str": "lr: 5.0e-5",
-    "security_risk": "MEDIUM" 
-  }}
+Read `./examples/multi_task/ppo_mt10.py` and confirm:
 
---- 
-**DO NOT** write Python scripts to modify files. Instead:
+- current PPOConfig defaults
+- policy/value network settings
+- rollout horizon, batch/update cadence, and advantage-related settings
+- likely bottleneck (instability, under-exploration, multi-task interference)
 
-1. **Use `file_editor` to view the current code**
-2. **Use `file_editor` to make your modifications directly**
-3. **The system will automatically run training after you're done**
+### **Step 2: Apply Targeted Improvements**
 
----
+Good directions:
 
-## **Example Workflow**
+- tune PPOConfig for stability and sample efficiency
+- modestly improve capacity or regularization for MT10 generalization
+- reduce variance/task imbalance without increasing budget
 
-### **Step 1: Inspect current code**
+Bad directions:
 
-Open:
+- large unbounded hyperparameter swings
+- environment or success-criteria modifications
+- changing task identity away from MT10
+- rewriting PPO loop/training framework
+
+### **Step 3: Verify Changes**
+
+Re-open modified file and ensure:
+
+- intended edits are present
+- no unrelated changes were introduced
+- syntax/config structure remains valid
+
+## **Train/Eval Contract Reference**
+
+Keep this runner contract aligned:
+
+- train side includes `--task_config mt10` (or `${TASK_CONFIG}` with default `mt10`)
+- eval side follows actual template call:
+  `bash eval.sh "/workspace/submission" "${WORKSPACE_ID:-${HOSTNAME:-metaworld-job}}"`
+- typical chain in template:
 
 ```bash
-./examples/multi_task/ppo_mt10.py
+timeout "${TRAIN_TIMEOUT:-7200}" bash train.sh --task_config "${TASK_CONFIG}" || true
+bash eval.sh "/workspace/submission" "${WORKSPACE_ID:-${HOSTNAME:-metaworld-job}}"
 ```
 
-### **Step 2: Apply modifications**
+## **Task Characteristics**
 
-For example:
+MT10 is a multi-task control benchmark where optimization stability and cross-task balance are both critical.
 
-* Increase network size
+Typical failure modes:
 
-### **Step 3: Verify changes**
+- unstable early updates and noisy returns
+- overfitting to easier task subsets
+- insufficient exploration on harder tasks
+- later-stage regressions on previously improving tasks
 
-Re-open modified files via `file_editor`.
+## **Optimization Priority**
 
----
+Use this order:
 
-## **What You Should Do**
-
-### **DO**
-
-- Use `file_editor` to read files in `./codebase/`
-- Use `file_editor` to modify the allowed files directly
-- Use `terminal` to explore the codebase structure
-- Explain your changes and rationale
-
-### **DO NOT**
-
-- Write Python scripts that modify files programmatically
-- Import torch, tensorflow, or create training loops
-- Call training scripts manually (the system does this automatically)
-- Create new files outside the allowed list
-- Run any python files, you can only edit the files.
-- Do not make overly large changes to the hyperparameters in the PPO algorithm. The current configuration has already been carefully tuned by humans, and excessively large modifications may instead lead to a significant degradation in performance.
-
+1. verify MT10 train/eval argument contract alignment
+2. stabilize optimization dynamics (LR/clip/advantage/update schedule)
+3. improve multi-task robustness with small config/model refinements
+4. avoid broad structural rewrites unless there is a concrete blocking bug
 
 ## **Deliverables**
 
-After completing modifications, you must provide:
+After modification, report:
 
-### **1. Change Summary**
-
-* List modified files
-* Specify exact locations + content of changes
-
-### **2. Rationale**
-
-* Explain why each change was made
-
-### **3. Expected Impact**
-
-* Explain the predicted improvements in performance or stability
+1. changed files
+2. exact modified fields/sections
+3. rationale for each change
+4. expected impact on stability/performance
+5. remaining risks or assumptions

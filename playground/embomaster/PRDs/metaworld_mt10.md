@@ -52,34 +52,10 @@ You may modify **only** the following files:
 **USE YOUR `file_editor` TOOL TO DIRECTLY MODIFY FILES!**
 
 You have access to the following tools:
-- `file_editor` - Use this to view and edit files directly, `old_str` is required for command: str_replace.
+- `file_editor` - Use this to view and edit files directly
 - `terminal` - Use this to run commands and inspect the codebase
 - `task_tracker` - Use this to track your progress
-## Tool Call Format
-**You MUST use the standard structured tool calling interface to invoke tools.**
-- Use formal tool calls provided by the API.
-- DO NOT embed tool calls as plain text in your response unless you are unable to use the structured interface.
-"""
 
-### Example Tool Calls (Native Format):
-Your tool calls should be handled by the model's native function calling mechanism.
-
-**1. To view the file:**
-- tool: `file_editor`
-- arguments: {{ "command": "view", "path": "{codebase_dir}/policy/DP/diffusion_policy/config/robot_dp_14.yaml", "security_risk": "LOW" }}
-
-**2. To modify a file:**
-IMPORTANT: Please strictly follow the calling format to modify a file, or it will cause fatal erros! Espeacially, the old_str parameter is needed. You can view the original file to get old_str.
-- tool: `file_editor`
-- arguments: {{ 
-    "command": "str_replace", 
-    "path": "{codebase_dir}/policy/DP/diffusion_policy/config/robot_dp_14.yaml",
-    "old_str": "lr: 1.0e-4",
-    "new_str": "lr: 5.0e-5",
-    "security_risk": "MEDIUM" 
-  }}
-
---- 
 **DO NOT** write Python scripts to modify files. Instead:
 
 1. **Use `file_editor` to view the current code**
@@ -134,7 +110,7 @@ bash train.sh
 - Import torch, tensorflow, or create training loops
 - Call training scripts manually (the system does this automatically)
 - Create new files outside the allowed list
-- Run any python files, you can only edit the files.
+- Do NOT attempt ad-hoc Python verification; directly edit the codebase files and rely on the provided bash pipeline.
 - Do not make overly large changes to the hyperparameters in the PPO algorithm. The current configuration has already been carefully tuned by humans, and excessively large modifications may instead lead to a significant degradation in performance.
 ---
 

@@ -11,7 +11,7 @@ spec:
       containers:
       - name: metaworld-train-pick-out-of-hole
         # ★ 这里改成你私有仓库里的镜像 ★
-        image: 10.1.0.116:5000/metaworld_single_task_rl:latest
+        image: 10.1.0.117:5000/metaworld_single_task_rl:latest
         imagePullPolicy: IfNotPresent
         securityContext:
           runAsUser: 0

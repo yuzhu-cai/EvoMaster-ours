@@ -1,0 +1,196 @@
+# EmboMaster 专用映射配置
+# 目标：对齐 metaworld MT10 任务的端到端运行参数。
+#
+# 使用方式：
+# python run.py --agent embomaster \
+#   --config configs/embomaster/config_metaworld_mt10_e2e_10s.yaml \
+#   --task /data/yuanshuo/EvoMaster-ours/playground/embomaster/PRDs/metaworld_mt10.md
+
+llm:
+  gpugeek_vendor2_claude46:
+    provider: "openai"
+    model: "Vendor2/Claude-4.6-Opus"
+    api_key: "u0rgjezq53e5tv01000dg95v0yqn2eecv02b7z3r"
+    base_url: "https://api.gpugeek.com/v1"
+    temperature: 0.5
+    max_tokens: 16384
+    timeout: 300
+    max_retries: 3
+    retry_delay: 1.0
+  default: "gpugeek_vendor2_claude46"
+
+agents:
+  coding:
+    llm: "gpugeek_vendor2_claude46"
+    max_turns: 100
+    enable_tools: true
+    tools:
+      builtin:
+        - "finish"
+        - "str_replace_editor"
+        - "debug_test"
+        - "xmaster_search_web_search"
+        - "xmaster_search_web_parse"
+      mcp: "mcp_x_master_search.json"
+    context:
+      max_tokens: 128000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 6
+    system_prompt_file: "prompts/coding_system_prompt.txt"
+    user_prompt_file: "prompts/coding_user_prompt.txt"
+
+  feedback:
+    llm: "gpugeek_vendor2_claude46"
+    max_turns: 8
+    enable_tools: true
+    tools:
+      builtin:
+        - "execute_bash"
+        - "str_replace_editor"
+        - "think"
+        - "finish"
+    context:
+      max_tokens: 64000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 4
+    system_prompt_file: "prompts/feedback_system_prompt.txt"
+    user_prompt_file: "prompts/feedback_user_prompt.txt"
+
+session:
+  type: "local"
+  local:
+    working_dir: "./playground/embomaster/workspaces"
+    timeout: 300
+    symlinks:
+      "/data/yuanshuo/Embo-ML-Master/embodied-benchmarks-code-repos/metaworld": "codebase"
+
+debug_test:
+  enabled: true
+  default_timeout: 600
+  default_env_init: ""
+  use_k8s_debug_pod: true
+  k8s_fallback_to_local: false
+
+tool_policy:
+  allowed:
+    - "finish"
+    - "str_replace_editor"
+    - "debug_test"
+    - "xmaster_search_web_search"
+    - "xmaster_search_web_parse"
+  disable_execute_bash: true
+
+experiment:
+  steps: 10
+  time_limit_seconds: 43200
+  metric_mode: "maximize"
+  metric_pattern: "mean_success_rate\\\"?\\s*[:=]\\s*([0-9]*\\.?[0-9]+)"
+  stop_on_job_failed: false
+
+workspace_isolation:
+  enabled: true
+  session_dir: ".embomaster_session"
+  source_codebase_dir: "/data/yuanshuo/Embo-ML-Master/embodied-benchmarks-code-repos/metaworld"
+  parent_strategy: "advisor"
+  size_threshold_mb: 30
+  copy_plan_cache_enabled: true
+  copy_plan_cache_file: ".embomaster_copy_plan.json"
+  copy_plan_rebuild: false
+  submission_subdir: "submission"
+
+parent_selection:
+  enabled: true
+  allow_none: true
+  fallback_strategy: "best"
+  require_valid_eval_for_last: true
+  require_metric_for_last: true
+  reject_last_on_k8s_status:
+    - "failed"
+    - "timeout"
+  max_feedback_chars: 1200
+  recent_rounds: 3
+
+result_validation:
+  enabled: false
+  require_eval_dir: false
+  require_success_rate_txt: false
+  require_checkpoint: false
+  require_dataset_stats: false
+  invalidate_metric_on_failure: false
+  invalid_k8s_status: "invalid_artifacts"
+
+k8s_runner:
+  enabled: true
+  namespace: "default"
+  poll_interval_seconds: 15
+  job_timeout_seconds: 18000
+  cleanup_on_success: true
+  cleanup_on_timeout: true
+  manifest_path: "configs/embomaster/k8s_template/metaworld.yaml"
+  job_name_prefix: "metaworld-mt10"
+  container_workspace: "/workspace"
+  container_name: "metaworld-train"
+  apply_mounts_to_all_containers: false
+  codebase_volume_name: "metaworld-workspace"
+  codebase_mount_path: "/workspace"
+  enable_submission_mount: true
+  submission_volume_name: "submission"
+  submission_mount_path: "/workspace/submission"
+  enable_large_dir_mounts: true
+  large_dir_volume_prefix: "large-dir"
+  manifest_env:
+    TASK_CONFIG: "mt10"
+    TRAIN_TIMEOUT: "7200"
+  debug_pod:
+    enabled: true
+    image: "10.1.0.117:5000/metaworld_rl:latest"
+    pod_name_prefix: "metaworld-debug"
+    container_name: "debug"
+    pin_to_local_node: false
+    node_name: ""
+    workspace_mount_path: "/workspace"
+    workspace_host_path_type: "Directory"
+    command: ["sleep", "infinity"]
+    ready_timeout_seconds: 120
+    cleanup_after_exec: false
+
+mcp:
+  enabled: true
+  config_file: "mcp_x_master_search.json"
+
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true
+  log_path: "./logs/embomaster_metaworld_mt10_e2e_10s.log"
+
+project_root: "."
+run_dir_base: "./playground/embomaster/workspaces"
+workspace: "./playground/embomaster/workspaces"
+results_dir: "./results"
+debug: false
+
+env:
+  cluster:
+    debug_pool:
+      type: "cpu"
+      max_concurrent: 1
+    train_pool:
+      type: "cpu"
+      max_concurrent: 1
+  docker:
+    base_image: "python:3.11-slim"
+    registry: "docker.io"
+    pull_policy: "if_not_present"
+  scheduler:
+    type: "local"
+    queue_timeout: 300
+    retry_failed: false
+    max_retries: 1

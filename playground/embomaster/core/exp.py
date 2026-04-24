@@ -313,6 +313,11 @@ class EmboMasterExp(BaseExp):
                     env_map = k8s_cfg.get("manifest_env", {})
                     if not isinstance(env_map, dict):
                         env_map = {}
+                    else:
+                        env_map = dict(env_map)
+                    workspace_id = str(workspace_context.get("workspace_id", "") or "").strip()
+                    if workspace_id:
+                        env_map.setdefault("WORKSPACE_ID", workspace_id)
                     if workspace_codebase_path:
                         debug_pod_cleanup_before_submit = self.k8s_runner.cleanup_debug_pod_for_workspace(
                             workspace_codebase_path,
@@ -457,7 +462,6 @@ class EmboMasterExp(BaseExp):
             logs = str(logs_obj.get("output", "") or logs_obj.get("stdout", ""))
         if not logs:
             return None, "no_logs"
-
         metric_pattern = str(metric_cfg.get("metric_pattern", "")).strip()
         if metric_pattern:
             try:
@@ -808,7 +812,7 @@ class EmboMasterExp(BaseExp):
     ) -> None:
         if not bool(result_validation_cfg.get("enabled", True)):
             return
-
+        
         artifacts = round_result.get("artifacts_summary", {})
         if not isinstance(artifacts, dict):
             artifacts = {}
@@ -833,7 +837,7 @@ class EmboMasterExp(BaseExp):
 
         round_result["validation_errors"] = errors
         round_result["result_valid"] = not errors
-
+        
         if not errors:
             return
 

@@ -43,8 +43,10 @@ spec:
         command: ["/bin/bash", "-lc"]
         args:
         - >
-          cd /workspace && source /opt/conda/etc/profile.d/conda.sh && conda activate metaworld && 
-          bash train.sh --task_config $TASK_CONFIG && bash eval.sh 
+          set -e;
+          cd /workspace && source /opt/conda/etc/profile.d/conda.sh && conda activate metaworld &&
+          timeout "${TRAIN_TIMEOUT:-3600}" bash train.sh --task_config "${TASK_CONFIG}" || true;
+          bash eval.sh "/workspace/submission" "${WORKSPACE_ID:-${HOSTNAME:-metaworld-job}}"
 
 
       volumes:
