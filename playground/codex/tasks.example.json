@@ -1,0 +1,12 @@
+[
+  {
+    "id": "task_001",
+    "prompt": "Output one sentence: hello from codex."
+  },
+  {
+    "id": "task_002",
+    "prompt": "List the files in the current directory and summarize them briefly.",
+    "codex_timeout_sec": 600
+  }
+]
+
