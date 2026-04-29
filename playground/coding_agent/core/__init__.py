@@ -1,1 +1,0 @@
-"""Coding Agent Playground Core"""
