@@ -1,0 +1,5 @@
+Please answer the following question by searching the web:
+
+{description}
+
+Use the available search tools to find accurate information. Break down complex questions into smaller search queries. 
