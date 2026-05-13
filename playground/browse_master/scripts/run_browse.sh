@@ -14,9 +14,9 @@
 set -e
 
 # Configuration defaults
-IDS="${IDS:-0-3}"
-RUN_NAME="${RUN_NAME:-browse_gpt5.4_1}"
-RUN_WORKERS="${RUN_WORKERS:-4}"
+IDS="${IDS:-0-1266}"
+RUN_NAME="${RUN_NAME:-browse_dsv4pro}"
+RUN_WORKERS="${RUN_WORKERS:-30}"
 EVAL_WORKERS="${EVAL_WORKERS:-4}"
 DATA_JSON="${DATA_JSON:-playground/browse_master/test/browsecomp_decrypted.json}"
 
@@ -49,6 +49,13 @@ python "${PROJECT_ROOT}/playground/browse_master/scripts/run_batch.py" \
     --run-dir "${RUN_DIR}" \
     --workers "${RUN_WORKERS}"
 echo "[Step 1/4] Done" | tee -a "${LOG_FILE}"
+
+# Extract final answers into task_xxxx/solution.txt files.
+echo "" | tee -a "${LOG_FILE}"
+echo "[Post-run] Extracting final solutions..." | tee -a "${LOG_FILE}"
+python "${PROJECT_ROOT}/playground/browse_master/scripts/extract_browse_solutions.py" \
+    "${RUN_DIR}"
+echo "[Post-run] Done" | tee -a "${LOG_FILE}"
 
 # Step 2: Merge results
 # echo "" | tee -a "${LOG_FILE}"

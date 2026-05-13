@@ -177,4 +177,3 @@ class TaskInstance(BaseModel):
     input_data: dict[str, Any] = Field(default_factory=dict, description="Input data")
     images: list[str] = Field(default_factory=list, description="Image file path list (supports PNG/JPG)")
     meta: dict[str, Any] = Field(default_factory=dict, description="Metadata")
-

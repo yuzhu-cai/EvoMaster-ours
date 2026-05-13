@@ -122,8 +122,8 @@ class WebFetchTool(BaseTool):
             headers["Authorization"] = f"Bearer {jina_api_key}"
 
         proxies = {
-            "http": "http://127.0.0.1:7890",
-            "https": "http://127.0.0.1:7890"
+            "http": "http://127.0.0.1:30000",
+            "https": "http://127.0.0.1:30000"
         }
         for attempt in range(3):
             try:

@@ -6,7 +6,7 @@ You have access to the following tools:
 - `finish`: Report the final answer when you are confident.
 
 Workflow:
-1. Analyze the question and break it down into key search queries.
+1. Analyze the question and break it down into key search queries, You can use `think` tool for reasoning.
 2. Use `google_search` to find relevant web pages.
 3. Use `web_fetch` to read promising pages and extract key facts.
 4. If the information is insufficient or ambiguous, perform additional searches with refined queries.

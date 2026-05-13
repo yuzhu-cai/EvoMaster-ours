@@ -13,15 +13,26 @@ llm:
     max_retries: 3
     retry_delay: 1.0
 
-  default: "openai"
+  deepseek:
+    provider: "deepseek"
+    model: "deepseek-v4-pro"
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "https://api.deepseek.com"
+    temperature: 0.7
+    max_tokens: 128000
+    timeout: 60
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "deepseek"
 
 # ============================================
 # Agent Configuration
 # ============================================
 agents:
   search:
-    llm: "openai"
-    max_turns: 30
+    llm: "deepseek"
+    max_turns: 80
     tools:
       builtin: ["*"]
     context:

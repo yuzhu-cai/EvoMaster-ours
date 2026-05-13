@@ -8,7 +8,6 @@ from __future__ import annotations
 import base64
 import logging
 import sys
-import threading
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -129,127 +128,6 @@ def truncate_content(content: str, max_length: int = 5000, head_length: int = 25
     return content
 
 
-class _SDKRetryReasonFilter(logging.Filter):
-    """Enrich the OpenAI / Anthropic SDK retry log with the underlying cause.
-
-    Both SDKs emit two separate records around a retry:
-
-        log.debug("Encountered httpx.TimeoutException", exc_info=True)  # or similar
-        log.info("Retrying request to %s in %f seconds", url, timeout)
-
-    The ``Encountered ...`` record carries the actual exception via
-    ``exc_info`` but is only visible at DEBUG. Users running at INFO see the
-    ``Retrying request ...`` line with no context and cannot tell whether
-    it was a network timeout, a 5xx, a 429, etc.
-
-    This filter attaches to the SDK's ``_base_client`` logger, captures the
-    exception from the most recent ``Encountered`` record (per thread), and
-    appends a short summary to the next ``Retrying request`` record on the
-    same thread. To make the ``Encountered`` record reachable we have to
-    raise the logger level to DEBUG — but we drop every DEBUG record here
-    after inspecting it so the console is not flooded with the SDK's normal
-    per-request chatter (``Request options``, ``Sending HTTP Request``,
-    ``HTTP Response``, ``request_id``, etc.).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        # Per-thread storage so concurrent requests don't scramble reasons.
-        self._local = threading.local()
-
-    def _get_last_reason(self) -> str | None:
-        return getattr(self._local, "last_reason", None)
-
-    def _set_last_reason(self, value: str | None) -> None:
-        self._local.last_reason = value
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        try:
-            msg = record.getMessage()
-        except Exception:
-            # Unknown record: if it's DEBUG, drop per our policy; else keep.
-            return record.levelno > logging.DEBUG
-
-        if msg.startswith("Encountered "):
-            exc_info = record.exc_info
-            if exc_info and exc_info[1] is not None:
-                exc = exc_info[1]
-                exc_str = str(exc).strip()
-                summary = f"{type(exc).__module__}.{type(exc).__name__}"
-                # Trim the redundant "builtins." prefix for stdlib errors.
-                if summary.startswith("builtins."):
-                    summary = summary[len("builtins."):]
-                status = getattr(exc, "status_code", None)
-                if status is not None:
-                    summary += f" (status={status})"
-                if exc_str:
-                    summary += f": {exc_str}"
-                self._set_last_reason(summary)
-            else:
-                # Fall back to the bare "Encountered <X>" string.
-                self._set_last_reason(msg)
-            # Captured — drop so it doesn't show up in the console.
-            return False
-
-        if msg.startswith("Retrying request to"):
-            reason = self._get_last_reason() or "unknown"
-            # Rewrite the record so the reason shows up wherever the original
-            # line was going. Pre-render with the current args to keep
-            # downstream formatting simple and avoid mutating args.
-            try:
-                rendered = record.msg % record.args if record.args else record.msg
-            except Exception:
-                rendered = record.msg
-            record.msg = f"{rendered} (reason: {reason})"
-            record.args = None
-            self._set_last_reason(None)
-            return True
-
-        # Everything else: suppress the SDK's DEBUG chatter (Request options,
-        # Sending HTTP Request, HTTP Response, request_id, ...), let INFO
-        # and above through unchanged.
-        return record.levelno > logging.DEBUG
-
-
-_SDK_RETRY_LOGGER_NAMES = (
-    "openai._base_client",
-    "anthropic._base_client",
-)
-
-_sdk_retry_filter_installed = False
-
-
-def _install_sdk_retry_reason_filter() -> None:
-    """Attach :class:`_SDKRetryReasonFilter` to the OpenAI / Anthropic SDK loggers.
-
-    We raise each logger's level to DEBUG so the ``Encountered ...`` record
-    survives the level gate and reaches the filter; the filter then drops
-    every DEBUG record itself so the extra chatter never reaches the root
-    handlers. Safe to call multiple times — the filter is only installed
-    once per logger.
-    """
-    global _sdk_retry_filter_installed
-    if _sdk_retry_filter_installed:
-        return
-    filt = _SDKRetryReasonFilter()
-    for name in _SDK_RETRY_LOGGER_NAMES:
-        lg = logging.getLogger(name)
-        # DEBUG so the "Encountered ..." record passes the logger-level gate
-        # and reaches our filter. The filter drops DEBUG records itself so
-        # this does not spam the console.
-        if lg.level == logging.NOTSET or lg.level > logging.DEBUG:
-            lg.setLevel(logging.DEBUG)
-        # Filter has to run on the logger (not a handler) so it sees records
-        # before they propagate to root handlers.
-        already = any(isinstance(f, _SDKRetryReasonFilter) for f in lg.filters)
-        if not already:
-            lg.addFilter(filt)
-    _sdk_retry_filter_installed = True
-
-
-_install_sdk_retry_reason_filter()
-
-
 class LLMConfig(BaseModel):
     """LLM configuration."""
     provider: Literal["openai", "anthropic","deepseek","openrouter"] = Field(description="LLM provider")
@@ -262,6 +140,11 @@ class LLMConfig(BaseModel):
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     retry_delay: float = Field(default=1.0, description="Retry delay in seconds")
     use_completion_api: bool = Field(default=False, description="Use Completion API instead of Chat API")
+    stream: bool = Field(default=False, description="Use streaming Chat Completion responses")
+    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+        default=None,
+        description="OpenAI reasoning effort level: low, medium, high (supported by gpt-4o-2024-08-06+)"
+    )
 
 
 class LLMResponse(BaseModel):
@@ -603,12 +486,23 @@ class OpenAILLM(BaseLLM):
             "timeout": kwargs.get("timeout", self.config.timeout)
         }
 
+        # Handle reasoning_effort parameter (kwargs overrides config)
+        if "reasoning_effort" in kwargs:
+            request_params["reasoning_effort"] = kwargs["reasoning_effort"]
+        elif self.config.reasoning_effort is not None:
+            request_params["reasoning_effort"] = self.config.reasoning_effort
+
         if self.config.max_tokens:
             request_params["max_tokens"] = kwargs.get("max_tokens", self.config.max_tokens)
 
         if tools:
             request_params["tools"] = tools
             request_params["tool_choice"] = kwargs.get("tool_choice", "auto")
+
+        stream = kwargs["stream"] if "stream" in kwargs else self.config.stream
+        if stream:
+            request_params["stream"] = True
+            return self._call_streaming(request_params)
 
         # Call the API
         response = self.client.chat.completions.create(**request_params)
@@ -636,16 +530,113 @@ class OpenAILLM(BaseLLM):
             content=message.content,
             tool_calls=tool_calls,
             finish_reason=choice.finish_reason,
-            usage={
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            },
+            usage=self._usage_to_dict(response.usage),
             meta={
                 "model": response.model,
                 "response_id": response.id,
             }
         )
+
+    def _call_streaming(self, request_params: dict[str, Any]) -> LLMResponse:
+        """Call the Chat Completion API in streaming mode and aggregate chunks."""
+        stream = self.client.chat.completions.create(**request_params)
+
+        content_parts: list[str] = []
+        tool_call_parts: dict[int, dict[str, str]] = {}
+        finish_reason: str | None = None
+        usage: dict[str, int] = {}
+        response_model = request_params.get("model")
+        response_id = ""
+
+        for chunk in stream:
+            response_model = getattr(chunk, "model", response_model)
+            response_id = getattr(chunk, "id", response_id) or response_id
+
+            chunk_usage = getattr(chunk, "usage", None)
+            if chunk_usage is not None:
+                usage = self._usage_to_dict(chunk_usage)
+
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+
+            choice = choices[0]
+            finish_reason = getattr(choice, "finish_reason", None) or finish_reason
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                continue
+
+            delta_content = getattr(delta, "content", None)
+            if delta_content:
+                content_parts.append(delta_content)
+
+            for tool_delta in getattr(delta, "tool_calls", None) or []:
+                index = getattr(tool_delta, "index", None)
+                if index is None:
+                    index = len(tool_call_parts)
+                current = tool_call_parts.setdefault(
+                    index,
+                    {"id": "", "name": "", "arguments": ""},
+                )
+
+                tool_id = getattr(tool_delta, "id", None)
+                if tool_id:
+                    current["id"] = tool_id
+
+                function_delta = getattr(tool_delta, "function", None)
+                if function_delta is None:
+                    continue
+
+                name = getattr(function_delta, "name", None)
+                if name:
+                    current["name"] += name
+
+                arguments = getattr(function_delta, "arguments", None)
+                if arguments:
+                    current["arguments"] += arguments
+
+        tool_calls = None
+        if tool_call_parts:
+            tool_calls = [
+                ToolCall(
+                    id=data["id"] or f"call_{index}",
+                    type="function",
+                    function=FunctionCall(
+                        name=data["name"],
+                        arguments=data["arguments"],
+                    ),
+                )
+                for index, data in sorted(tool_call_parts.items())
+            ]
+
+        return LLMResponse(
+            content="".join(content_parts) or None,
+            tool_calls=tool_calls,
+            finish_reason=finish_reason,
+            usage=usage,
+            meta={
+                "model": response_model,
+                "response_id": response_id,
+            },
+        )
+
+    @staticmethod
+    def _usage_to_dict(usage: Any) -> dict[str, int]:
+        """Normalize optional SDK usage objects into the internal usage dict."""
+        if usage is None:
+            return {}
+        if isinstance(usage, dict):
+            return {
+                "prompt_tokens": int(usage.get("prompt_tokens", 0) or 0),
+                "completion_tokens": int(usage.get("completion_tokens", 0) or 0),
+                "total_tokens": int(usage.get("total_tokens", 0) or 0),
+            }
+        return {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+            "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+            "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+        }
+
 
 class DeepSeekLLM(BaseLLM):
     """DeepSeek LLM implementation.
@@ -760,6 +751,7 @@ class DeepSeekLLM(BaseLLM):
             "messages": messages,
             "temperature": kwargs.get("temperature", self.config.temperature),
             "timeout": kwargs.get("timeout", self.config.timeout),
+            "reasoning_effort":"max",
             "extra_body": {
                 "chat_template_kwargs": {"thinking": True},
                 "separate_reasoning": True
