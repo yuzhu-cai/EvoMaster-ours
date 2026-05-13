@@ -1,0 +1,73 @@
+# ============================================
+# LLM Configuration
+# ============================================
+llm:
+  openai:
+    provider: "openai"
+    model: "${GPT_CHAT_MODEL}"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    reasoning_effort: "medium"
+    temperature: 0.7
+    max_tokens: 30000
+    timeout: 60
+    max_retries: 3
+    retry_delay: 1.0
+
+  deepseek:
+    provider: "deepseek"
+    model: "deepseek-v4-pro"
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "https://api.deepseek.com"
+    temperature: 0.7
+    max_tokens: 128000
+    timeout: 60
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "deepseek"
+
+# ============================================
+# Agent Configuration
+# ============================================
+agents:
+  search:
+    llm: "openai"
+    max_turns: 150
+    tools:
+      builtin: ["*"]
+    context:
+      max_tokens: 30000
+      truncation_strategy: "latest_half"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+    system_prompt_file: "prompts/system_prompt.txt"
+    user_prompt_file: "prompts/user_prompt.txt"
+
+# ============================================
+# Session Configuration
+# ============================================
+session:
+  type: "local"
+  local:
+    working_dir: "./playground/browse_master/workspace"
+    timeout: 60
+    gpu_devices: null
+    cpu_devices: null
+    symlinks: {}
+
+# ============================================
+# LLM Output Display Configuration
+# ============================================
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+# ============================================
+# Logging Configuration
+# ============================================
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true

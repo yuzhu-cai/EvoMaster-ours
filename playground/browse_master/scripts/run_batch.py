@@ -72,7 +72,7 @@ def run_single_entry(
         sys.executable,
         str(project_root / "run.py"),
         "--agent", "browse_master",
-        "--config", str(project_root / "configs" / "browse_master" / "config.yaml"),
+        "--config", str(project_root / "configs" / "browse_master" / "config_gpt.yaml"),
         "--task", question,
         "--run-dir", str(task_path),
     ]
@@ -82,7 +82,7 @@ def run_single_entry(
             cmd,
             capture_output=True,
             text=True,
-            timeout=1800,  # 30 min timeout per task
+            timeout=10800,  # 120 min timeout per task
         )
 
         if result.returncode != 0:
@@ -115,7 +115,7 @@ def run_single_entry(
         return {"id": entry_id, "status": "completed", "task_path": str(task_path)}
 
     except subprocess.TimeoutExpired:
-        logger.error(f"[{task_name}] Timeout after 30 minutes")
+        logger.error(f"[{task_name}] Timeout after 180 minutes")
         return {"id": entry_id, "status": "timeout", "task_path": str(task_path)}
     except Exception as e:
         logger.error(f"[{task_name}] Failed: {e}")

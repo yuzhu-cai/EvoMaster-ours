@@ -1,5 +1,3 @@
 Please answer the following question:
 
 {description}
-
-Break down questions into smaller search queries. Use the available search tools to find accurate information.  

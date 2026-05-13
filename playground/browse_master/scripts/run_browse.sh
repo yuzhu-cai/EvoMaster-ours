@@ -14,9 +14,9 @@
 set -e
 
 # Configuration defaults
-IDS="${IDS:-0-1266}"
-RUN_NAME="${RUN_NAME:-browse_dsv4pro}"
-RUN_WORKERS="${RUN_WORKERS:-30}"
+IDS="${IDS:-0-3}"
+RUN_NAME="${RUN_NAME:-browse_gpt5.4_think}"
+RUN_WORKERS="${RUN_WORKERS:-4}"
 EVAL_WORKERS="${EVAL_WORKERS:-4}"
 DATA_JSON="${DATA_JSON:-playground/browse_master/test/browsecomp_decrypted.json}"
 
