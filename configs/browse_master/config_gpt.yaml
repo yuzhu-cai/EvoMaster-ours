@@ -37,7 +37,7 @@ agents:
     tools:
       builtin: ["*"]
     context:
-      max_tokens: 30000
+      max_tokens: 80000
       truncation_strategy: "latest_half"
       preserve_system_messages: true
       preserve_recent_turns: 5

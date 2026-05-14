@@ -5,11 +5,12 @@ Runs browse_master agent on selected dataset entries in parallel.
 """
 
 import argparse
-import json
 import logging
+import json
 import re
 import subprocess
 import sys
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -18,7 +19,8 @@ project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from evomaster.core.exp import extract_agent_response
+FINAL_ANSWER_RE = re.compile(r"Agent final answer:\s*(.*?)\s*$")
+DEFAULT_TAIL_LINES = 20
 
 
 def parse_id_ranges(id_str: str) -> list[int]:
@@ -36,6 +38,32 @@ def parse_id_ranges(id_str: str) -> list[int]:
         else:
             ids.add(int(part))
     return sorted(ids)
+
+
+def read_last_lines(path: Path, limit: int = DEFAULT_TAIL_LINES) -> list[str]:
+    """Read the last N lines from a log file."""
+    with path.open("r", encoding="utf-8", errors="ignore") as handle:
+        return list(deque(handle, maxlen=limit))
+
+
+def extract_solution_from_log(
+    log_path: Path,
+    tail_lines: int = DEFAULT_TAIL_LINES,
+) -> str | None:
+    """Extract the final answer from a task log."""
+    if not log_path.exists():
+        return None
+
+    for line in reversed(read_last_lines(log_path, tail_lines)):
+        match = FINAL_ANSWER_RE.search(line)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def get_question_text(item: dict) -> str:
+    """Return the normalized question text from a dataset item."""
+    return (item.get("question") or item.get("prompt") or "").strip()
 
 
 def setup_logging(log_path: Path):
@@ -65,6 +93,18 @@ def run_single_entry(
     task_name = f"task_{entry_id:04d}"
     task_path = run_dir / task_name
     task_path.mkdir(parents=True, exist_ok=True)
+    log_path = task_path / "logs" / "task_0.log"
+    solution_file = task_path / "solution.txt"
+
+    if not question.strip():
+        logger.error(f"[{task_name}] Empty question, skipping")
+        solution_file.write_text("", encoding="utf-8")
+        return {
+            "id": entry_id,
+            "status": "failed",
+            "task_path": str(task_path),
+            "error": "empty_question",
+        }
 
     logger.info(f"[{task_name}] Starting: {question[:80]}...")
 
@@ -86,30 +126,31 @@ def run_single_entry(
         )
 
         if result.returncode != 0:
-            logger.warning(f"[{task_name}] run.py exited with code {result.returncode}")
-            logger.debug(f"[{task_name}] stderr: {result.stderr[:500]}")
+            logger.error(f"[{task_name}] run.py exited with code {result.returncode}")
+            if result.stderr:
+                logger.debug(f"[{task_name}] stderr: {result.stderr[:500]}")
 
-        # Extract answer from trajectory file
-        trajectory_file = task_path / "trajectories" / "trajectory.json"
-        solution = ""
-        if trajectory_file.exists():
-            try:
-                with open(trajectory_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                # data is a list of trajectory entries
-                if data:
-                    # Try to extract from the last entry's trajectory
-                    last_entry = data[-1]
-                    traj = last_entry.get("trajectory", {})
-                    # Build a simple dict that extract_agent_response can handle
-                    solution = extract_agent_response({"dialogs": [traj]})
-            except Exception as e:
-                logger.warning(f"[{task_name}] Failed to extract answer: {e}")
+        solution = extract_solution_from_log(log_path) or ""
 
-        # Write solution.txt
-        solution_file = task_path / "solution.txt"
-        with open(solution_file, "w", encoding="utf-8") as f:
-            f.write(solution)
+        # Always overwrite solution.txt so reruns do not keep stale answers.
+        solution_file.write_text(solution, encoding="utf-8")
+
+        if result.returncode != 0:
+            return {
+                "id": entry_id,
+                "status": "failed",
+                "task_path": str(task_path),
+                "error": f"run.py exit code {result.returncode}",
+            }
+
+        if not solution:
+            logger.error(f"[{task_name}] No final answer found in log: {log_path}")
+            return {
+                "id": entry_id,
+                "status": "failed",
+                "task_path": str(task_path),
+                "error": "solution_not_found",
+            }
 
         logger.info(f"[{task_name}] Completed. Solution: {solution[:100]}")
         return {"id": entry_id, "status": "completed", "task_path": str(task_path)}
@@ -165,7 +206,7 @@ def main():
             if item is None:
                 logger.warning(f"ID {entry_id} not found in dataset, skipping")
                 continue
-            question = item.get("question", "")
+            question = get_question_text(item)
             future = executor.submit(run_single_entry, entry_id, question, run_dir, logger)
             future_to_id[future] = entry_id
 

@@ -1,3 +1,7 @@
-Please answer the following question:
+Answer the following benchmark question.
 
+Return only the exact final answer via the `finish` tool once you have the best-supported candidate.
+Do not keep searching after the answer is already reasonably clear.
+
+Question:
 {description}

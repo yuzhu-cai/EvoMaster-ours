@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, ClassVar
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from pydantic import Field
@@ -68,6 +69,10 @@ class WebFetchTool(BaseTool):
     def __init__(self):
         super().__init__()
         self._llm = None
+        self._content_cache: dict[str, str] = {}
+        self._extract_cache: dict[tuple[str, str], str] = {}
+        self._failed_urls: dict[str, int] = {}
+        self._stagnation_streak = 0
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """Fetch web page content and extract key information using LLM."""
@@ -84,36 +89,110 @@ class WebFetchTool(BaseTool):
 
         self.logger.info("Web fetch URLs: %s, goal: %s", urls, goal)
 
+        goal_key = self._normalize_goal(goal)
         results = []
-        with ThreadPoolExecutor(max_workers=min(len(urls), 5)) as pool:
-            future_to_url = {
-                pool.submit(self._fetch_and_extract, u, goal, jina_api_key): u
-                for u in urls
-            }
-            for future in as_completed(future_to_url, timeout=300):
-                url = future_to_url[future]
-                try:
-                    results.append(future.result())
-                except Exception as e:
-                    results.append(f"[web_fetch] Failed {url}: {e}")
+        duplicate_urls = []
+        reused_cached_urls = []
+        skipped_failed_urls = []
+        fresh_extractions = 0
+        executed_urls = []
+        batch_seen: set[str] = set()
 
-        response = "\n---\n".join(results)
-        return response, {"urls": urls, "goal": goal}
+        for url in urls:
+            normalized_url = self._normalize_url(url)
+            cache_key = (normalized_url, goal_key)
 
-    def _fetch_and_extract(self, url: str, goal: str, jina_api_key: str | None) -> str:
-        """Fetch and extract information from a single page using LLM."""
-        content = self._fetch_single(url, jina_api_key)
+            if not normalized_url:
+                duplicate_urls.append(url)
+                continue
+            if normalized_url in batch_seen:
+                duplicate_urls.append(url)
+                continue
+            batch_seen.add(normalized_url)
 
-        if content.startswith("[web_fetch]"):
-            return content
+            if cache_key in self._extract_cache:
+                reused_cached_urls.append(url)
+                results.append(
+                    f"[web_fetch] Skipped duplicate URL+goal pair already fetched earlier in this task: {url}"
+                )
+                continue
 
-        # Truncate overly long content
-        if len(content) > MAX_CONTENT_LENGTH:
-            content = content[:MAX_CONTENT_LENGTH]
+            if normalized_url in self._failed_urls and normalized_url not in self._content_cache:
+                skipped_failed_urls.append(url)
+                results.append(f"[web_fetch] Skipped previously failed URL: {url}")
+                continue
 
-        # LLM extraction
-        extracted = self._extract_with_llm(content, url, goal)
-        return extracted
+            executed_urls.append(url)
+
+            if normalized_url in self._content_cache:
+                content = self._content_cache[normalized_url]
+            else:
+                content = self._fetch_single(url, jina_api_key)
+                if content.startswith("[web_fetch]"):
+                    self._failed_urls[normalized_url] = self._failed_urls.get(normalized_url, 0) + 1
+                    results.append(content)
+                    continue
+                self._content_cache[normalized_url] = content
+
+            if len(content) > MAX_CONTENT_LENGTH:
+                content = content[:MAX_CONTENT_LENGTH]
+
+            extracted = self._extract_with_llm(content, url, goal)
+            self._extract_cache[cache_key] = extracted
+            fresh_extractions += 1
+            results.append(extracted)
+
+        productive = fresh_extractions > 0
+        stagnation = bool(urls) and not productive
+        if stagnation:
+            self._stagnation_streak += 1
+        else:
+            self._stagnation_streak = 0
+
+        notes = []
+        if duplicate_urls:
+            notes.append(
+                "[web_fetch] Skipped duplicate URLs already requested in this task: "
+                + "; ".join(duplicate_urls)
+            )
+        if reused_cached_urls:
+            notes.append(
+                "[web_fetch] Reused cached extraction for URLs already fetched with the same goal: "
+                + "; ".join(reused_cached_urls)
+            )
+        if skipped_failed_urls:
+            notes.append(
+                "[web_fetch] Skipped URLs that already failed earlier in this task: "
+                + "; ".join(skipped_failed_urls)
+            )
+        if stagnation:
+            notes.append(
+                "[web_fetch] This fetch call produced no new evidence. Do not retry the same URL/goal pair again; change strategy or finish with the best-supported answer."
+            )
+
+        response_parts = [*notes, *results]
+        if not response_parts:
+            response_parts.append(
+                "[web_fetch] No new fetch was executed. Change strategy or finish with the best-supported answer."
+            )
+
+        response = "\n---\n".join(response_parts)
+        info = {
+            "urls": urls,
+            "goal": goal,
+            "executed_urls": executed_urls,
+            "duplicate_urls": duplicate_urls,
+            "reused_cached_urls": reused_cached_urls,
+            "skipped_failed_urls": skipped_failed_urls,
+            "fresh_extractions": fresh_extractions,
+            "guard": {
+                "productive": productive,
+                "stagnation": stagnation,
+                "stagnation_streak": self._stagnation_streak,
+                "message": notes[-1] if stagnation and notes else "",
+            },
+        }
+        return response, info
 
     def _fetch_single(self, url: str, jina_api_key: str | None) -> str:
         """Fetch a single page using Jina Reader API."""
@@ -122,8 +201,8 @@ class WebFetchTool(BaseTool):
             headers["Authorization"] = f"Bearer {jina_api_key}"
 
         proxies = {
-            "http": "http://127.0.0.1:30001",
-            "https": "http://127.0.0.1:30001"
+            "http": "http://127.0.0.1:7890",
+            "https": "http://127.0.0.1:7890"
         }
         for attempt in range(3):
             try:
@@ -235,3 +314,24 @@ class WebFetchTool(BaseTool):
                 except json.JSONDecodeError:
                     pass
         return None
+
+    @staticmethod
+    def _normalize_goal(goal: str) -> str:
+        return re.sub(r"\s+", " ", goal.strip().lower())
+
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        if not url:
+            return ""
+
+        parts = urlsplit(url.strip())
+        path = parts.path.rstrip("/") or "/"
+        return urlunsplit(
+            (
+                parts.scheme.lower(),
+                parts.netloc.lower(),
+                path,
+                parts.query,
+                "",
+            )
+        )
