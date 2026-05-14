@@ -6,11 +6,13 @@ Provides the low-level operations interface for local environments.
 from __future__ import annotations
 
 import os
+import signal
 import shlex
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -197,6 +199,8 @@ class LocalEnv(BaseEnv):
         super().__init__(config)
         self.config: LocalEnvConfig = config
         self._resource_allocator: ResourceAllocator | None = None
+        self._active_processes: set[subprocess.Popen] = set()
+        self._active_processes_lock = threading.Lock()
         self._init_resource_allocator()
     
     def _init_resource_allocator(self) -> None:
@@ -504,28 +508,35 @@ class LocalEnv(BaseEnv):
         else:
             final_command = command
 
+        proc: subprocess.Popen | None = None
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 final_command,
                 shell=True,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
                 cwd=cwd,
                 env=env,
+                start_new_session=True,
             )
+            with self._active_processes_lock:
+                self._active_processes.add(proc)
+            stdout, stderr = proc.communicate(timeout=timeout)
             return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "exit_code": result.returncode,
-                "output": result.stdout + result.stderr,
+                "stdout": stdout,
+                "stderr": stderr,
+                "exit_code": proc.returncode,
+                "output": stdout + stderr,
             }
         except subprocess.TimeoutExpired:
+            self._terminate_process_group(proc)
             return {
                 "stdout": "",
                 "stderr": f"Command timed out after {timeout}s",
                 "exit_code": -1,
                 "output": f"Command timed out after {timeout}s",
+                "timed_out": True,
             }
         except Exception as e:
             return {
@@ -534,10 +545,34 @@ class LocalEnv(BaseEnv):
                 "exit_code": -1,
                 "output": str(e),
             }
+        except BaseException:
+            self._terminate_process_group(proc)
+            raise
         finally:
+            if proc is not None:
+                with self._active_processes_lock:
+                    self._active_processes.discard(proc)
             # Unregister the execution task
             if self._resource_allocator is not None and parallel_index is not None:
                 self._resource_allocator.unregister_execution(parallel_index)
+
+    def kill_active_processes(self) -> None:
+        """Best-effort terminate locally running command process groups."""
+        with self._active_processes_lock:
+            procs = list(self._active_processes)
+        for proc in procs:
+            self._terminate_process_group(proc)
+
+    def _terminate_process_group(self, proc: subprocess.Popen | None) -> None:
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            time.sleep(2)
+            if proc.poll() is None:
+                os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
 
     def upload_file(self, local_path: str, remote_path: str) -> None:
         """Upload a file to the local environment.

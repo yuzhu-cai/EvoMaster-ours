@@ -1,0 +1,6 @@
+benchmark: paperbench
+paper_id: example-paper
+# Host path to one PaperBench paper directory. It will be mounted read-only at /paperbench/input.
+paper_dir: /data/paperbench/example-paper
+description: |
+  Reproduce the paper as a runnable repository. Create /workspace/reproduce.sh and make it executable.

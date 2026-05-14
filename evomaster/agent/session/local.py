@@ -139,7 +139,17 @@ class LocalSession(BaseSession):
         if not self._is_open:
             raise RuntimeError("Session not open")
         
-        timeout = timeout or self.config.timeout
+        timeout = self._timeout_with_deadline(timeout)
+        if timeout == 0:
+            msg = "Runtime deadline reached before command execution."
+            return {
+                "stdout": "",
+                "stderr": msg,
+                "exit_code": -2,
+                "working_dir": self.config.workspace_path,
+                "output": msg,
+                "deadline_reached": True,
+            }
         command = command.strip()
         
         # Local environment does not support is_input mode
@@ -163,6 +173,7 @@ class LocalSession(BaseSession):
             workdir=workspace_override,
             parallel_index=parallel_index,
         )
+        deadline_reached = bool(result.get("deadline_reached")) or self.deadline_expired()
         
         # Get working directory (prefer thread-local workspace path)
         workspace = workspace_override or self.config.workspace_path
@@ -174,7 +185,14 @@ class LocalSession(BaseSession):
             "exit_code": result.get("exit_code", -1),
             "working_dir": workspace,
             "output": result.get("output", ""),
+            "deadline_reached": deadline_reached,
         }
+
+    def kill_active_processes(self) -> None:
+        """Best-effort terminate local commands still tracked by the environment."""
+        killer = getattr(self._env, "kill_active_processes", None)
+        if callable(killer):
+            killer()
 
     def upload(self, local_path: str, remote_path: str) -> None:
         """Upload a file to the local environment."""

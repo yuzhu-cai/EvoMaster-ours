@@ -1,0 +1,46 @@
+Task ID: {task_id}
+Task Type: {task_type}
+Benchmark family: {benchmark}
+Competition/task id: {competition_id}
+
+You are solving a real ML task end-to-end. The goal is to maximize the task metric using the public training data, not just to produce a valid CSV.
+
+Workspace and data:
+- Writable workspace: {workspace}
+- Read-only input mount: {input_mount}
+- Required final artifact: {artifact_path}
+- Keep solution code in: {workspace}/work
+- Keep experiment logs in: {workspace}/logs
+
+Task requirements:
+{description}
+
+Task spec JSON:
+{task_spec_json}
+
+Competition description excerpt from the input package:
+{competition_description}
+
+Benchmark target context:
+{benchmark_targets}
+
+Current structured experiment memory, if this workspace already has previous attempts:
+{experiment_memory}
+
+Long-horizon strategy memory, if available:
+{strategy_memory}
+
+Required workflow before finish:
+1. Inspect the input files, target, metric, and sample submission.
+2. Create a reproducible training/inference script under {workspace}/work.
+3. Use local validation/CV on the training data; write experiment notes and scores to {workspace}/logs/experiments.md.
+4. When there are multiple plausible next experiments, call experiment_tracker(action="plan", workspace="{workspace}", candidates=[...], candidate_families={{...}}, selected_candidate=..., rationale=...) before executing one; this records a simple branch backlog and helps avoid stale local tuning loops. Optional candidate_scores/candidate_costs/candidate_risks may be included if they help your own decision.
+5. Call experiment_tracker(action="record", workspace="{workspace}", experiment_name=..., metric=..., score=..., direction=..., submission_path=..., code_path=..., branch_name=..., model_family=..., validation_reliability=..., notes=..., round_index=0) after validation experiments so {workspace}/logs/experiments.jsonl, {workspace}/logs/iteration_ledger.md, and best artifacts stay synchronized. For any run that should become the current best, generate a matching submission and pass submission_path; otherwise the score is logged as a probe but not promoted to best artifact.
+6. Try more than a trivial first-valid-submission baseline when feasible within the runtime budget. Aim for medal-level performance, not just above-median performance.
+7. After a safe baseline exists, include at least one high-upside branch that changes the model family or pipeline substantially when the first family is unlikely to reach medal thresholds.
+8. Keep the current best artifact at {workspace}/artifacts/best_submission.csv and the corresponding code at {workspace}/artifacts/best_solution.py whenever you have a locally justified artifact-backed improvement; experiment_tracker will copy them when the score improves and submission_path is available.
+9. Generate the final artifact at {artifact_path} using the best approach you selected.
+10. Run benchmark_status(action="validate", benchmark="{benchmark}", workspace="{workspace}", input_dir="{input_mount}", artifact_path="{artifact_path}") to check format.
+11. Call finish only after the artifact is valid and you have summarized the best local validation score and created files. If the harness continues the conversation after finish, continue iterating from the existing workspace instead of restarting.
+
+Important: all task requirements are in this first user message. There is no separate generated task document in the workspace to read.

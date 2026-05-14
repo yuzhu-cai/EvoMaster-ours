@@ -44,8 +44,9 @@ class DockerSessionConfig(SessionConfig):
       ``"0,1"``, or a Python list. ``None`` means no GPU.
     * ``network_mode``: ``"bridge"``, ``"host"``, ``"none"``, or any
       user-defined network.
-    * ``volumes``: ``{host_path: container_path}``. Relative host paths are
-      resolved against ``cwd`` at container-creation time.
+    * ``volumes``: ``{host_path: container_path}``, or
+      ``{host_path: {target: container_path, read_only: true}}``. Relative
+      host paths are resolved against ``cwd`` at container-creation time.
     * ``env_vars``: extra environment variables for the container.
     * ``auto_remove``: when ``True``, ``docker run --rm`` is used and the
       container is stopped + removed at session close. When ``False`` we
@@ -94,9 +95,13 @@ class DockerSessionConfig(SessionConfig):
         default="bridge",
         description="Network mode (bridge / host / none / custom)",
     )
-    volumes: dict[str, str] = Field(
+    volumes: dict[str, str | dict[str, Any]] = Field(
         default_factory=dict,
-        description="Bind mounts as {host_path: container_path}; relative host paths are resolved.",
+        description=(
+            "Bind mounts as {host_path: container_path} or "
+            "{host_path: {target: container_path, read_only: true}}; "
+            "relative host paths are resolved."
+        ),
     )
     env_vars: dict[str, str] = Field(
         default_factory=dict,
@@ -113,6 +118,20 @@ class DockerSessionConfig(SessionConfig):
     pull_image: str = Field(
         default="missing",
         description="Image pull policy: 'missing' (default), 'always', or 'never'.",
+    )
+    conda_env: str | None = Field(
+        default=None,
+        description=(
+            "Optional conda environment to activate before every stateful "
+            "agent command, e.g. 'evomaster_yuzhu'."
+        ),
+    )
+    one_gpu_per_container: bool = Field(
+        default=False,
+        description=(
+            "When gpu_devices is a list or comma-separated string, bind each "
+            "container to a single GPU selected by the playground/task index."
+        ),
     )
     config_dir: str | None = Field(
         default=None,
@@ -209,7 +228,17 @@ class DockerSession(BaseSession):
         if not self._is_open:
             raise RuntimeError("Session not open")
 
-        timeout = timeout or self.config.timeout
+        timeout = self._timeout_with_deadline(timeout)
+        if timeout == 0:
+            msg = "Runtime deadline reached before command execution."
+            return {
+                "stdout": "",
+                "stderr": msg,
+                "exit_code": -2,
+                "working_dir": self.config.working_dir,
+                "output": msg,
+                "deadline_reached": True,
+            }
         command = command.strip()
 
         if is_input:
@@ -236,7 +265,16 @@ class DockerSession(BaseSession):
                 "output": "",
             }
 
-        return self._env.exec_bash_stateful(command, timeout=timeout)
+        result = self._env.exec_bash_stateful(command, timeout=timeout)
+        if self.deadline_expired():
+            result["deadline_reached"] = True
+        return result
+
+    def kill_active_processes(self) -> None:
+        """Best-effort terminate commands still running inside the container."""
+        killer = getattr(self._env, "kill_active_processes", None)
+        if callable(killer):
+            killer()
 
     def to_session_path(self, host_path: str) -> str:
         """Translate a host path to the matching path inside the container.

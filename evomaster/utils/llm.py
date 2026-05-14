@@ -610,8 +610,15 @@ class OpenAILLM(BaseLLM):
             request_params["tools"] = tools
             request_params["tool_choice"] = kwargs.get("tool_choice", "auto")
 
-        # Call the API
-        response = self.client.chat.completions.create(**request_params)
+        # Call the API. Some local OpenAI SDK / Pydantic combinations raise
+        # `TypeError: by_alias NoneType` while serializing tool requests; fall
+        # back to a raw HTTP call so tool-enabled agents still run.
+        try:
+            response = self.client.chat.completions.create(**request_params)
+        except TypeError as e:
+            if "by_alias" not in str(e):
+                raise
+            return self._call_raw_chat(request_params)
 
         # Parse the response
         choice = response.choices[0]
@@ -645,6 +652,54 @@ class OpenAILLM(BaseLLM):
                 "model": response.model,
                 "response_id": response.id,
             }
+        )
+
+    def _call_raw_chat(self, request_params: dict[str, Any]) -> LLMResponse:
+        """Call a Chat Completions-compatible endpoint without the SDK."""
+        import httpx
+
+        body = request_params.copy()
+        timeout = body.pop("timeout", self.config.timeout)
+        url_base = (self.config.base_url or "https://api.openai.com/v1").rstrip("/")
+        url = f"{url_base}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.config.api_key}",
+            "Content-Type": "application/json",
+        }
+        response = httpx.post(url, headers=headers, json=body, timeout=timeout)
+        response.raise_for_status()
+        data = response.json()
+
+        choice = data.get("choices", [{}])[0]
+        message = choice.get("message") or {}
+        tool_calls = None
+        if message.get("tool_calls"):
+            tool_calls = [
+                ToolCall(
+                    id=tc.get("id", ""),
+                    type=tc.get("type", "function"),
+                    function=FunctionCall(
+                        name=(tc.get("function") or {}).get("name", ""),
+                        arguments=(tc.get("function") or {}).get("arguments", ""),
+                    ),
+                )
+                for tc in message.get("tool_calls", [])
+            ]
+        usage = data.get("usage") or {}
+        return LLMResponse(
+            content=message.get("content"),
+            tool_calls=tool_calls,
+            finish_reason=choice.get("finish_reason"),
+            usage={
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+            meta={
+                "model": data.get("model", self.config.model),
+                "response_id": data.get("id", ""),
+                "api_type": "raw_chat",
+            },
         )
 
 class DeepSeekLLM(BaseLLM):

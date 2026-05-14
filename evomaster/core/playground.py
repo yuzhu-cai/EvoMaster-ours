@@ -113,6 +113,25 @@ def _expand_gpu_devices(spec: str | list | None) -> list[str] | None:
     return None
 
 
+def _docker_volume_target(volume_decl: Any) -> str:
+    """Return the container target path from a Docker volume declaration.
+
+    Supports the legacy ``host: "/container"`` form and the extended
+    ``host: {target: "/container", read_only: true}`` form.
+    """
+    if isinstance(volume_decl, dict):
+        target = (
+            volume_decl.get("target")
+            or volume_decl.get("container_path")
+            or volume_decl.get("path")
+        )
+        return str(target or "")
+    value = str(volume_decl)
+    if value.endswith(":ro") or value.endswith(":rw"):
+        return value.rsplit(":", 1)[0]
+    return value
+
+
 class _SessionThreadFilter(logging.Filter):
     """Only passes log records from threads currently working for this session.
 
@@ -247,6 +266,7 @@ class BasePlayground:
         self.logger = logging.getLogger(self.__class__.__name__)
         self._mcp_loop = None
         self._mcp_thread = None
+        self._resource_index_local = threading.local()
 
 
         # Run directory management
@@ -392,7 +412,8 @@ class BasePlayground:
                     # appear to be ignored.
                     existing = dict(docker_config.get('volumes') or {})
                     user_mounts_at_target = [
-                        h for h, c in existing.items() if c == container_workspace
+                        h for h, c in existing.items()
+                        if _docker_volume_target(c) == container_workspace
                     ]
                     if user_mounts_at_target:
                         self.logger.warning(
@@ -614,12 +635,17 @@ class BasePlayground:
         normalized_skill_config["skills"] = skills_config
         return self._get_or_create_skill_registry(normalized_skill_config)
 
-    def _build_docker_session_config_dict(self, overrides: dict | None = None) -> dict:
+    def _build_docker_session_config_dict(
+        self,
+        overrides: dict | None = None,
+        select_gpu: bool = True,
+    ) -> dict:
         """Materialize a Docker session config dict with sensible defaults.
 
         Pulls ``session.docker`` from the loaded config, syncs ``working_dir``
         / ``workspace_path``, and optionally applies ``overrides`` on top
-        (used by the per-exp container path).
+        (used by the per-exp container path). ``select_gpu=False`` leaves the
+        configured GPU list intact so a caller can split it by its own index.
         """
         d = (self.config.session.get("docker", {}) or {}).copy()
         if "working_dir" in d and "workspace_path" not in d:
@@ -639,9 +665,42 @@ class BasePlayground:
         # paths against the project root (matches the local-session path).
         if "config_dir" not in d:
             d["config_dir"] = str(self.config_dir)
+        gpu_overridden = bool(overrides and "gpu_devices" in overrides)
         if overrides:
             d.update(overrides)
+        if select_gpu and d.get("one_gpu_per_container") and not gpu_overridden:
+            gpu_list = _expand_gpu_devices(d.get("gpu_devices"))
+            if gpu_list:
+                idx = self._resource_index_for_container()
+                d["gpu_devices"] = gpu_list[idx % len(gpu_list)]
         return d
+
+    def _resource_index_for_container(self) -> int:
+        """Best-effort stable index used for per-container resource selection."""
+        import os
+        import re
+
+        thread_index = getattr(self._resource_index_local, "parallel_index", None)
+        if thread_index is not None:
+            try:
+                return int(thread_index)
+            except (TypeError, ValueError):
+                pass
+
+        for env_name in ("EVOMASTER_PARALLEL_INDEX", "EVOMASTER_TASK_INDEX"):
+            raw = os.environ.get(env_name)
+            if raw is not None:
+                try:
+                    return int(raw)
+                except ValueError:
+                    pass
+
+        task_id = getattr(self, "task_id", None)
+        if task_id:
+            match = re.search(r"(\d+)$", str(task_id))
+            if match:
+                return int(match.group(1))
+        return 0
 
     def _is_docker_fresh_per_exp(self) -> bool:
         """True iff the docker config requests a fresh container per parallel exp."""
@@ -730,7 +789,7 @@ class BasePlayground:
         host_workspace.mkdir(parents=True, exist_ok=True)
 
         # Determine the container-side mount target (matches working_dir).
-        base_dict = self._build_docker_session_config_dict()
+        base_dict = self._build_docker_session_config_dict(select_gpu=False)
         container_workspace = base_dict.get("working_dir", "/workspace")
 
         # Derive a unique container name. Honor the user's container_name as a
@@ -745,7 +804,10 @@ class BasePlayground:
         volumes = dict(base_dict.get("volumes", {}) or {})
         # Drop any prior mount that targets the same container path so we
         # don't end up with two -v's pointing at the same target.
-        volumes = {h: c for h, c in volumes.items() if c != container_workspace}
+        volumes = {
+            h: c for h, c in volumes.items()
+            if _docker_volume_target(c) != container_workspace
+        }
         volumes[str(host_workspace)] = container_workspace
 
         overrides: dict[str, Any] = {
@@ -848,7 +910,9 @@ class BasePlayground:
         # singletons and "all" unchanged so we don't silently drop GPUs.
         gpu_devices = base_dict.get("gpu_devices")
         gpu_list = _expand_gpu_devices(gpu_devices)
-        if gpu_list is not None:
+        if docker_cfg.get("one_gpu_per_container") and gpu_list:
+            overrides["gpu_devices"] = gpu_list[effective_index % len(gpu_list)]
+        elif gpu_list is not None:
             total = len(gpu_list)
             if total >= max_parallel:
                 per = total // max_parallel
@@ -1787,6 +1851,10 @@ class BasePlayground:
 
         def wrap_task(task_func, parallel_index):
             def wrapped():
+                previous_resource_index = getattr(
+                    self._resource_index_local, "parallel_index", None
+                )
+                self._resource_index_local.parallel_index = parallel_index
                 try:
                     # Per-thread setup for the LocalSession case.
                     if parallel_enabled and isinstance(self.session, LocalSession):
@@ -1844,6 +1912,13 @@ class BasePlayground:
                         self.session.set_parallel_index(None)
                         if split_workspace:
                             self.session.set_workspace_path(None)
+                    if previous_resource_index is None:
+                        try:
+                            del self._resource_index_local.parallel_index
+                        except AttributeError:
+                            pass
+                    else:
+                        self._resource_index_local.parallel_index = previous_resource_index
             return wrapped
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

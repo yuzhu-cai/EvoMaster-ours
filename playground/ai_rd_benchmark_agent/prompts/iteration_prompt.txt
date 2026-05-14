@@ -1,0 +1,44 @@
+Continue the same {benchmark} task for another improvement round.
+
+Iteration state:
+- Competition/task id: {competition_id}
+- Round: {round_index} of {max_rounds}
+- Elapsed: {elapsed_minutes} minutes ({elapsed_seconds} seconds)
+- Runtime budget: {max_runtime_seconds} seconds
+- Workspace: {workspace}
+- Read-only input: {input_mount}
+- Required artifact: {artifact_path}
+
+Benchmark target context:
+{benchmark_targets}
+
+Current best state from experiment_tracker:
+{current_best_state}
+
+Structured experiment memory compiled by the harness:
+{experiment_memory}
+
+Long-horizon strategy memory compiled after previous rounds:
+{strategy_memory}
+
+You already produced at least one valid checkpoint. Do not restart from scratch. Use the existing files under {workspace}/work, {workspace}/logs, and {workspace}/artifacts.
+The harness compares experiment_tracker history before and after every continuation round. A round that does not call experiment_tracker(action="record", ...) for a new validation experiment is treated as stagnant, even if the submission format is valid.
+experiment_tracker is a memory aid, not a scheduler. It reports recent branch visits, stale branches, and whether you should consider a pivot; you still choose the next experiment.
+
+Round objective:
+1. Read the existing experiment log and iteration ledger; call experiment_tracker(action="best", workspace="{workspace}") to recover the tool-maintained best state.
+2. Identify the current best local validation score and the code/submission that produced it.
+3. Propose 2-4 candidate branches in your own reasoning. If recent small changes failed, include one branch that changes model family or pipeline shape substantially unless you have already proven it infeasible.
+4. Call experiment_tracker(action="plan", workspace="{workspace}", candidates=[...], candidate_families={{...}}, selected_candidate=..., rationale=..., round_index={round_index}) to record the branch decision. Optional candidate_scores/candidate_costs/candidate_risks may be included if useful.
+5. If experiment_tracker says consider_pivot=true, prefer a fresh model family, pretrained model, ensemble architecture, or validation redesign over another local hyperparameter tweak unless your rationale clearly explains why not.
+6. Run the selected experiment with a validation strategy that matches the metric. It is acceptable to make a larger code change or create a new script if that is the cleanest way to test the selected branch.
+7. Call experiment_tracker(action="record", workspace="{workspace}", experiment_name=..., metric=..., score=..., direction=..., submission_path=..., code_path=..., branch_name=..., model_family=..., validation_reliability=..., command=..., notes=..., round_index={round_index}) so improved artifact-backed runs are copied to:
+   - {workspace}/artifacts/best_solution.py
+   - {workspace}/artifacts/best_submission.csv
+8. If the experiment improves the best local score, generate a matching submission and provide submission_path in the record call; otherwise experiment_tracker will log the score-only probe but will not promote it as the best artifact. If it does not improve, keep the existing best artifact and record negative evidence.
+9. Append any additional human-readable notes or next ideas to {workspace}/logs/iteration_ledger.md if experiment_tracker's entry is not sufficient.
+10. Run benchmark_status(action="validate", benchmark="{benchmark}", workspace="{workspace}", input_dir="{input_mount}", artifact_path="{artifact_path}") before finish.
+
+Do not call finish immediately just because a valid submission exists. This round is for improvement. Only call finish after you have completed at least one concrete new experiment or documented why the remaining ideas are not worth the runtime. If all plausible improvements have been exhausted after at least {min_rounds} rounds, create {workspace}/artifacts/STOP_ITERATION and explain why.
+
+Gold-medal mindset: use atomic measured improvements when a branch is productive, but do not stay trapped in one local route. When the current branch is stale or far from medal thresholds, make a deliberate larger pivot and measure it cleanly. Keep exploring until the runtime budget, round budget, a locally convincing medal-level score, or exhaustion of plausible ideas.

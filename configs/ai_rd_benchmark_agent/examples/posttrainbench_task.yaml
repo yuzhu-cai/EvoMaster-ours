@@ -1,0 +1,11 @@
+benchmark: posttrainbench
+task_id: aime25_qwen3_1_7b
+# Host path to a PostTrainBench task/eval directory. It will be mounted read-only at /posttrainbench/task.
+task_dir: /data/posttrainbench/tasks/aime25_qwen3_1_7b
+extra_mounts:
+  - host: /data/huggingface-cache
+    target: /hf_cache
+    read_only: true
+description: |
+  Improve the provided base model for the target eval without modifying protected eval files.
+  Save the final model to /workspace/final_model.

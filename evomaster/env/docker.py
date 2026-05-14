@@ -136,6 +136,45 @@ def _resolve_host_path(host_path: str, config_dir: str | None = None) -> str:
     return str((base / p).resolve())
 
 
+def _volume_target(volume_decl: str | dict[str, Any]) -> str:
+    """Return the container target path from a volume declaration."""
+    if isinstance(volume_decl, dict):
+        target = (
+            volume_decl.get("target")
+            or volume_decl.get("container_path")
+            or volume_decl.get("path")
+        )
+        if not target:
+            raise ValueError(
+                "Volume dict must include one of: target, container_path, path"
+            )
+        return str(target)
+
+    value = str(volume_decl)
+    if value.endswith(":ro") or value.endswith(":rw"):
+        return value.rsplit(":", 1)[0]
+    return value
+
+
+def _volume_read_only(volume_decl: str | dict[str, Any]) -> bool:
+    """Return whether a volume declaration should be mounted read-only."""
+    if isinstance(volume_decl, dict):
+        mode = str(volume_decl.get("mode", "")).lower()
+        return bool(
+            volume_decl.get("read_only")
+            or volume_decl.get("readonly")
+            or mode == "ro"
+        )
+    return str(volume_decl).endswith(":ro")
+
+
+def _docker_volume_spec(resolved_host_path: str, volume_decl: str | dict[str, Any]) -> str:
+    """Format a docker ``-v`` argument from a normalized host path and declaration."""
+    target = _volume_target(volume_decl)
+    mode = ":ro" if _volume_read_only(volume_decl) else ""
+    return f"{resolved_host_path}:{target}{mode}"
+
+
 class DockerEnv(BaseEnv):
     """Docker environment implementation.
 
@@ -188,8 +227,16 @@ class DockerEnv(BaseEnv):
         # from the host that the container sees. Runs *before* the container
         # is created because it only touches host paths.
         self._setup_workspace_symlinks()
-        self._create_or_get_container()
-        self._initialize_container()
+        try:
+            self._create_or_get_container()
+            self._initialize_container()
+        except Exception:
+            # Avoid leaking auto-created containers when validation fails
+            # (for example, a missing configured conda environment).
+            if self._container_id and self._created_by_us:
+                self._stop_and_remove_container()
+            self._thread_local = threading.local()
+            raise
         self._is_ready = True
         self.logger.info(
             f"Docker environment ready: container={self._container_name} "
@@ -264,7 +311,7 @@ class DockerEnv(BaseEnv):
         # Locate the host path mounted at working_dir (if any).
         host_workspace: Path | None = None
         for host_path, container_path in volumes.items():
-            cp = str(container_path).rstrip("/")
+            cp = _volume_target(container_path).rstrip("/")
             if cp == working_dir:
                 host_workspace = Path(
                     _resolve_host_path(host_path, config_dir=config_dir)
@@ -282,7 +329,7 @@ class DockerEnv(BaseEnv):
             return
 
         for host_path, container_path in volumes.items():
-            cp = str(container_path).rstrip("/")
+            cp = _volume_target(container_path).rstrip("/")
             if cp == working_dir:
                 continue
             prefix = working_dir + "/"
@@ -337,7 +384,7 @@ class DockerEnv(BaseEnv):
                 os.symlink(resolved_source, link_path)
                 self.logger.info(
                     f"Workspace symlink: {link_path} -> {resolved_source} "
-                    f"(container path: {container_path})"
+                    f"(container path: {_volume_target(container_path)})"
                 )
             except OSError as e:
                 self.logger.warning(
@@ -580,13 +627,21 @@ class DockerEnv(BaseEnv):
         config_dir = getattr(sc, "config_dir", None)
         for host_path, container_path in (sc.volumes or {}).items():
             resolved = _resolve_host_path(host_path, config_dir=config_dir)
-            try:
-                Path(resolved).mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                self.logger.warning(
-                    f"Could not create host volume path {resolved}: {e}"
-                )
-            cmd.extend(["-v", f"{resolved}:{container_path}"])
+            resolved_path = Path(resolved)
+            if _volume_read_only(container_path):
+                if not resolved_path.exists():
+                    raise RuntimeError(
+                        f"Read-only host volume path does not exist: {resolved}"
+                    )
+            else:
+                try:
+                    if not resolved_path.exists():
+                        resolved_path.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    self.logger.warning(
+                        f"Could not create host volume path {resolved}: {e}"
+                    )
+            cmd.extend(["-v", _docker_volume_spec(resolved, container_path)])
 
         # Environment variables.
         for key, value in (sc.env_vars or {}).items():
@@ -634,6 +689,22 @@ class DockerEnv(BaseEnv):
         # Seed the main thread's state dir; per-thread dirs are created
         # lazily on first ``exec_bash_stateful`` call.
         self._ensure_thread_state()
+
+        conda_env = getattr(sc, "conda_env", None)
+        if conda_env:
+            check = self.docker_exec(
+                self._conda_activation_snippet()
+                + "python - <<'PY'\n"
+                + "import sys\n"
+                + "print(sys.executable)\n"
+                + "PY\n",
+                timeout=60,
+            )
+            if check.get("exit_code") != 0:
+                raise RuntimeError(
+                    "Failed to activate configured conda environment "
+                    f"{conda_env!r}: {check.get('output', '').strip()}"
+                )
 
     # ------------------------------------------------------------------ #
     # Required abstract members
@@ -713,10 +784,22 @@ class DockerEnv(BaseEnv):
             cmd.extend(["-w", workdir])
         for k, v in (env or {}).items():
             cmd.extend(["-e", f"{k}={v}"])
-        cmd.extend([self._container_id, "bash", "-c", command])
+        run_timeout = timeout
+        if timeout is not None and timeout > 0:
+            # Use an in-container hard timeout so long-running tool commands
+            # are killed at the runtime boundary instead of surviving after
+            # the docker exec client times out. The outer subprocess timeout
+            # is only a safety margin around GNU timeout's own cleanup.
+            inner_timeout = int(timeout)
+            command = (
+                f"timeout --kill-after=10s {inner_timeout}s "
+                f"bash -lc {shlex.quote(command)}"
+            )
+            run_timeout = inner_timeout + 20
+        cmd.extend([self._container_id, "bash", "-lc", command])
 
         try:
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=run_timeout)
             return {
                 "stdout": r.stdout,
                 "stderr": r.stderr,
@@ -724,12 +807,75 @@ class DockerEnv(BaseEnv):
                 "output": r.stdout + r.stderr,
             }
         except subprocess.TimeoutExpired:
+            # If even the in-container timeout wrapper did not return, kill
+            # descendants in this container as a last resort. This is scoped to
+            # the current benchmark container; its mounted workspace persists.
+            self._kill_non_init_processes()
             return {
                 "stdout": "",
                 "stderr": f"Command timed out after {timeout}s",
                 "exit_code": -1,
                 "output": f"Command timed out after {timeout}s",
+                "timed_out": True,
             }
+
+    def kill_active_processes(self) -> None:
+        """Public best-effort hook used by hard runtime-deadline handling."""
+        self._kill_non_init_processes()
+
+    def _kill_non_init_processes(self) -> None:
+        """Best-effort kill of commands still running inside this container."""
+        if not self._container_id:
+            return
+        try:
+            subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    self._container_id,
+                    "bash",
+                    "-lc",
+                    "pkill -TERM -P 1 2>/dev/null || true; sleep 2; "
+                    "pkill -KILL -P 1 2>/dev/null || true",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception:
+            pass
+
+    def _conda_activation_snippet(self) -> str:
+        """Shell snippet that activates the configured conda env, if any."""
+        conda_env = getattr(self.config.session_config, "conda_env", None)
+        if not conda_env:
+            return ""
+        env_q = shlex.quote(str(conda_env))
+        return (
+            "__conda_bin=\"$(command -v conda 2>/dev/null || true)\"\n"
+            "if [ -z \"$__conda_bin\" ]; then\n"
+            "  for __candidate in /opt/conda/bin/conda /usr/local/conda/bin/conda "
+            "/root/miniconda3/bin/conda /root/miniforge3/bin/conda "
+            "/data/conda/miniconda3/bin/conda; do\n"
+            "    if [ -x \"$__candidate\" ]; then\n"
+            "      __conda_bin=\"$__candidate\"\n"
+            "      export PATH=\"$(dirname \"$__candidate\"):$PATH\"\n"
+            "      break\n"
+            "    fi\n"
+            "  done\n"
+            "fi\n"
+            "if [ -z \"$__conda_bin\" ]; then\n"
+            f"  echo 'ERROR: conda_env={conda_env} but conda is not on PATH or common locations' >&2\n"
+            "  exit 127\n"
+            "fi\n"
+            "__conda_base=\"$($__conda_bin info --base 2>/dev/null)\"\n"
+            "if [ -z \"$__conda_base\" ] || [ ! -f \"$__conda_base/etc/profile.d/conda.sh\" ]; then\n"
+            "  echo 'ERROR: could not locate conda activation script' >&2\n"
+            "  exit 127\n"
+            "fi\n"
+            ". \"$__conda_base/etc/profile.d/conda.sh\"\n"
+            f"conda activate {env_q} || exit 127\n"
+        )
 
     def exec_bash_stateful(
         self,
@@ -767,6 +913,7 @@ class DockerEnv(BaseEnv):
             f'__cwd="$(cat {shlex.quote(cwd_file)} 2>/dev/null)"\n'
             f'[ -z "$__cwd" ] && __cwd={shlex.quote(default_cwd)}\n'
             f'cd "$__cwd" 2>/dev/null || cd {shlex.quote(default_cwd)}\n'
+            f"{self._conda_activation_snippet()}"
             "{\n"
             f"{command}\n"
             "}\n"
@@ -819,6 +966,8 @@ class DockerEnv(BaseEnv):
             "exit_code": exit_code,
             "working_dir": working_dir,
             "output": combined,
+            "deadline_reached": bool(result.get("deadline_reached")),
+            "timed_out": bool(result.get("timed_out")),
         }
 
     # ------------------------------------------------------------------ #
@@ -853,7 +1002,9 @@ class DockerEnv(BaseEnv):
                 resolved = _resolve_host_path(host_decl, config_dir=config_dir)
             except Exception:
                 continue
-            resolved_mounts.append((resolved, str(container_decl).rstrip("/") or "/"))
+            resolved_mounts.append(
+                (resolved, _volume_target(container_decl).rstrip("/") or "/")
+            )
         resolved_mounts.sort(key=lambda kv: len(kv[0]), reverse=True)
         for host_root, container_root in resolved_mounts:
             if not host_root:
@@ -883,10 +1034,13 @@ class DockerEnv(BaseEnv):
             return False, None
         config_dir = getattr(sc, "config_dir", None)
         # Walk volumes longest mount-point first so nested mounts win.
-        for host_path, mount_point in sorted(
-            sc.volumes.items(), key=lambda kv: len(kv[1]), reverse=True
-        ):
-            mp = str(Path(mount_point).as_posix()).rstrip("/")
+        volume_items = sorted(
+            sc.volumes.items(),
+            key=lambda kv: len(_volume_target(kv[1])),
+            reverse=True,
+        )
+        for host_path, mount_point in volume_items:
+            mp = str(Path(_volume_target(mount_point)).as_posix()).rstrip("/")
             if not mp:
                 continue
             if cp == mp:
@@ -1016,16 +1170,51 @@ class DockerEnv(BaseEnv):
                 with open(host_path, "w", encoding=encoding) as f:
                     f.write(content)
             except Exception as e:
-                raise RuntimeError(
-                    f"Failed to write file {remote_path} (host: {host_path}): {e}"
-                )
+                try:
+                    self._write_text_file_via_container(remote_path, content, encoding)
+                except Exception as fallback_error:
+                    raise RuntimeError(
+                        f"Failed to write file {remote_path} "
+                        f"(host: {host_path}): {e}; "
+                        f"docker fallback failed: {fallback_error}"
+                    ) from fallback_error
             return
 
+        self._write_text_file_via_container(remote_path, content, encoding)
+
+    def _write_text_file_via_container(
+        self,
+        remote_path: str,
+        content: str,
+        encoding: str = "utf-8",
+    ) -> None:
+        """Write text through docker cp when host-side bind mount I/O fails."""
+        if not self._container_id:
+            raise RuntimeError("Container not started")
         with tempfile.NamedTemporaryFile(mode="wb", delete=False) as tmp:
             tmp.write(content.encode(encoding))
             tmp_path = tmp.name
         try:
-            self.upload_file(tmp_path, remote_path)
+            remote_dir = str(Path(remote_path).parent)
+            self.docker_exec(
+                f"mkdir -p {shlex.quote(remote_dir)} && "
+                f"chmod 777 {shlex.quote(remote_dir)} 2>/dev/null || true",
+                timeout=30,
+            )
+            r = subprocess.run(
+                ["docker", "cp", tmp_path, f"{self._container_id}:{remote_path}"],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if r.returncode != 0:
+                raise RuntimeError(
+                    f"docker cp failed: {(r.stderr or r.stdout).strip()}"
+                )
+            self.docker_exec(
+                f"chmod 666 {shlex.quote(remote_path)} 2>/dev/null || true",
+                timeout=10,
+            )
         finally:
             if os.path.exists(tmp_path):
                 os.unlink(tmp_path)

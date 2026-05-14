@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EvoMaster Trajectory Review</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="grain" aria-hidden="true"></div>
+  <main class="shell">
+    <header class="hero panel reveal">
+      <div class="hero-copy">
+        <p class="eyebrow">EvoMaster / trajectory viewer</p>
+        <h1>Trajectory Review</h1>
+        <p class="subtitle">Pick a run, pick a trajectory step, then inspect the current tool call, the compressed prompt, and the reconstructed pre-compression history side by side.</p>
+      </div>
+      <div class="hero-controls">
+        <label class="field wide">
+          <span>Experiment</span>
+          <select id="experimentSelect"></select>
+        </label>
+        <label class="field wide">
+          <span>Trajectory</span>
+          <select id="trajectorySelect"></select>
+        </label>
+        <button id="refreshBtn" class="button primary">Refresh</button>
+      </div>
+    </header>
+
+    <section class="metrics reveal" id="metricStrip" aria-live="polite"></section>
+
+    <section class="workspace">
+      <aside class="panel run-panel reveal">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow tiny">step 1 / run shelf</p>
+            <h2>Experiments</h2>
+          </div>
+          <span id="runCount" class="chip">0</span>
+        </div>
+        <input id="experimentFilter" class="search" placeholder="Filter experiments" />
+        <div id="experimentList" class="experiment-list"></div>
+      </aside>
+
+      <aside class="panel timeline-panel reveal">
+        <div class="panel-head compact">
+          <div>
+            <p class="eyebrow tiny">step 2 / call stream</p>
+            <h2>LLM Calls</h2>
+            <p class="panel-help">每条是一轮 LLM 请求后的记录；Call 是全局顺序，Turn 是当前 round 内的 agent 步数。</p>
+          </div>
+          <span id="entryCount" class="chip">0</span>
+        </div>
+        <div class="timeline-tools">
+          <input id="entryFilter" class="search" placeholder="Search call #, tool, round, text" />
+          <button id="lastEntryBtn" class="button ghost">Latest</button>
+        </div>
+        <div id="timelineList" class="timeline-list"></div>
+      </aside>
+
+      <section class="panel transcript-panel reveal">
+        <div class="panel-head transcript-head">
+          <div>
+            <p class="eyebrow tiny">step 3 / selected call</p>
+            <h2 id="entryTitle">Transcript</h2>
+          </div>
+          <div class="role-toggles" aria-label="message role filters">
+            <label><input type="checkbox" data-role="system" checked /> system</label>
+            <label><input type="checkbox" data-role="user" checked /> user</label>
+            <label><input type="checkbox" data-role="assistant" checked /> assistant</label>
+            <label><input type="checkbox" data-role="tool" checked /> tool</label>
+          </div>
+        </div>
+        <div class="transcript-toolbar">
+          <input id="messageFilter" class="search" placeholder="Search selected transcript" />
+          <button id="collapseBtn" class="button ghost">Compact</button>
+          <button id="rawBtn" class="button ghost">Raw JSON</button>
+        </div>
+        <div id="viewTabs" class="view-tabs" aria-label="trajectory view mode">
+          <button class="view-tab active" data-view="step" type="button">当前步</button>
+          <button class="view-tab" data-view="compare" type="button">压缩对比</button>
+          <button class="view-tab" data-view="compressed" type="button">压缩后</button>
+          <button class="view-tab" data-view="full" type="button">压缩前重建</button>
+          <button class="view-tab" data-view="prompt" type="button">请求前</button>
+        </div>
+        <div id="entryMeta" class="entry-meta"></div>
+        <div id="viewStats" class="view-stats"></div>
+        <div id="comparePane" class="compare-pane" hidden></div>
+        <div id="messageList" class="message-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <div id="rawModal" class="modal" hidden>
+    <div class="modal-card">
+      <div class="modal-head">
+        <h2>Raw selected entry</h2>
+        <button id="closeRawBtn" class="button ghost">Close</button>
+      </div>
+      <pre id="rawJson" class="raw-json"></pre>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

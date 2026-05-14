@@ -16,8 +16,10 @@ Arguments:
 
 import argparse
 import logging
+import os
 import sys
 import importlib
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -95,6 +97,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum parallel workers for --parallel (default: number of tasks)"
+    )
+
+    parser.add_argument(
         "--images",
         nargs="+",
         help="List of image file paths (supports PNG/JPG), for multimodal task input"
@@ -162,6 +171,92 @@ def get_task_description(args):
     sys.exit(1)
 
 
+def _sanitize_task_id_component(value: str) -> str:
+    """Convert benchmark names into safe path components."""
+    import re
+
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value).strip())
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("._-")
+    return cleaned or "task"
+
+
+def _load_task_spec_from_description(description: str, task_file_path: Path) -> dict | None:
+    """Best-effort load of a benchmark spec referenced by a task description."""
+    import json
+    import yaml
+
+    raw = str(description or "").strip()
+    if not raw:
+        return None
+
+    if raw.startswith("{"):
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            pass
+
+    if len(raw) >= 4096:
+        return None
+
+    candidates: list[Path] = []
+    try:
+        direct = Path(raw).expanduser()
+        candidates.append(direct)
+        if not direct.is_absolute():
+            candidates.append(task_file_path.parent / direct)
+    except (OSError, ValueError):
+        return None
+
+    for candidate in candidates:
+        try:
+            if (
+                candidate.exists()
+                and candidate.is_file()
+                and candidate.suffix.lower() in {".yaml", ".yml", ".json"}
+            ):
+                with open(candidate, "r", encoding="utf-8") as f:
+                    if candidate.suffix.lower() == ".json":
+                        parsed = json.load(f) or {}
+                    else:
+                        parsed = yaml.safe_load(f) or {}
+                return parsed if isinstance(parsed, dict) else None
+        except (OSError, ValueError, yaml.YAMLError, json.JSONDecodeError):
+            continue
+
+    return None
+
+
+def _infer_task_id(task_obj: dict, idx: int, task_file_path: Path) -> str:
+    """Use benchmark identity for readable workspace names when possible."""
+    spec = _load_task_spec_from_description(str(task_obj.get("description", "")), task_file_path)
+    semantic_name = None
+    if spec:
+        for key in ("competition_id", "task_id", "name"):
+            if spec.get(key):
+                semantic_name = str(spec[key])
+                break
+
+    if semantic_name:
+        return _sanitize_task_id_component(semantic_name)
+    return f"task_{idx}"
+
+
+def _explicit_resource_index(task_obj: dict) -> int | None:
+    """Return an explicitly configured resource/GPU slot index, if present."""
+    for key in ("resource_index", "parallel_index", "gpu_index", "task_index"):
+        if key not in task_obj:
+            continue
+        raw = task_obj.get(key)
+        if raw is None or raw == "":
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid {key}: expected integer, got {raw!r}")
+    return None
+
+
 def parse_task_file(task_file_path: Path):
     """Parse task JSON file
 
@@ -180,6 +275,7 @@ def parse_task_file(task_file_path: Path):
         raise ValueError(f"Invalid task file format: expected list, got {type(tasks_raw).__name__}")
 
     tasks = []
+    used_ids: set[str] = set()
     for idx, task in enumerate(tasks_raw):
         if isinstance(task, str):
             # Compatible with simple list format: ["task1", "task2"]
@@ -189,13 +285,28 @@ def parse_task_file(task_file_path: Path):
         else:
             raise ValueError(f"Task {idx} has invalid format: expected string or dict, got {type(task).__name__}")
 
-        # Auto-generate ID if not present
-        if "id" not in task_obj:
-            task_obj["id"] = f"task_{idx}"
-
         # Validate required fields
         if "description" not in task_obj:
             raise ValueError(f"Task {idx} is missing the required field 'description'")
+
+        # Keep the parallel resource slot separate from the user-facing task
+        # id. The run loop supplies the default GPU index; an explicit value
+        # in the task file can override it.
+        explicit_resource_index = _explicit_resource_index(task_obj)
+        if explicit_resource_index is not None:
+            task_obj["resource_index"] = explicit_resource_index
+
+        # Auto-generate readable benchmark IDs when possible. Treat task_N as the
+        # generic default too, so MLE specs become e.g. spaceship-titanic.
+        if "id" not in task_obj or task_obj.get("id") == f"task_{idx}":
+            task_obj["id"] = _infer_task_id(task_obj, idx, task_file_path)
+
+        # Avoid workspace collisions while preserving the clean benchmark name
+        # for the common one-task-per-competition case.
+        base_id = str(task_obj["id"])
+        if base_id in used_ids:
+            task_obj["id"] = f"{base_id}_{idx}"
+        used_ids.add(str(task_obj["id"]))
 
         tasks.append(task_obj)
 
@@ -203,7 +314,8 @@ def parse_task_file(task_file_path: Path):
 
 
 def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
-                    task_id: str, task_description: str, images: list[str] | None = None):
+                    task_id: str, task_description: str, images: list[str] | None = None,
+                    resource_index: int | None = None):
     """Run a single task (in the main process)
 
     Note: This function runs in the main process, not in a separate process.
@@ -216,13 +328,26 @@ def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
         task_id: Task ID
         task_description: Task description
         images: List of image file paths (optional)
+        resource_index: Stable parallel resource/GPU slot index for the task
 
     Returns:
         Task result dictionary
     """
     logger = logging.getLogger(__name__)
+    previous_task_index = os.environ.get("EVOMASTER_TASK_INDEX")
+    previous_parallel_index = os.environ.get("EVOMASTER_PARALLEL_INDEX")
 
     try:
+        if resource_index is not None:
+            os.environ["EVOMASTER_TASK_INDEX"] = str(resource_index)
+            os.environ["EVOMASTER_PARALLEL_INDEX"] = str(resource_index)
+            stagger_seconds = float(os.environ.get("EVOMASTER_TASK_STAGGER_SECONDS", "0") or 0)
+            if resource_index > 0 and stagger_seconds > 0:
+                delay = resource_index * stagger_seconds
+                logger.info(f"Staggering task {task_id} startup by {delay:.1f}s")
+                time.sleep(delay)
+            logger.info(f"Task {task_id} resource/GPU index: {resource_index}")
+
         # Load Playground
         playground = get_playground_class(agent_name, config_path=config_path)
 
@@ -235,6 +360,8 @@ def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
         else:
             result = playground.run(task_description=task_description)
         result["task_id"] = task_id
+        if resource_index is not None:
+            result["resource_index"] = resource_index
 
         logger.info(f"✅ Task {task_id} completed: {result['status']}")
         return result
@@ -245,8 +372,25 @@ def run_single_task(agent_name: str, config_path: Path, run_dir: Path,
             "task_id": task_id,
             "status": "failed",
             "error": str(e),
-            "steps": 0
+            "steps": 0,
+            "resource_index": resource_index,
         }
+    finally:
+        if resource_index is not None:
+            if previous_task_index is None:
+                os.environ.pop("EVOMASTER_TASK_INDEX", None)
+            else:
+                os.environ["EVOMASTER_TASK_INDEX"] = previous_task_index
+            if previous_parallel_index is None:
+                os.environ.pop("EVOMASTER_PARALLEL_INDEX", None)
+            else:
+                os.environ["EVOMASTER_PARALLEL_INDEX"] = previous_parallel_index
+
+
+def _task_resource_index(task: dict, default_index: int) -> int:
+    """Return the GPU/resource slot for a task."""
+    explicit = _explicit_resource_index(task)
+    return default_index if explicit is None else explicit
 
 
 def run_tasks_sequential(agent_name: str, config_path: Path, run_dir: Path,
@@ -264,22 +408,24 @@ def run_tasks_sequential(agent_name: str, config_path: Path, run_dir: Path,
         List of results for all tasks
     """
     results = []
-    for task in tasks:
+    for idx, task in enumerate(tasks):
         task_images = task.get("images", images)
+        resource_index = _task_resource_index(task, idx)
         result = run_single_task(
             agent_name,
             config_path,
             run_dir,
             task["id"],
             task["description"],
-            images=task_images
+            images=task_images,
+            resource_index=resource_index,
         )
         results.append(result)
     return results
 
 
 def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
-                       tasks: list, max_workers: int = 4, images: list[str] | None = None):
+                       tasks: list, max_workers: int | None = None, images: list[str] | None = None):
     """Run multiple tasks in parallel
 
     Uses ProcessPoolExecutor for parallel task execution.
@@ -298,37 +444,70 @@ def run_tasks_parallel(agent_name: str, config_path: Path, run_dir: Path,
     from concurrent.futures import ProcessPoolExecutor, as_completed
 
     logger = logging.getLogger(__name__)
-    results = []
+    results = [None] * len(tasks)
+    worker_count = max_workers if max_workers is not None else len(tasks)
+    if worker_count <= 0:
+        raise ValueError("max_workers must be positive")
+    worker_count = min(worker_count, len(tasks))
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_task = {
-            executor.submit(
-                run_single_task,
-                agent_name,
-                config_path,
-                run_dir,
-                task["id"],
-                task["description"],
-                task.get("images", images)
-            ): task
-            for task in tasks
-        }
+    logger.info(f"Parallel workers: {worker_count}")
 
-        # Collect results
-        for future in as_completed(future_to_task):
-            task = future_to_task[future]
+    def submit_task(executor, task_pos: int, slot_index: int):
+        task = tasks[task_pos]
+        task_images = task.get("images", images)
+        resource_index = _task_resource_index(task, slot_index)
+        logger.info(
+            f"Submitting task {task['id']} with resource/GPU index {resource_index}"
+        )
+        future = executor.submit(
+            run_single_task,
+            agent_name,
+            config_path,
+            run_dir,
+            task["id"],
+            task["description"],
+            task_images,
+            resource_index,
+        )
+        return future
+
+    with ProcessPoolExecutor(max_workers=worker_count) as executor:
+        future_to_task: dict = {}
+        next_task_pos = 0
+
+        # Submit one task per parallel slot. When a slot finishes, reuse the
+        # same slot index for the next task so active tasks never collide on
+        # automatically assigned GPUs.
+        for slot_index in range(worker_count):
+            future = submit_task(executor, next_task_pos, slot_index)
+            future_to_task[future] = (tasks[next_task_pos], next_task_pos, slot_index)
+            next_task_pos += 1
+
+        while future_to_task:
+            for future in as_completed(future_to_task):
+                task, task_pos, slot_index = future_to_task.pop(future)
+                break
             try:
                 result = future.result()
-                results.append(result)
+                results[task_pos] = result
             except Exception as e:
                 logger.error(f"❌ Task {task['id']} failed: {e}")
-                results.append({
+                results[task_pos] = {
                     "task_id": task["id"],
                     "status": "failed",
                     "error": str(e),
-                    "steps": 0
-                })
+                    "steps": 0,
+                    "resource_index": _task_resource_index(task, slot_index),
+                }
+
+            if next_task_pos < len(tasks):
+                future = submit_task(executor, next_task_pos, slot_index)
+                future_to_task[future] = (
+                    tasks[next_task_pos],
+                    next_task_pos,
+                    slot_index,
+                )
+                next_task_pos += 1
 
     return results
 
@@ -473,7 +652,14 @@ def main():
         if len(tasks) > 1 and args.parallel:
             # Parallel mode
             logger.info("🔄 Executing tasks in parallel...")
-            results = run_tasks_parallel(args.agent, config_path, run_dir, tasks, images=images)
+            results = run_tasks_parallel(
+                args.agent,
+                config_path,
+                run_dir,
+                tasks,
+                max_workers=args.max_workers,
+                images=images,
+            )
         else:
             # Sequential mode (including single task)
             if len(tasks) > 1:
@@ -502,7 +688,16 @@ def main():
             logger.info("Task status:")
             for result in results:
                 status_icon = "✅" if result.get('status') == 'completed' else "❌"
-                logger.info(f"  {status_icon} {result['task_id']}: {result['status']} ({result.get('steps', 0)} steps)")
+                resource_index = result.get("resource_index")
+                resource_info = (
+                    f", resource/GPU index {resource_index}"
+                    if resource_index is not None
+                    else ""
+                )
+                logger.info(
+                    f"  {status_icon} {result['task_id']}: {result['status']} "
+                    f"({result.get('steps', 0)} steps{resource_info})"
+                )
 
         logger.info("")
         logger.info(f"Results directory: {run_dir}")

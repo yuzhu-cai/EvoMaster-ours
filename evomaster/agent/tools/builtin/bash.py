@@ -100,6 +100,7 @@ class BashTool(BaseTool):
             "exit_code": exit_code,
             "working_dir": working_dir_abs,
         }
+        if result.get("deadline_reached"):
+            info["deadline_reached"] = True
         
         return obs, info
-

@@ -1,0 +1,7 @@
+benchmark: mlebench
+competition_id: spaceship-titanic
+# Host path to the prepared/public competition directory. It will be mounted read-only at /mlebench/input.
+input_dir: /data/mle-bench/prepared/spaceship-titanic/public
+description: |
+  Solve the MLE-Bench competition. Read the data and description from /mlebench/input,
+  create a valid /workspace/submission.csv, and keep reproducible code under /workspace/work.

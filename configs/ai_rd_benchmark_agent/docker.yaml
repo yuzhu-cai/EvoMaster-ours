@@ -1,0 +1,149 @@
+# AI R&D Benchmark Agent - Docker configuration
+# Supports MLE-Bench, PaperBench, and PostTrainBench with a single tool-using agent.
+
+benchmark_agent:
+  default_benchmark: "mlebench"
+  workspace: "/workspace"
+  mlebench_input_mount: "/mlebench/input"
+  paperbench_input_mount: "/paperbench/input"
+  posttrainbench_input_mount: "/posttrainbench/task"
+  mlebench_artifact: "/workspace/submission.csv"
+  paperbench_artifact: "/workspace/reproduce.sh"
+  posttrainbench_artifact: "/workspace/final_model"
+  # Optional host-side command. It runs after the agent finishes.
+  # Available placeholders include: {benchmark}, {competition_id}, {workspace},
+  # {artifact_path}, {host_artifact_path}, {host_workspace}, {host_input_path},
+  # {prepared_dir}, and {run_dir}.
+  grade_command: ""
+  grade_timeout: 3600
+  description_max_chars: 24000
+  iteration:
+    enabled: false
+    max_rounds: 1
+    min_rounds: 1
+    max_runtime_seconds: 0
+    prompt_file: "prompts/iteration_prompt.txt"
+    snapshot_each_round: true
+    promote_best_artifact: true
+    best_artifact_path: "/workspace/artifacts/best_submission.csv"
+    stop_file: "/workspace/artifacts/STOP_ITERATION"
+    max_stagnant_rounds: 0
+
+llm:
+  openai:
+    provider: "openai"
+    model: "${GPT_CHAT_MODEL}"
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "${GPT_BASE_URL}"
+    temperature: 0.7
+    max_tokens: 16384
+    timeout: 300
+    max_retries: 8
+    retry_delay: 5.0
+
+  deepseek:
+    provider: "deepseek"
+    model: "deepseek-v3.2"
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "${DEEPSEEK_API_BASE}"
+    temperature: 0.7
+    max_tokens: 16384
+    timeout: 300
+    max_retries: 3
+    retry_delay: 1.0
+
+  default: "openai"
+
+agents:
+  general:
+    llm: "openai"
+    max_turns: 80
+    tools:
+      builtin: ["execute_bash", "str_replace_editor", "think", "finish"]
+      benchmark_status: "benchmark_status"
+      experiment_tracker: "experiment_tracker"
+
+    context:
+      max_tokens: 128000
+      truncation_strategy: "summary"
+      preserve_system_messages: true
+      preserve_recent_turns: 5
+
+    system_prompt_file: "prompts/system_prompt.txt"
+    user_prompt_file: "prompts/user_prompt.txt"
+    prompt_format_kwargs: {}
+
+session:
+  type: "docker"
+
+  local:
+    working_dir: "./playground/ai_rd_benchmark_agent/workspace"
+    timeout: 32400
+    gpu_devices: "0"
+    cpu_devices: "0-15"
+    symlinks: {}
+
+  docker:
+    image: "mlmaster-worker:latest"
+    pull_image: "never"
+    container_name: null
+    use_existing_container: null
+    working_dir: "/workspace"
+    workspace_path: "/workspace"
+
+    # Bind one local GPU per container. The runner exports EVOMASTER_TASK_INDEX
+    # and EVOMASTER_PARALLEL_INDEX as the active parallel resource slot, so
+    # readable task ids stay decoupled from GPU allocation.
+    gpu_devices: ["0", "1", "2", "3", "4", "5", "6", "7"]
+    one_gpu_per_container: true
+
+    memory_limit: "64g"
+    cpu_limit: 16.0
+    cpu_devices: null
+    network_mode: "host"
+
+    # The playground dynamically adds read-only benchmark input mounts from the task spec.
+    # Mount host conda read-only so mlmaster-worker:latest can activate evomaster_yuzhu
+    # even if the image itself does not ship conda on PATH.
+    volumes:
+      /data/conda/miniconda3:
+        target: /data/conda/miniconda3
+        read_only: true
+      /data/yuzhu/Devs/mlmaster-sandbox/hf_cache:
+        target: /root/.cache/huggingface/hub
+        read_only: false
+      /data/yuzhu/Devs/mlmaster-sandbox/torch_hub_cache/checkpoints:
+        target: /root/.cache/torch/hub/checkpoints
+        read_only: true
+      /data/yuzhu/Devs/mlmaster-sandbox/nltk_data:
+        target: /root/nltk_data
+        read_only: true
+      /data/yuzhu/Devs/mlmaster-sandbox/spacy_models/site-packages:
+        target: /opt/spacy_models
+        read_only: true
+
+    env_vars:
+      HTTP_PROXY: "http://127.0.0.1:5890"
+      HTTPS_PROXY: "http://127.0.0.1:5890"
+      ALL_PROXY: "http://127.0.0.1:5890"
+      NO_PROXY: "localhost,127.0.0.1"
+      HF_HOME: "/root/.cache/huggingface"
+      HF_HUB_CACHE: "/root/.cache/huggingface/hub"
+      TRANSFORMERS_CACHE: "/root/.cache/huggingface/hub"
+      TORCH_HOME: "/root/.cache/torch"
+      NLTK_DATA: "/root/nltk_data"
+      PYTHONPATH: "/opt/spacy_models"
+
+    conda_env: "evomaster_yuzhu"
+    auto_remove: true
+    timeout: 32400
+
+llm_output:
+  show_in_console: true
+  log_to_file: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null
+  console: true

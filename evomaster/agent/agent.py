@@ -142,6 +142,30 @@ class BaseAgent(ABC):
         # Instance-level trajectory file path (independent for each agent instance)
         # self._trajectory_file_path: Path | None = None
 
+    def _runtime_deadline_expired(self) -> bool:
+        """Return whether the session-level runtime deadline has elapsed."""
+        checker = getattr(self.session, "deadline_expired", None)
+        if not callable(checker):
+            return False
+        try:
+            return bool(checker())
+        except Exception:
+            return False
+
+    def _finish_due_to_deadline(self) -> bool:
+        """Finish the current trajectory when the outer runtime budget expires."""
+        if not self._runtime_deadline_expired():
+            return False
+        self.logger.info("=" * 80)
+        self.logger.info("⏱️ Runtime deadline reached; stopping agent loop")
+        self.logger.info("=" * 80)
+        if self.trajectory and self.trajectory.status == "running":
+            self.trajectory.finish(
+                "completed",
+                {"reason": "runtime_deadline_reached"},
+            )
+        return True
+
     def run(self, task: TaskInstance, on_step=None):
         """Execute a task
 
@@ -162,6 +186,8 @@ class BaseAgent(ABC):
         try:
             # Execution loop
             for turn in range(self.config.max_turns):
+                if self._finish_due_to_deadline():
+                    break
                 # Clearly display the current step
                 self.logger.info("=" * 80)
                 self.logger.info(f"📍 Step [{turn + 1}/{self.config.max_turns}]")
@@ -246,6 +272,8 @@ class BaseAgent(ABC):
 
         try:
             for turn in range(self.config.max_turns):
+                if self._finish_due_to_deadline():
+                    break
                 self.logger.info("=" * 80)
                 self.logger.info(f"📍 Step [{turn + 1}/{self.config.max_turns}]")
                 self.logger.info("=" * 80)
@@ -416,6 +444,18 @@ class BaseAgent(ABC):
         for tool_call in assistant_message.tool_calls:
             self.logger.debug(f"Processing tool call: {tool_call.function.name}")
 
+            if self._runtime_deadline_expired():
+                tool_message = ToolMessage(
+                    content="Runtime deadline reached; skipping remaining tool calls.",
+                    tool_call_id=tool_call.id,
+                    name=tool_call.function.name,
+                    meta={"info": {"deadline_reached": True}},
+                )
+                self.current_dialog.add_message(tool_message)
+                step_record.tool_responses.append(tool_message)
+                should_finish = True
+                break
+
             # Check if this is the finish tool
             if tool_call.function.name == "finish":
                 # Print the finish tool's arguments (final answer)
@@ -471,6 +511,8 @@ class BaseAgent(ABC):
 
             # Execute tool
             observation, info = self._execute_tool(tool_call)
+            if info.get("deadline_reached"):
+                should_finish = True
 
             # Truncate excessively long tool output to prevent context overflow
             MAX_TOOL_OUTPUT = 30000

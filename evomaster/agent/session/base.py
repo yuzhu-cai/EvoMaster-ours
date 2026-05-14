@@ -7,6 +7,8 @@ providing basic capabilities such as command execution and file operations.
 from __future__ import annotations
 
 import logging
+import math
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -32,11 +34,53 @@ class BaseSession(ABC):
         self.config = config or SessionConfig()
         self.logger = logging.getLogger(self.__class__.__name__)
         self._is_open = False
+        self._deadline_monotonic: float | None = None
 
     @property
     def is_open(self) -> bool:
         """Whether the session is open."""
         return self._is_open
+
+    def set_deadline(self, deadline_monotonic: float | None) -> None:
+        """Set an absolute monotonic-time deadline for command execution.
+
+        Sessions use this to cap tool command timeouts against an outer
+        runtime budget. ``None`` clears the deadline.
+        """
+        self._deadline_monotonic = deadline_monotonic
+
+    def clear_deadline(self) -> None:
+        """Clear any previously configured runtime deadline."""
+        self._deadline_monotonic = None
+
+    def remaining_deadline_seconds(self) -> float | None:
+        """Return seconds until the configured deadline, or ``None``."""
+        if self._deadline_monotonic is None:
+            return None
+        return self._deadline_monotonic - time.monotonic()
+
+    def deadline_expired(self) -> bool:
+        """Whether the configured runtime deadline has already elapsed."""
+        remaining = self.remaining_deadline_seconds()
+        return remaining is not None and remaining <= 0
+
+    def _timeout_with_deadline(self, timeout: int | float | None) -> int | None:
+        """Cap a command timeout by the active deadline.
+
+        Returns:
+            * ``None`` when no timeout/deadline is active.
+            * ``0`` when the deadline has already elapsed.
+            * A positive integer timeout otherwise.
+        """
+        base_timeout = timeout if timeout is not None else self.config.timeout
+        remaining = self.remaining_deadline_seconds()
+        if remaining is None:
+            return int(math.ceil(base_timeout)) if base_timeout is not None else None
+        if remaining <= 0:
+            return 0
+        if base_timeout is None:
+            return max(1, int(math.ceil(remaining)))
+        return max(1, int(math.ceil(min(float(base_timeout), remaining))))
 
     @abstractmethod
     def open(self) -> None:
@@ -207,4 +251,3 @@ class BaseSession(ABC):
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         """Context manager exit."""
         self.close()
-
