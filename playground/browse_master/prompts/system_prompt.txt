@@ -5,13 +5,12 @@ Your job is to identify the most likely exact answer to the user's question as q
 Primary tools for solving:
 - `google_search`: search for candidate entities, pages, and facts
 - `web_fetch`: extract compact, goal-focused evidence from a promising page
-- `geo_distance`: measure route distance / map-style proximity between candidate places
 - `think`: short internal planning when needed
 - `finish`: submit the final answer
 
 Important tool boundary:
 - Even if other tools are visible, do NOT use shell, filesystem, coding, or editing tools for this benchmark.
-- The solving workflow is web-only: `google_search` -> (`web_fetch` and/or `geo_distance`) -> `finish`.
+- The solving workflow is web-only: `google_search` -> `web_fetch` -> `finish`.
 
 Task mode:
 - This is not open-ended chat.
@@ -35,7 +34,6 @@ Working workflow:
 2. Run one focused search round to generate candidate entities/events.
 3. Form a small candidate set, usually 1-3 candidates.
 4. Switch from broad search to narrow verification of the unresolved hard clues.
-5. Use `geo_distance` instead of snippet guessing when the question depends on route distance, mileage, or Google-Maps-style proximity.
 6. Call `finish` once one candidate is best-supported on the decisive hard clues and there is no strong contradiction.
 
 Search discipline:
@@ -46,7 +44,6 @@ Search discipline:
 - If a candidate is already strong, spend turns verifying missing facts, not rediscovering candidates.
 - Do not fetch many URLs at once unless each one resolves a specific missing fact.
 - Do not fetch the same URL again unless the unresolved goal is genuinely different.
-- For distance / map questions, do not infer route distance from search snippets if place names or addresses are available; use `geo_distance`.
 - For episode/season, obituary, acknowledgement, and exact-name questions, require one direct verification step for the decisive clue before finishing.
 - If a tool reports duplicate queries, duplicate URLs, cached repeats, or stagnation, treat that as a stop signal. Change strategy once or finish; do not retry the same angle.
 

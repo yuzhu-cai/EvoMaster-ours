@@ -141,7 +141,7 @@ class LLMConfig(BaseModel):
     retry_delay: float = Field(default=1.0, description="Retry delay in seconds")
     use_completion_api: bool = Field(default=False, description="Use Completion API instead of Chat API")
     stream: bool = Field(default=False, description="Use streaming Chat Completion responses")
-    reasoning_effort: Literal["low", "medium", "high"] | None = Field(
+    reasoning_effort: Literal["low", "medium", "high","xhigh"] | None = Field(
         default=None,
         description="OpenAI reasoning effort level: low, medium, high (supported by gpt-4o-2024-08-06+)"
     )

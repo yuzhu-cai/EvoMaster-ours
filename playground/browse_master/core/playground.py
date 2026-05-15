@@ -7,8 +7,8 @@ import json
 import logging
 import re
 import sys
-from typing import Any
 from pathlib import Path
+from typing import Any
 
 project_root = Path(__file__).parent.parent.parent.parent
 if str(project_root) not in sys.path:
@@ -20,7 +20,7 @@ from .exp import BrowseMasterExp
 from ..tools import build_browse_tools
 
 DATASET_PATH = Path(__file__).parent.parent / "test" / "browsecomp_decrypted.json"
-EXTERNAL_TOOL_NAMES = {"google_search","web_fetch"}
+BROWSE_SOLVER_TOOL_NAMES = {"think", "finish", "google_search", "web_fetch"}
 
 
 @register_playground("browse_master")
@@ -95,9 +95,27 @@ class BrowseMasterPlayground(BasePlayground):
             for tool_name in self._browse_tool_names:
                 if tool_name not in enabled_tool_names:
                     enabled_tool_names.append(tool_name)
+            enabled_tool_names = self._filter_solver_tools(enabled_tool_names)
             agent.enabled_tool_names = enabled_tool_names
             self._base_enabled_tool_names[slot_name] = list(enabled_tool_names)
             self.logger.debug("Agent %s enabled tools: %s", slot_name, enabled_tool_names)
+
+            web_fetch_tool = self.tools.get_tool("web_fetch")
+            if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
+                web_fetch_tool.set_llm(agent.llm)
+
+    @staticmethod
+    def _filter_solver_tools(tool_names: list[str]) -> list[str]:
+        """Remove irrelevant tools so the benchmark agent stays web-only."""
+        filtered = [name for name in tool_names if name in BROWSE_SOLVER_TOOL_NAMES]
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for name in filtered:
+            if name in seen:
+                continue
+            seen.add(name)
+            deduped.append(name)
+        return deduped
 
     def setup(self) -> None:
         self._setup_session()
@@ -124,8 +142,7 @@ class BrowseMasterPlayground(BasePlayground):
             self._setup_trajectory_file(output_file)
 
             question, gt_from_task = self._parse_task(task_description)
-            # Prefer ground_truth passed from run.py via --json/--id
-            ground_truth = getattr(self, '_ground_truth', None) or gt_from_task
+            ground_truth = getattr(self, "_ground_truth", None) or gt_from_task
             exp = self._create_exp()
             exp.ground_truth = ground_truth
 
