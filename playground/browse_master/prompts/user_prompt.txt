@@ -1,7 +1,13 @@
 Answer the following benchmark question.
 
-Return only the exact final answer via the `finish` tool once you have the best-supported candidate.
-Do not keep searching after the answer is already reasonably clear.
+Rules for this run:
+- Solve the underlying facts, not the wording of the query.
+- Ignore benchmark mirrors or pages that repeat the question almost verbatim.
+- Treat route distance, episode/season, obituary, acknowledgment, and exact-name constraints as hard clues that should be directly verified before finishing.
+- If the task depends on map-style distance or driving miles, prefer the dedicated distance tool over snippet guessing.
+- Once one candidate is clearly best-supported on the hard clues, stop searching and call `finish`.
+- If progress stalls, compare your top candidates against the unresolved hard clues instead of endlessly reformulating queries.
+- Return only the exact final answer via the `finish` tool.
 
 Question:
 {description}

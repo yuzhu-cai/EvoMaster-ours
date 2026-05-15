@@ -20,7 +20,7 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 FINAL_ANSWER_RE = re.compile(r"Agent final answer:\s*(.*?)\s*$")
-DEFAULT_TAIL_LINES = 20
+DEFAULT_TAIL_LINES = 40
 
 
 def parse_id_ranges(id_str: str) -> list[int]:

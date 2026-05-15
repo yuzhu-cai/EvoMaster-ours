@@ -1,7 +1,4 @@
-"""Chat Agent Web Fetch Tool
-
-Fetches web page content via the Jina Reader API and uses an LLM to extract key information based on user goals.
-"""
+"""BrowseMaster web-fetch tool with goal-focused extraction."""
 
 from __future__ import annotations
 
@@ -20,26 +17,39 @@ from evomaster.agent.tools.base import BaseTool, BaseToolParams
 
 if TYPE_CHECKING:
     from evomaster.agent.session import BaseSession
+    from evomaster.utils.llm import BaseLLM
 
 logger = logging.getLogger(__name__)
 
 # Maximum fetched content length (characters); truncated before sending to LLM
 MAX_CONTENT_LENGTH = 80000
 
-EXTRACTOR_PROMPT = """Please process the following webpage content and user goal to extract relevant information:
+EXTRACTOR_PROMPT = """You are extracting benchmark evidence from a fetched webpage.
 
-## **Webpage Content**
+Webpage content:
 {webpage_content}
 
-## **User Goal**
+User goal:
 {goal}
 
-## **Task Guidelines**
-1. **Content Scanning**: Locate the **specific sections/data** directly related to the user's goal within the webpage content.
-2. **Key Extraction**: Identify and extract the **most relevant information** from the content. Never miss any important information. Output the **full original context** as far as possible — it can be more than three paragraphs.
-3. **Summary**: Organize into a concise paragraph with logical flow, prioritizing clarity and judging the contribution of the information to the goal.
+Instructions:
+1. Ignore navigation chrome, cookie banners, login walls, robot checks, repeated menus, and unrelated sidebar content.
+2. Extract only evidence that directly helps solve the goal.
+3. Prefer exact names, dates, numbers, places, role relationships, episode/season identifiers, and explicit yes/no contradiction signals.
+4. If the page is mostly a challenge screen, navigation shell, or obviously unrelated, say so explicitly.
+5. Keep the output compact and decision-oriented.
 
-**Output as JSON with "evidence" and "summary" fields.**"""
+Return valid JSON with this schema:
+{{
+  "page_quality": "high|medium|low",
+  "page_type": "primary|entity_adjacent|aggregator|challenge|unknown",
+  "evidence": [
+    "Short bullet with the exact fact and enough context to identify it",
+    "Another short bullet"
+  ],
+  "summary": "2-4 sentences explaining what this page does or does not verify for the goal."
+}}
+"""
 
 
 class WebFetchToolParams(BaseToolParams):
@@ -73,6 +83,10 @@ class WebFetchTool(BaseTool):
         self._extract_cache: dict[tuple[str, str], str] = {}
         self._failed_urls: dict[str, int] = {}
         self._stagnation_streak = 0
+
+    def set_llm(self, llm: "BaseLLM") -> None:
+        """Inject the agent LLM for extraction."""
+        self._llm = llm
 
     def execute(self, session: BaseSession, args_json: str) -> tuple[str, dict[str, Any]]:
         """Fetch web page content and extract key information using LLM."""
@@ -275,7 +289,16 @@ class WebFetchTool(BaseTool):
 
             if parsed:
                 useful = f"The useful information in {url} for user goal \"{goal}\" as follows:\n\n"
-                useful += f"Evidence in page:\n{parsed.get('evidence', 'N/A')}\n\n"
+                useful += f"Page quality: {parsed.get('page_quality', 'unknown')}\n"
+                useful += f"Page type: {parsed.get('page_type', 'unknown')}\n\n"
+                evidence = parsed.get("evidence", [])
+                if isinstance(evidence, list) and evidence:
+                    useful += "Evidence in page:\n"
+                    for item in evidence[:8]:
+                        useful += f"- {item}\n"
+                    useful += "\n"
+                else:
+                    useful += f"Evidence in page:\n{evidence or 'N/A'}\n\n"
                 useful += f"Summary:\n{parsed.get('summary', 'N/A')}\n\n"
                 return useful
             else:
