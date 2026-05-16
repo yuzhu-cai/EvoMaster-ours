@@ -1,0 +1,3 @@
+Complete the assigned research subtask using the available tools, then return a concise evidence report.
+
+{description}
