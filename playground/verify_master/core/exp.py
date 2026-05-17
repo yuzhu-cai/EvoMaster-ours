@@ -1,11 +1,12 @@
 """VerifyMaster experiment workflow.
 
-This workflow keeps the original verification-oriented architecture:
-- Planner proposes the next subtask or emits a final answer candidate.
+This workflow uses a simplified BrowseComp architecture:
+- Planner proposes the next subtask or emits a final answer.
 - Executor uses web tools to gather evidence for one focused subtask.
-- Verifier scores each evidence block and audits the final answer.
+- A separate finalizer agent produces a forced final answer at max steps.
 
-The goal of this file is functional wiring, not benchmark optimization.
+The goal of this file is to keep the loop simple while preserving convergence
+signals and a reliable fallback answer.
 """
 
 from __future__ import annotations
@@ -44,20 +45,29 @@ class ResearchTrajectory:
 
     def to_context(self, max_recent: int = 5) -> str:
         if not self.steps:
-            return "(no verified research steps yet)"
+            return "(no research steps yet)"
 
         parts: list[str] = []
         if len(self.steps) > max_recent:
-            earlier = ", ".join(f"S{s.step_number}" for s in self.steps[:-max_recent])
-            parts.append(f"[Earlier steps summarized: {earlier}]")
+            earlier_steps = self.steps[:-max_recent]
+            earlier_pass = sum(
+                1 for step in earlier_steps if step.verification and step.verification.passed
+            )
+            earlier_fail = sum(
+                1 for step in earlier_steps if step.verification and not step.verification.passed
+            )
+            parts.append(
+                "[Earlier steps summarized: "
+                f"{len(earlier_steps)} steps, {earlier_pass} useful, {earlier_fail} blocked]"
+            )
 
         for step in self.steps[-max_recent:]:
             if step.verification is None:
-                verdict = "unverified"
+                verdict = "unrated"
             elif step.verification.passed:
-                verdict = f"PASS/{step.verification.confidence:.2f}"
+                verdict = f"useful/{step.verification.confidence:.2f}"
             else:
-                verdict = f"FAIL/{step.verification.confidence:.2f}"
+                verdict = f"blocked/{step.verification.confidence:.2f}"
             parts.append(
                 f"S{step.step_number} {verdict}\n"
                 f"Subtask: {step.subtask}\n"
@@ -66,26 +76,8 @@ class ResearchTrajectory:
         return "\n\n".join(parts)
 
 
-def parse_verdict(text: str) -> VerificationResult:
-    verdict_match = re.search(r"<verdict>\s*(PASS|FAIL)\s*</verdict>", text, re.I)
-    confidence_match = re.search(r"<confidence>\s*(\d+(?:\.\d+)?)\s*</confidence>", text)
-    feedback_match = re.search(r"<feedback>\s*(.*?)\s*</feedback>", text, re.I | re.S)
-
-    confidence = float(confidence_match.group(1)) if confidence_match else 0.0
-    if confidence < 0.0:
-        confidence = 0.0
-    if confidence > 1.0:
-        confidence = 1.0
-
-    return VerificationResult(
-        passed=bool(verdict_match and verdict_match.group(1).upper() == "PASS"),
-        confidence=confidence,
-        feedback=feedback_match.group(1).strip() if feedback_match else text.strip(),
-    )
-
-
 class VerifyMasterExp(BaseExp):
-    """Verification-first multi-agent BrowseComp experiment."""
+    """Planner-executor BrowseComp experiment with a forced finalizer."""
 
     def __init__(
         self,
@@ -93,7 +85,8 @@ class VerifyMasterExp(BaseExp):
         executor,
         verifier,
         config,
-        max_steps: int = 20,
+        finalizer=None,
+        max_steps: int = 15,
         local_threshold: float = 0.55,
         global_threshold: float = 0.65,
         max_retries: int = 1,
@@ -102,7 +95,8 @@ class VerifyMasterExp(BaseExp):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.planner = planner
         self.executor = executor
-        self.verifier = verifier
+        self.verifier = verifier  # kept only for compatibility / easy rollback
+        self.finalizer = finalizer
         self.max_steps = max_steps
         self.local_threshold = local_threshold
         self.global_threshold = global_threshold
@@ -133,75 +127,209 @@ class VerifyMasterExp(BaseExp):
         response = self._extract_agent_response(trajectory).strip()
         return trajectory, response
 
-    def _local_verify(self, subtask: str, evidence: str) -> VerificationResult:
-        if not self.verifier:
-            return VerificationResult(True, 1.0, "Verifier disabled")
+    def _extract_failure_reason(self, trajectory) -> str:
+        result = getattr(trajectory, "result", {}) or {}
+        if isinstance(result, dict):
+            reason = result.get("reason")
+            if isinstance(reason, str):
+                return reason
+        return ""
 
-        description = (
-            "Local evidence verification for a BrowseComp research step.\n\n"
-            f"Subtask:\n{subtask}\n\n"
-            f"Evidence:\n{evidence[:4000]}\n\n"
-            "Judge whether the evidence is directly relevant, concrete, and useful for the subtask. "
-            "PASS if it contains specific facts or strong directional evidence, even if it is not exhaustive. "
-            "FAIL only if it is mostly vague, off-target, contradictory, or guess-based."
-        )
-        _, response = self._run_text_agent(
-            self.verifier,
-            task_id=f"lv_{len(self.trajectory.steps) + 1}",
-            task_type="verifier",
-            description=description,
-        )
-        return parse_verdict(response)
+    def _truncate(self, text: str, limit: int = 220) -> str:
+        compact = re.sub(r"\s+", " ", (text or "")).strip()
+        if len(compact) <= limit:
+            return compact
+        return compact[: limit - 3].rstrip() + "..."
 
-    def _global_verify(self, task: str, answer: str) -> VerificationResult:
-        if not self.verifier:
-            return VerificationResult(True, 1.0, "Verifier disabled")
+    def _normalize_subtask_signature(self, text: str) -> str:
+        normalized = text.lower()
+        normalized = re.sub(r"https?://\S+", " ", normalized)
+        normalized = re.sub(r"\b\d{4}\b", " <year> ", normalized)
+        normalized = re.sub(r"\b\d+(?:\.\d+)?\b", " <num> ", normalized)
+        normalized = re.sub(r"[^a-z0-9<>\s]+", " ", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
 
-        chain = "\n\n".join(
-            f"S{s.step_number}\nSubtask: {s.subtask}\nEvidence: {s.evidence[:1200]}"
-            for s in self.trajectory.steps
-            if s.evidence
-        ) or "(no evidence collected)"
+    def _subtask_complexity(self, text: str) -> int:
+        lowered = text.lower()
+        score = 0
+        score += len(re.findall(r"\b(and|or|with|whose|which|that|between|from|while)\b", lowered))
+        score += len(re.findall(r"\bverify\b|\bcheck\b|\bidentify\b|\bfind\b|\breturn\b", lowered))
+        score += len(re.findall(r"\b\d{4}\b", lowered))
+        score += text.count(";")
+        if len(text) > 180:
+            score += 3
+        elif len(text) > 120:
+            score += 2
+        elif len(text) > 80:
+            score += 1
+        return score
 
-        description = (
-            "Global answer verification for a BrowseComp question.\n\n"
-            f"Original question:\n{task}\n\n"
-            f"Candidate answer:\n{answer}\n\n"
-            f"Evidence chain:\n{chain}\n\n"
-            "Primary question: is the candidate answer directly supported by the collected evidence?\n"
-            "PASS when the answer itself is strongly supported and the identified entity is reasonably established.\n"
-            "Do not require every background clue to be independently proven if the remaining uncertainty is minor "
-            "and would not realistically change the final answer.\n"
-            "FAIL only if the answer is weakly supported, the entity is genuinely ambiguous, major competing "
-            "candidates remain plausible, or the answer still depends on guesswork."
+    def _evidence_gist(self, evidence: str) -> str:
+        cleaned = evidence.replace("Evidence report:", "").strip()
+        for line in cleaned.splitlines():
+            stripped = line.strip(" -*")
+            if stripped:
+                return self._truncate(stripped, 180)
+        return self._truncate(cleaned, 180)
+
+    def _is_timeout_step(self, step: ExecutionStep) -> bool:
+        evidence = (step.evidence or "").lower()
+        feedback = (step.verification.feedback if step.verification else "").lower()
+        return "max turns" in evidence or "max turns" in feedback
+
+    def _repeat_count_for_subtask(self, subtask: str) -> int:
+        signature = self._normalize_subtask_signature(subtask)
+        if not signature:
+            return 0
+        return sum(
+            1
+            for step in self.trajectory.steps
+            if not step.subtask.startswith("[")
+            and self._normalize_subtask_signature(step.subtask) == signature
         )
-        _, response = self._run_text_agent(
-            self.verifier,
-            task_id="gv",
-            task_type="verifier",
-            description=description,
+
+    def _recent_pass_steps(self, limit: int = 4) -> list[ExecutionStep]:
+        steps = [
+            step
+            for step in self.trajectory.steps
+            if step.verification and step.verification.passed and step.evidence
+        ]
+        return steps[-limit:]
+
+    def _recent_fail_steps(self, limit: int = 4) -> list[ExecutionStep]:
+        steps = [
+            step for step in self.trajectory.steps if step.verification and not step.verification.passed
+        ]
+        return steps[-limit:]
+
+    def _repeated_angle_summaries(self, limit: int = 3) -> list[str]:
+        groups: dict[str, list[ExecutionStep]] = {}
+        for step in self.trajectory.steps:
+            if step.subtask.startswith("["):
+                continue
+            signature = self._normalize_subtask_signature(step.subtask)
+            if not signature:
+                continue
+            groups.setdefault(signature, []).append(step)
+
+        repeated = [group for group in groups.values() if len(group) >= 2]
+        repeated.sort(key=lambda group: (len(group), group[-1].step_number), reverse=True)
+
+        summaries: list[str] = []
+        for group in repeated[:limit]:
+            representative = self._truncate(group[0].subtask, 120)
+            summaries.append(f"{representative} (attempted {len(group)}x)")
+        return summaries
+
+    def _infer_phase(self) -> str:
+        passed_steps = [
+            step for step in self.trajectory.steps if step.verification and step.verification.passed
+        ]
+        if not passed_steps:
+            return "candidate_discovery"
+
+        last_pass_text = passed_steps[-1].subtask.lower()
+        attribute_keywords = (
+            "birth year",
+            "birthplace",
+            "runtime",
+            "distance",
+            "founder",
+            "date",
+            "year",
+            "full name",
+            "surname",
+            "month",
+            "title",
         )
-        return parse_verdict(response)
+        if any(keyword in last_pass_text for keyword in attribute_keywords):
+            return "attribute_extraction"
+        if len(passed_steps) <= 2:
+            return "candidate_narrowing"
+        return "candidate_verification"
+
+    def _convergence_advice(self) -> str:
+        recent_fails = self._recent_fail_steps(limit=3)
+        timeout_fails = [step for step in recent_fails if self._is_timeout_step(step)]
+        if len(timeout_fails) >= 2:
+            if all(self._subtask_complexity(step.subtask) < 8 for step in timeout_fails):
+                return (
+                    "Repeated narrow steps are stalling. Switch source type, query wording, or return to a "
+                    "small candidate-generation step instead of shrinking forever."
+                )
+            return "The recent steps were still too bundled. Split the next lookup so it checks one clue on one target."
+
+        repeated_angles = self._repeated_angle_summaries(limit=1)
+        if repeated_angles:
+            return "You already revisited the same angle. Compare, eliminate, or move to the next decisive clue."
+
+        if len(self._recent_pass_steps(limit=6)) >= 3:
+            return "Prefer extracting the final missing attribute from the best-supported candidate."
+
+        return "Keep one leading hypothesis or one tiny candidate set, then resolve one decisive missing clue."
+
+    def _build_state_snapshot(self) -> str:
+        lines = [f"Phase: {self._infer_phase()}"]
+
+        pass_steps = self._recent_pass_steps(limit=4)
+        if pass_steps:
+            lines.append("Confirmed progress:")
+            for step in pass_steps:
+                lines.append(
+                    f"- S{step.step_number}: {self._truncate(step.subtask, 120)} -> {self._evidence_gist(step.evidence)}"
+                )
+        else:
+            lines.append("Confirmed progress: none yet")
+
+        repeated_angles = self._repeated_angle_summaries(limit=2)
+        if repeated_angles:
+            lines.append("Repeated angles to avoid:")
+            for summary in repeated_angles:
+                lines.append(f"- {summary}")
+
+        fail_steps = self._recent_fail_steps(limit=3)
+        if fail_steps:
+            lines.append("Recent blockers:")
+            for step in fail_steps:
+                label = "timeout" if self._is_timeout_step(step) else "weak evidence"
+                lines.append(
+                    f"- S{step.step_number} {label}: {self._truncate(step.subtask, 100)} -> "
+                    f"{self._truncate(step.verification.feedback if step.verification else step.evidence, 180)}"
+                )
+
+        lines.append(f"Convergence rule: {self._convergence_advice()}")
+        return "\n".join(lines)
+
+    def _build_executor_state(self) -> str:
+        lines = [f"Phase: {self._infer_phase()}"]
+        repeated_angles = self._repeated_angle_summaries(limit=1)
+        if repeated_angles:
+            lines.append(f"Repeated angle to avoid: {repeated_angles[0]}")
+        lines.append(f"Current guidance: {self._convergence_advice()}")
+        return "\n".join(lines)
 
     def _planner_input(self, task: str, step: int) -> str:
         return "\n\n".join(
             [
                 f"Original task:\n{task}",
                 f"Current step: {step}/{self.max_steps}",
+                f"Structured state:\n{self._build_state_snapshot()}",
                 f"Research progress:\n{self.trajectory.to_context()}",
                 "Return exactly one block: either <task>...</task> for the next focused lookup, "
-                "or <answer>...</answer> if the evidence is already sufficient.",
+                "or <answer>...</answer> if you are ready to answer.",
             ]
         )
 
     def _executor_input(self, task: str, step: int, retry_feedback: str = "") -> str:
         parts = [
             f"Assigned subtask (step {step}):\n{task}",
+            f"Investigation state:\n{self._build_executor_state()}",
             f"Research context:\n{self.trajectory.to_context(3)}",
         ]
         if retry_feedback:
             parts.append(
-                "Verifier feedback from the failed attempt:\n"
+                "Feedback from the failed attempt:\n"
                 f"{retry_feedback}\n\n"
                 "Do not repeat the same search path. Change query wording, target source, or verification angle."
             )
@@ -210,11 +338,75 @@ class VerifyMasterExp(BaseExp):
         )
         return "\n\n".join(parts)
 
+    def _finalizer_input(self, task: str) -> str:
+        return "\n\n".join(
+            [
+                f"Original task:\n{task}",
+                f"Structured state:\n{self._build_state_snapshot()}",
+                f"Research progress:\n{self.trajectory.to_context(20)}",
+                "Return <answer>...</answer> with the single best final answer from the current evidence.",
+            ]
+        )
+
     def _extract_tag(self, text: str, tag: str) -> Optional[str]:
         match = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", text, re.I | re.S)
         if match:
             return match.group(1).strip()
         return None
+
+    def _extract_candidate_from_evidence(self, evidence: str) -> str:
+        patterns = [
+            r"Best-supported extraction:\s*\**(.+?)\**(?:\.|\n|$)",
+            r"Answer:\s*(.+?)(?:\n|$)",
+            r"Therefore,\s*\**(.+?)\**(?:\.|\n|$)",
+            r"The person is\s+\**(.+?)\**(?:\.|\n|$)",
+            r"Conclusion:\s*(.+?)(?:\n|$)",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, evidence, re.I | re.S)
+            if match:
+                return self._truncate(match.group(1).strip(" *"), 120)
+        return ""
+
+    def _sanitize_final_answer(self, text: str) -> str:
+        answer = text.strip()
+        answer = re.sub(r"^<answer>|</answer>$", "", answer, flags=re.I).strip()
+        answer = re.sub(r"^Answer\s*:\s*", "", answer, flags=re.I).strip()
+        if answer.lower().startswith("<task>"):
+            return ""
+        if "\n" in answer:
+            answer = answer.splitlines()[0].strip()
+        return answer
+
+    def _best_known_answer(self) -> str:
+        for step in reversed(self.trajectory.steps):
+            candidate = self._extract_candidate_from_evidence(step.evidence)
+            if candidate:
+                return candidate
+
+        for step in reversed(self.trajectory.steps):
+            if step.verification and step.verification.passed and step.evidence:
+                gist = self._evidence_gist(step.evidence)
+                if gist:
+                    return gist
+
+        return "Unknown"
+
+    def _run_final_fallback(self, task_description: str) -> str:
+        finalizer = self.finalizer or self.planner
+        _, output = self._run_text_agent(
+            finalizer,
+            task_id="finalizer",
+            task_type="finalizer",
+            description=self._finalizer_input(task_description),
+        )
+        self.logger.info("Finalizer output: %s", output[:300])
+
+        final_answer = self._extract_tag(output, "answer") or output.strip()
+        final_answer = self._sanitize_final_answer(final_answer)
+        if final_answer:
+            return final_answer
+        return self._best_known_answer()
 
     def run(self, task_description: str, task_id: str = "exp_001", images=None, on_step=None) -> dict:
         self.logger.info("=" * 80)
@@ -246,41 +438,25 @@ class VerifyMasterExp(BaseExp):
 
                 answer_candidate = self._extract_tag(planner_output, "answer")
                 if answer_candidate:
-                    global_verdict = self._global_verify(task_description, answer_candidate)
-                    self.logger.info(
-                        "Global verification: %s (%.2f)",
-                        "PASS" if global_verdict.passed else "FAIL",
-                        global_verdict.confidence,
-                    )
-                    if global_verdict.passed and global_verdict.confidence >= self.global_threshold:
+                    answer_candidate = self._sanitize_final_answer(answer_candidate)
+                    if answer_candidate:
                         self.final_found = True
                         result["status"] = "completed"
                         result["final_answer"] = answer_candidate
                         result["agent_answer"] = answer_candidate
                         break
 
-                    self.trajectory.add_step(
-                        ExecutionStep(
-                            step_number=step_num,
-                            subtask=f"[Global verification failed] {global_verdict.feedback}",
-                            verification=global_verdict,
-                        )
-                    )
-                    continue
-
                 subtask = self._extract_tag(planner_output, "task") or planner_output.strip()
                 if not subtask:
                     subtask = task_description
                 self.logger.info("Executor subtask: %s", subtask[:200])
 
-                _, evidence = self._run_text_agent(
-                    self.executor,
-                    task_id=f"e{step_num}",
-                    task_type="executor",
-                    description=self._executor_input(subtask, step_num),
+                evidence, local_verdict = self._run_executor_step(
+                    subtask,
+                    step_num,
                     on_step=on_step,
+                    retry_index=0,
                 )
-                local_verdict = self._local_verify(subtask, evidence)
 
                 retry_count = 0
                 while (
@@ -289,22 +465,17 @@ class VerifyMasterExp(BaseExp):
                 ):
                     retry_count += 1
                     self.logger.warning(
-                        "Local verification failed for step %s: %s",
+                        "Executor step failed for step %s: %s",
                         step_num,
                         local_verdict.feedback,
                     )
-                    _, evidence = self._run_text_agent(
-                        self.executor,
-                        task_id=f"e{step_num}r{retry_count}",
-                        task_type="executor",
-                        description=self._executor_input(
-                            subtask,
-                            step_num,
-                            retry_feedback=local_verdict.feedback,
-                        ),
+                    evidence, local_verdict = self._run_executor_step(
+                        subtask,
+                        step_num,
                         on_step=on_step,
+                        retry_feedback=local_verdict.feedback,
+                        retry_index=retry_count,
                     )
-                    local_verdict = self._local_verify(subtask, evidence)
 
                 self.trajectory.add_step(
                     ExecutionStep(
@@ -317,17 +488,7 @@ class VerifyMasterExp(BaseExp):
                 )
 
             if not self.final_found:
-                _, planner_output = self._run_text_agent(
-                    self.planner,
-                    task_id="final",
-                    task_type="planner",
-                    description=(
-                        f"Original task:\n{task_description}\n\n"
-                        f"Research progress:\n{self.trajectory.to_context(20)}\n\n"
-                        "Return <answer>...</answer> with the best-supported answer from the current evidence."
-                    ),
-                )
-                final_answer = self._extract_tag(planner_output, "answer") or planner_output.strip()
+                final_answer = self._run_final_fallback(task_description)
                 result["status"] = "max_steps"
                 result["final_answer"] = final_answer
                 result["agent_answer"] = final_answer
@@ -355,3 +516,98 @@ class VerifyMasterExp(BaseExp):
             result.get("steps"),
         )
         return result
+
+    def _run_executor_step(
+        self,
+        subtask: str,
+        step_num: int,
+        on_step=None,
+        retry_feedback: str = "",
+        retry_index: int = 0,
+    ) -> tuple[str, VerificationResult]:
+        task_id = f"e{step_num}" if retry_index == 0 else f"e{step_num}r{retry_index}"
+        trajectory, evidence = self._run_text_agent(
+            self.executor,
+            task_id=task_id,
+            task_type="executor",
+            description=self._executor_input(
+                subtask,
+                step_num,
+                retry_feedback=retry_feedback,
+            ),
+            on_step=on_step,
+        )
+        failure_reason = self._extract_failure_reason(trajectory)
+
+        if evidence.strip():
+            return evidence, VerificationResult(
+                passed=True,
+                confidence=1.0,
+                feedback="Executor returned usable evidence.",
+            )
+
+        if failure_reason == "max_turns_exceeded":
+            repeat_count = self._repeat_count_for_subtask(subtask)
+            complexity = self._subtask_complexity(subtask)
+
+            if complexity >= 8:
+                diagnostic = (
+                    "Executor exhausted max turns before producing an evidence report. "
+                    "The subtask still bundled multiple filters or verification demands."
+                )
+                verdict = VerificationResult(
+                    passed=False,
+                    confidence=0.15,
+                    feedback=(
+                        "Executor hit max turns because the subtask was still too bundled. "
+                        "Split the next step so it checks one clue on one target or returns a tiny candidate set."
+                    ),
+                )
+                return diagnostic, verdict
+
+            if repeat_count >= 2:
+                diagnostic = (
+                    "Executor exhausted max turns on a repeated narrow search angle before producing an evidence report. "
+                    "The issue is likely retrieval sparsity or source mismatch, not just task size."
+                )
+                verdict = VerificationResult(
+                    passed=False,
+                    confidence=0.15,
+                    feedback=(
+                        "Executor hit max turns on a repeated narrow angle. Do not keep shrinking forever; "
+                        "switch source type, query wording, or return to a different candidate-generation step."
+                    ),
+                )
+                return diagnostic, verdict
+
+            diagnostic = (
+                "Executor exhausted max turns before producing an evidence report. "
+                "The clue may be retrieval-sparse or source-mismatched."
+            )
+            verdict = VerificationResult(
+                passed=False,
+                confidence=0.15,
+                feedback=(
+                    "Executor hit max turns. Keep the next step small, but change source type or search angle "
+                    "instead of repeating the same pattern."
+                ),
+            )
+            return diagnostic, verdict
+
+        if failure_reason:
+            diagnostic = f"Executor failed before producing an evidence report: {failure_reason}."
+            verdict = VerificationResult(
+                passed=False,
+                confidence=0.2,
+                feedback=(
+                    f"Executor failed before returning evidence ({failure_reason}). "
+                    "Use a narrower subtask with fewer simultaneous constraints."
+                ),
+            )
+            return diagnostic, verdict
+
+        return evidence, VerificationResult(
+            passed=False,
+            confidence=0.2,
+            feedback="Executor returned no evidence.",
+        )

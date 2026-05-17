@@ -33,10 +33,10 @@ llm:
 agents:
   planner:
     llm: "openai"
-    max_turns: 1
+    max_turns: 5
     finish_on_text_response: true
     tools:
-      builtin: []
+      builtin: ["think", "finish"]
     context:
       max_tokens: 32000
       truncation_strategy: "latest_half"
@@ -47,14 +47,14 @@ agents:
 
   executor:
     llm: "openai"
-    max_turns: 12
+    max_turns: 15
     finish_on_text_response: true
     tools:
       builtin: ["think", "finish"]
       search: "google_search"
       fetch: "web_fetch"
     context:
-      max_tokens: 80000
+      max_tokens: 100000
       truncation_strategy: "latest_half"
       preserve_system_messages: true
       preserve_recent_turns: 6

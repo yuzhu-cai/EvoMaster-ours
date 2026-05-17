@@ -148,11 +148,24 @@ class VerifyMasterPlayground(BasePlayground):
             deduped.append(name)
         return deduped
 
+    def _build_finalizer(self):
+        if self.planner is None:
+            return None
+
+        finalizer = self.copy_agent(self.planner, new_agent_name="finalizer_agent")
+        prompt_dir = Path(__file__).resolve().parent.parent / "prompts"
+        finalizer._system_prompt = (prompt_dir / "finalizer_prefix.txt").read_text(encoding="utf-8")
+        finalizer._user_prompt = (prompt_dir / "finalizer_user.txt").read_text(encoding="utf-8")
+        finalizer.enable_tools = False
+        finalizer.enabled_tool_names = []
+        return finalizer
+
     def _create_exp(self):
         exp = VerifyMasterExp(
             planner=self.planner,
             executor=self.executor,
             verifier=self.verifier,
+            finalizer=self._build_finalizer(),
             config=self.config,
         )
         if self.run_dir:
