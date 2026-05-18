@@ -6,8 +6,8 @@
 
 set -e
 
-IDS="${IDS:-0,1,3-9}"
-RUN_NAME="${RUN_NAME:-verify_master_test3}"
+IDS="${IDS:-0,1,3-8}"
+RUN_NAME="${RUN_NAME:-verify_master_test4}"
 RUN_WORKERS="${RUN_WORKERS:-8}"
 EVAL_WORKERS="${EVAL_WORKERS:-4}"
 DATA_JSON="${DATA_JSON:-playground/verify_master/test/browsecomp_decrypted.json}"
