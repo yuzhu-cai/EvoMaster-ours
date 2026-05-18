@@ -257,7 +257,9 @@ def main() -> int:
     for thread in threads:
         thread.join()
 
-    failed = [(paper, rc) for paper, rc in results if rc not in (0,)]
+    # rc=75 means another resumable grader owns that task's lock. Treat it as a
+    # cooperative skip so concurrent graders can split the remaining papers.
+    failed = [(paper, rc) for paper, rc in results if rc not in (0, 75)]
     if failed:
         print("failures: " + ", ".join(f"{paper}:{rc}" for paper, rc in failed), file=sys.stderr)
     print("parallel grading finished")
