@@ -190,6 +190,8 @@ viewer/
 
 # Playground workspaces / local runs
 playground/*/workspace
+playground/codex4ptb/local_state/
+playground/codex4ptb/.state/
 
 # Misc local files
 showcase/
