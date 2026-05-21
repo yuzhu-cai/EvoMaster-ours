@@ -659,6 +659,14 @@ def _generate_prompt(args: argparse.Namespace, ptb_root: Path) -> str:
             TMPDIR/VLLM_RPC_BASE_PATH point to a short per-run directory under
             /tmp. Keep that setting for vLLM commands; Unix IPC socket paths fail
             when TMPDIR is inside the long run directory.
+
+            Do not stop early because of a self-imposed token, context, or planning
+            budget. The real budget is the wall-clock time shown by `./timer.sh`.
+            If an ambitious plan is too large, immediately switch to a minimal
+            viable training or packaging path. You must leave a loadable full
+            Hugging Face model directory at `final_model/`; if no improved model
+            can be trained in time, package the original base model or the best
+            partial candidate so the benchmark evaluation can still run.
             """
         )
     return prompt.strip() + "\n"
