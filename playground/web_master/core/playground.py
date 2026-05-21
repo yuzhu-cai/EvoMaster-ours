@@ -121,9 +121,9 @@ class WebMasterPlayground(BasePlayground):
             self._base_enabled_tool_names[slot_name] = list(enabled_tool_names)
             self.logger.debug("Agent %s enabled tools: %s", slot_name, enabled_tool_names)
 
-            # web_fetch_tool = agent.tools.get_tool("web_fetch")
-            # if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
-            #     web_fetch_tool.set_llm(agent.llm)
+            web_fetch_tool = agent.tools.get_tool("web_fetch")
+            if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
+                web_fetch_tool.set_llm(agent.llm)
 
     @staticmethod
     def _filter_solver_tools(tool_names: list[str]) -> list[str]:
@@ -143,6 +143,28 @@ class WebMasterPlayground(BasePlayground):
         self._setup_agents()
         self.logger.info("WebMaster setup complete")
 
+    def make_search_worker_agent(self, worker_name: str):
+        """Create an isolated search worker with fresh browse tool state."""
+        agent = self._create_agent(name="search")
+        agent.set_agent_name(worker_name)
+        agent.enabled_tool_names = [
+            tool_name
+            for tool_name in ROLE_TOOL_NAMES["search_agent"]
+            if agent.tools.get_tool(tool_name) is not None
+        ]
+        web_fetch_tool = agent.tools.get_tool("web_fetch")
+        if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
+            web_fetch_tool.set_llm(agent.llm)
+        return agent
+
+    def make_answer_forcer_agent(self, worker_name: str):
+        """Create an isolated no-tool agent used to force a node best guess."""
+        agent = self._create_agent(name="finalizer")
+        agent.set_agent_name(worker_name)
+        agent.enable_tools = False
+        agent.enabled_tool_names = []
+        return agent
+
     def _create_exp(self):
         experiment_config = getattr(self.config, "experiment", {}) or {}
         exp = FlashSearchExp(
@@ -150,7 +172,8 @@ class WebMasterPlayground(BasePlayground):
             searcher=self.searcher,
             finalizer=self.finalizer,
             config=self.config,
-            agent_copier=self.copy_agent,
+            worker_factory=self.make_search_worker_agent,
+            answer_forcer_factory=self.make_answer_forcer_agent,
             max_workers=int(experiment_config.get("max_workers", 3)),
             max_rounds=int(experiment_config.get("max_rounds", 4)),
         )

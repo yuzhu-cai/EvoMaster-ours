@@ -28,6 +28,8 @@ class SearchNodeResult:
     queries: list[str] = field(default_factory=list)
     urls: list[str] = field(default_factory=list)
     tool_call_counts: dict[str, int] = field(default_factory=dict)
+    dependency_node_ids: list[str] = field(default_factory=list)
+    forced_answer: bool = False
     raw_output: str = ""
     steps: int = 0
     error: str = ""

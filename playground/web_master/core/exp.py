@@ -30,6 +30,8 @@ class FlashSearchExp(BaseExp):
         finalizer,
         config,
         agent_copier: Callable | None = None,
+        worker_factory: Callable[[str], Any] | None = None,
+        answer_forcer_factory: Callable[[str], Any] | None = None,
         max_workers: int = 3,
         max_rounds: int = 4,
     ):
@@ -39,6 +41,8 @@ class FlashSearchExp(BaseExp):
         self.searcher = searcher
         self.finalizer = finalizer or planner
         self.agent_copier = agent_copier
+        self.worker_factory = worker_factory
+        self.answer_forcer_factory = answer_forcer_factory
         self.max_workers = max(1, int(max_workers))
         self.max_rounds = max(1, int(max_rounds))
         self.ground_truth = None
@@ -91,6 +95,8 @@ class FlashSearchExp(BaseExp):
                 on_step=on_step,
             )[1]
             final_answer = self._sanitize_final_answer(final_output)
+            if not final_answer or final_answer.strip().upper() == "UNKNOWN":
+                final_answer = self._best_non_unknown_node_answer(node_results)
 
             result.update(
                 {
@@ -110,10 +116,12 @@ class FlashSearchExp(BaseExp):
                 }
             )
             self.results.append(result)
+            self._save_run_result(result)
         except Exception as exc:
             self.logger.error("WebMaster Flash task crashed: %s", exc, exc_info=True)
             result.update({"status": "failed", "error": str(exc)})
             self.results.append(result)
+            self._save_run_result(result)
 
         self.logger.info("Agent final answer: %s", result.get("agent_answer", ""))
         self.logger.info(
@@ -160,7 +168,13 @@ class FlashSearchExp(BaseExp):
             ]
         )
 
-    def _search_input(self, question: str, node: SearchNode) -> str:
+    def _search_input(
+        self,
+        question: str,
+        node: SearchNode,
+        dependency_results: dict[str, SearchNodeResult],
+    ) -> str:
+        dependency_context = self._dependency_context_for_prompt(node, dependency_results)
         return "\n\n".join(
             [
                 "Solve this one DAG search node for a BrowseComp question.",
@@ -170,6 +184,7 @@ class FlashSearchExp(BaseExp):
                 f"Original question:\n{question}",
                 f"Node id: {node.node_id}",
                 f"Node goal:\n{node.goal}",
+                f"Dependency results:\n{dependency_context}",
             ]
         )
 
@@ -187,6 +202,7 @@ class FlashSearchExp(BaseExp):
             [
                 "Produce the final BrowseComp answer from the DAG search results.",
                 "Return only the exact short answer. No explanation, no citation.",
+                "Do not return UNKNOWN; if evidence is incomplete, return the best-supported guess.",
                 f"Original question:\n{question}",
                 "DAG:",
                 json.dumps(dag.to_dict(), ensure_ascii=False, indent=2),
@@ -283,6 +299,7 @@ class FlashSearchExp(BaseExp):
                 question=question,
                 task_id=task_id,
                 round_index=round_index,
+                node_results=node_results,
                 on_step=on_step,
             )
             for node_result in round_results:
@@ -313,22 +330,33 @@ class FlashSearchExp(BaseExp):
         question: str,
         task_id: str,
         round_index: int,
+        node_results: dict[str, SearchNodeResult],
         on_step=None,
     ) -> list[SearchNodeResult]:
         results: list[SearchNodeResult] = []
         max_workers = min(self.max_workers, len(ready))
+
+        assignments = []
+        for node_index, node in enumerate(ready):
+            worker_agent = self._make_worker_agent(node, round_index)
+            force_agent = self._make_answer_forcer_agent(node, round_index)
+            assignments.append((node_index, node, worker_agent, force_agent))
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_node = {
                 executor.submit(
                     self._run_single_node,
                     node,
+                    worker_agent,
+                    force_agent,
                     question,
                     task_id,
                     round_index,
                     node_index,
+                    node_results,
                     on_step,
                 ): node
-                for node_index, node in enumerate(ready)
+                for node_index, node, worker_agent, force_agent in assignments
             }
             for future in as_completed(future_to_node):
                 node = future_to_node[future]
@@ -350,25 +378,21 @@ class FlashSearchExp(BaseExp):
     def _run_single_node(
         self,
         node: SearchNode,
+        agent,
+        force_agent,
         question: str,
         task_id: str,
         round_index: int,
         node_index: int,
+        node_results: dict[str, SearchNodeResult],
         on_step=None,
     ) -> SearchNodeResult:
-        agent = self.searcher
-        if self.agent_copier is not None:
-            agent = self.agent_copier(
-                self.searcher,
-                new_agent_name=f"flash_{node.node_id}_r{round_index}",
-            )
-
         BaseAgent.set_exp_info(exp_name=self.exp_name, exp_index=node_index)
         trajectory, raw_output = self._run_text_agent(
             agent,
             task_id=f"{task_id}_{node.node_id}",
             task_type="flash_search_node",
-            description=self._search_input(question, node),
+            description=self._search_input(question, node, node_results),
             on_step=on_step,
         )
         parsed = self._extract_json_object(raw_output)
@@ -383,6 +407,20 @@ class FlashSearchExp(BaseExp):
         if not answer:
             answer = self._sanitize_final_answer(raw_output) or "UNKNOWN"
 
+        forced_answer = False
+        if self._needs_forced_answer(answer, trajectory):
+            forced_answer = True
+            answer = self._force_node_answer(
+                force_agent=force_agent,
+                question=question,
+                node=node,
+                dependency_results=node_results,
+                raw_output=raw_output,
+                parsed_payload=parsed,
+                task_id=task_id,
+                on_step=on_step,
+            )
+
         return SearchNodeResult(
             node_id=node.node_id,
             status="completed",
@@ -391,9 +429,94 @@ class FlashSearchExp(BaseExp):
             queries=queries,
             urls=urls,
             tool_call_counts=tool_usage["tool_call_counts"],
+            dependency_node_ids=list(node.depends_on),
+            forced_answer=forced_answer,
             raw_output=raw_output,
             steps=len(getattr(trajectory, "steps", []) or []),
         )
+
+    def _make_worker_agent(self, node: SearchNode, round_index: int):
+        worker_name = f"flash_{node.node_id}_r{round_index}"
+        if self.worker_factory is not None:
+            return self.worker_factory(worker_name)
+        if self.agent_copier is not None:
+            return self.agent_copier(self.searcher, new_agent_name=worker_name)
+        return self.searcher
+
+    def _make_answer_forcer_agent(self, node: SearchNode, round_index: int):
+        worker_name = f"flash_force_{node.node_id}_r{round_index}"
+        if self.answer_forcer_factory is not None:
+            return self.answer_forcer_factory(worker_name)
+        if self.agent_copier is not None:
+            return self.agent_copier(self.finalizer, new_agent_name=worker_name)
+        return self.finalizer
+
+    def _needs_forced_answer(self, answer: str, trajectory) -> bool:
+        if not answer or answer.strip().upper() == "UNKNOWN":
+            return True
+        status = str(getattr(trajectory, "status", "") or "").lower()
+        if status and status not in {"completed", "success"}:
+            return True
+        result = getattr(trajectory, "result", {}) or {}
+        if isinstance(result, dict) and result.get("reason") == "max_turns_exceeded":
+            return True
+        return False
+
+    def _force_node_answer(
+        self,
+        force_agent,
+        question: str,
+        node: SearchNode,
+        dependency_results: dict[str, SearchNodeResult],
+        raw_output: str,
+        parsed_payload: dict[str, Any],
+        task_id: str,
+        on_step=None,
+    ) -> str:
+        prompt = "\n\n".join(
+            [
+                "The search worker returned UNKNOWN, no answer, or exhausted its step budget.",
+                "You must provide the best supported concrete answer for this DAG node.",
+                "Do not return UNKNOWN. If evidence is weak, make the most plausible best guess from the available material.",
+                "Return only the short answer for this node.",
+                f"Original question:\n{question}",
+                f"Node id: {node.node_id}",
+                f"Node goal:\n{node.goal}",
+                f"Dependency results:\n{self._dependency_context_for_prompt(node, dependency_results)}",
+                "Worker parsed payload:",
+                json.dumps(parsed_payload, ensure_ascii=False, indent=2),
+                f"Worker raw output:\n{raw_output[:6000]}",
+            ]
+        )
+        _, forced_output = self._run_text_agent(
+            force_agent,
+            task_id=f"{task_id}_{node.node_id}_force",
+            task_type="flash_force_node_answer",
+            description=prompt,
+            on_step=on_step,
+        )
+        forced_answer = self._sanitize_final_answer(forced_output)
+        if forced_answer and forced_answer.strip().upper() != "UNKNOWN":
+            return forced_answer
+        return self._sanitize_final_answer(raw_output) or "best guess unavailable"
+
+    def _dependency_context_for_prompt(
+        self,
+        node: SearchNode,
+        node_results: dict[str, SearchNodeResult],
+    ) -> str:
+        if not node.depends_on:
+            return "(none)"
+        dependency_payload = []
+        for dep_id in node.depends_on:
+            dep_result = node_results.get(dep_id)
+            if dep_result is None:
+                dependency_payload.append({"node_id": dep_id, "status": "missing"})
+                continue
+            dependency_payload.append(
+                self._node_result_to_dict(dep_result, include_raw=False)
+            )
+        return json.dumps(dependency_payload, ensure_ascii=False, indent=2)
 
     def _extract_tool_usage(self, trajectory) -> dict[str, Any]:
         tool_call_counts: Counter[str] = Counter()
@@ -517,12 +640,24 @@ class FlashSearchExp(BaseExp):
             "queries": node_result.queries,
             "urls": node_result.urls,
             "tool_call_counts": node_result.tool_call_counts,
+            "dependency_node_ids": node_result.dependency_node_ids,
+            "forced_answer": node_result.forced_answer,
             "steps": node_result.steps,
             "error": node_result.error,
         }
         if include_raw:
             payload["raw_output"] = node_result.raw_output
         return payload
+
+    def _best_non_unknown_node_answer(
+        self,
+        node_results: dict[str, SearchNodeResult],
+    ) -> str:
+        for node_result in reversed(list(node_results.values())):
+            answer = (node_result.answer or "").strip()
+            if answer and answer.upper() != "UNKNOWN":
+                return answer
+        return "best guess unavailable"
 
     def _serialize_result(self, result: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -536,3 +671,11 @@ class FlashSearchExp(BaseExp):
             "analysis": result.get("analysis", {}),
             "error": result.get("error"),
         }
+
+    def _save_run_result(self, result: dict[str, Any]) -> None:
+        if self.run_dir is None:
+            return
+        output_path = Path(self.run_dir) / "result.json"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as handle:
+            json.dump(self._serialize_result(result), handle, indent=2, ensure_ascii=False, default=str)

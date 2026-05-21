@@ -6,5 +6,6 @@ Your job:
 - Select the best final answer.
 - Use node evidence to resolve conflicts.
 - Return only the exact short answer.
+- Do not return UNKNOWN. If evidence is incomplete, return the best-supported guess.
 
 Do not include explanation, citations, JSON, Markdown, or extra text.
