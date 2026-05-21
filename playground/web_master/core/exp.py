@@ -1,10 +1,4 @@
-"""Flash-Searcher style BrowseComp experiment workflow.
-
-This module intentionally keeps the agent topology close to
-OPPO-PersonalAI/Flash-Searcher: a planning step, one tool-calling search agent
-that keeps the task memory in its dialog, and a no-tool final-answer fallback
-used when the search agent does not finish cleanly.
-"""
+"""DAG-parallel Flash-Searcher style BrowseComp experiment workflow."""
 
 from __future__ import annotations
 
@@ -12,44 +6,49 @@ import json
 import logging
 import re
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from evomaster.agent import BaseAgent
 from evomaster.core.exp import BaseExp
 from evomaster.utils.types import TaskInstance
 
-from .state import FlashMemoryStep, FlashSearcherRunState
+from .state import SchedulerRound, SearchDAG, SearchNode, SearchNodeResult
 
 
 class FlashSearchExp(BaseExp):
-    """Single-agent Flash-Searcher workflow adapted to EvoMaster."""
+    """DAG-based parallel search workflow inspired by Flash-Searcher."""
 
     def __init__(
         self,
         planner,
         searcher,
+        optimizer,
         finalizer,
         config,
-        max_steps: int = 20,
-        max_plans: int = 3,
-        planning_interval: int = 1,
-        summary_interval: int = 5,
+        worker_factory: Callable[[str], Any] | None = None,
+        max_workers: int = 3,
+        max_rounds: int = 4,
+        allow_partial_ready: bool = True,
+        max_dynamic_nodes: int = 4,
     ):
         super().__init__(agent=searcher, config=config)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.planner = planner
         self.searcher = searcher
+        self.optimizer = optimizer or planner
         self.finalizer = finalizer or planner
-        self.max_steps = max(1, int(max_steps))
-        self.max_plans = max(1, int(max_plans))
-        self.planning_interval = max(1, int(planning_interval))
-        self.summary_interval = max(1, int(summary_interval))
+        self.worker_factory = worker_factory
+        self.max_workers = max(1, int(max_workers))
+        self.max_rounds = max(1, int(max_rounds))
+        self.allow_partial_ready = bool(allow_partial_ready)
+        self.max_dynamic_nodes = max(0, int(max_dynamic_nodes))
         self.ground_truth = None
 
     @property
     def exp_name(self) -> str:
-        return "WebMasterFlashSearcher"
+        return "WebMasterFlashDAG"
 
     def run(
         self,
@@ -59,11 +58,10 @@ class FlashSearchExp(BaseExp):
         on_step=None,
     ) -> dict:
         self.logger.info("=" * 80)
-        self.logger.info("WebMaster Flash-Searcher task start: %s", task_id)
+        self.logger.info("WebMaster Flash DAG task start: %s", task_id)
         self.logger.info("Question: %s", task_description)
         self.logger.info("=" * 80)
 
-        state = FlashSearcherRunState(task_id=task_id, question=task_description)
         result: dict[str, Any] = {
             "task_id": task_id,
             "status": "running",
@@ -73,145 +71,60 @@ class FlashSearchExp(BaseExp):
         }
 
         try:
-            planning_trajectory = None
-            search_trajectory = None
-            planning = ""
-            search_output = ""
-            search_answer = ""
-            final_answer = ""
-            final_reasoning = ""
-            attempt_summaries: list[dict[str, Any]] = []
-
-            for attempt_index in range(1, self.max_plans + 1):
-                state.plan_attempts = attempt_index
-                planning_trajectory, planning = self._run_text_agent(
-                    self.planner,
-                    exp_index=(attempt_index - 1) * 2,
-                    task_id=f"{task_id}_planning_{attempt_index}",
-                    task_type="flash_planning",
-                    description=self._planning_input(task_description, attempt_summaries),
-                    on_step=on_step,
-                )
-                state.planning = planning
-                state.memory.append(
-                    FlashMemoryStep(
-                        step_type="planning",
-                        content=planning,
-                        metadata={
-                            "attempt": attempt_index,
-                            "max_plans": self.max_plans,
-                            "planning_interval": self.planning_interval,
-                        },
-                    )
-                )
-
-                search_trajectory, search_output = self._run_text_agent(
-                    self.searcher,
-                    exp_index=(attempt_index - 1) * 2 + 1,
-                    task_id=f"{task_id}_search_{attempt_index}",
-                    task_type="flash_search",
-                    description=self._search_input(task_description, planning, attempt_index),
-                    images=images,
-                    on_step=on_step,
-                )
-                search_answer = self._sanitize_answer(search_output)
-                state.search_status = str(getattr(search_trajectory, "status", "") or "")
-                state.search_steps += len(getattr(search_trajectory, "steps", []) or [])
-                usage = self._extract_tool_usage(search_trajectory)
-                self._merge_tool_usage(state, usage)
-                trace_digest = self._trajectory_digest(search_trajectory)
-                state.memory.append(
-                    FlashMemoryStep(
-                        step_type="action_trace_digest",
-                        content=trace_digest,
-                        metadata={
-                            "attempt": attempt_index,
-                            "raw_final_output": search_output[:2000],
-                            "search_status": state.search_status,
-                        },
-                    )
-                )
-
-                attempt_summary = {
-                    "attempt": attempt_index,
-                    "planning": planning,
-                    "search_status": state.search_status,
-                    "search_answer": search_answer,
-                    "search_output": search_output[:2000],
-                    "trace_digest": trace_digest,
-                    "tool_call_counts": usage["tool_call_counts"],
-                    "queries": usage["queries"],
-                    "urls": usage["urls"],
-                }
-                attempt_summaries.append(attempt_summary)
-
-                if not self._needs_final_answer_fallback(search_answer, search_trajectory):
-                    final_answer = search_answer
-                    break
-
-                state.memory.append(
-                    FlashMemoryStep(
-                        step_type="replan_trigger",
-                        content="Search did not produce a clean final answer; returning to planner."
-                        if attempt_index < self.max_plans
-                        else "Search did not produce a clean final answer after the final plan attempt.",
-                        metadata={"attempt": attempt_index, "max_plans": self.max_plans},
-                    )
-                )
-
-            if not final_answer:
-                final_trajectory, final_reasoning = self._run_text_agent(
-                    self.finalizer,
-                    exp_index=self.max_plans * 2,
-                    task_id=f"{task_id}_final_answer",
-                    task_type="flash_final_answer",
-                    description=self._final_answer_input(
-                        question=task_description,
-                        attempt_summaries=attempt_summaries,
-                    ),
-                    on_step=on_step,
-                )
-                final_answer = self._sanitize_answer(final_reasoning)
-                state.memory.append(
-                    FlashMemoryStep(
-                        step_type="final_answer_fallback",
-                        content=final_reasoning,
-                        metadata={
-                            "fallback_status": str(getattr(final_trajectory, "status", "") or ""),
-                        },
-                    )
-                )
-
+            planner_trajectory, planner_output = self._run_text_agent(
+                self.planner,
+                exp_index=0,
+                task_id=f"{task_id}_dag_plan",
+                task_type="flash_dag_plan",
+                description=self._planner_input(task_description),
+                on_step=on_step,
+            )
+            dag = self._build_dag(planner_output, task_description)
+            node_results, rounds, optimizer_outputs = self._execute_dag(
+                dag=dag,
+                question=task_description,
+                task_id=task_id,
+                on_step=on_step,
+            )
+            final_trajectory, final_output = self._run_text_agent(
+                self.finalizer,
+                exp_index=10_000,
+                task_id=f"{task_id}_answer_fusion",
+                task_type="flash_answer_fusion",
+                description=self._finalizer_input(task_description, dag, node_results, rounds),
+                on_step=on_step,
+            )
+            final_answer = self._sanitize_answer(final_output)
             if not final_answer or final_answer.upper() == "UNKNOWN":
-                final_answer = self._best_answer_from_text(search_output, final_reasoning)
-
-            state.final_reasoning = final_reasoning
-            state.final_answer = final_answer
+                final_answer = self._best_node_answer(node_results)
 
             result.update(
                 {
                     "status": "completed" if final_answer else "no_answer",
-                    "steps": state.search_steps,
+                    "steps": sum(item.steps for item in node_results.values()),
                     "agent_answer": final_answer,
-                    "flash_searcher_state": state.to_dict(),
-                    "planning_trajectory": planning_trajectory,
-                    "search_trajectory": search_trajectory,
+                    "dag_plan": dag.to_dict(),
+                    "node_results": {
+                        node_id: self._node_result_to_dict(node_result)
+                        for node_id, node_result in node_results.items()
+                    },
+                    "scheduler_rounds": [self._round_to_dict(item) for item in rounds],
+                    "optimizer_outputs": optimizer_outputs,
+                    "analysis": self._build_analysis(dag, node_results, rounds),
+                    "planner_trajectory": planner_trajectory,
+                    "final_trajectory": final_trajectory,
                 }
             )
             self.results.append(result)
             self._save_run_result(result)
         except Exception as exc:
-            self.logger.error("WebMaster Flash-Searcher task crashed: %s", exc, exc_info=True)
+            self.logger.error("WebMaster Flash DAG task crashed: %s", exc, exc_info=True)
             result.update({"status": "failed", "error": str(exc)})
             self.results.append(result)
             self._save_run_result(result)
 
         self.logger.info("Agent final answer: %s", result.get("agent_answer", ""))
-        self.logger.info(
-            "WebMaster Flash-Searcher task end: status=%s steps=%s",
-            result.get("status"),
-            result.get("steps"),
-        )
+        self.logger.info("WebMaster Flash DAG task end: status=%s", result.get("status"))
         return result
 
     def save_results(self, output_file: str):
@@ -229,7 +142,6 @@ class FlashSearchExp(BaseExp):
         task_id: str,
         task_type: str,
         description: str,
-        images=None,
         on_step=None,
     ) -> tuple[object, str]:
         BaseAgent.set_exp_info(exp_name=self.exp_name, exp_index=exp_index)
@@ -237,127 +149,442 @@ class FlashSearchExp(BaseExp):
             task_id=task_id,
             task_type=task_type,
             description=description,
-            images=images or [],
-            input_data={
-                "benchmark": "browsecomp",
-                "architecture": "flash_searcher",
-                "max_steps": self.max_steps,
-                "max_plans": self.max_plans,
-                "planning_interval": self.planning_interval,
-                "summary_interval": self.summary_interval,
-            },
+            input_data={"benchmark": "browsecomp", "architecture": "flash_searcher_dag"},
         )
         trajectory = agent.run(task, on_step=on_step)
         response = self._extract_agent_response(trajectory).strip()
         return trajectory, response
 
-    def _planning_input(
-        self,
-        question: str,
-        attempt_summaries: list[dict[str, Any]] | None = None,
-    ) -> str:
-        attempt_summaries = attempt_summaries or []
-        prompt_parts = [
-            "Run the Flash-Searcher planning step for this BrowseComp task.",
-            "Decompose the question into concrete search directions, hard constraints, likely pivots, and verification checks.",
-            "Do not answer yet unless the answer is already certain. This is a plan/memory step, not a final response.",
-            "Return concise Markdown with sections: Facts, Hard constraints, Search plan, Verification plan.",
-            f"Question:\n{question}",
-        ]
-        if attempt_summaries:
-            prompt_parts.extend(
-                [
-                    "Previous plan/search attempts failed to produce a clean final answer.",
-                    "Use the summaries below to re-plan: avoid repeated dead ends, keep useful evidence, and propose new search angles.",
-                    json.dumps(
-                        [
-                            {
-                                "attempt": item.get("attempt"),
-                                "search_status": item.get("search_status"),
-                                "search_answer": item.get("search_answer"),
-                                "search_output": item.get("search_output"),
-                                "tool_call_counts": item.get("tool_call_counts"),
-                                "queries": item.get("queries", [])[:20],
-                                "urls": item.get("urls", [])[:20],
-                                "trace_digest": self._coerce_str(item.get("trace_digest"))[:6000],
-                            }
-                            for item in attempt_summaries
-                        ],
-                        ensure_ascii=False,
-                        indent=2,
-                    ),
-                ]
-            )
-        return "\n\n".join(prompt_parts)
-
-    def _search_input(self, question: str, planning: str, attempt_index: int) -> str:
+    def _planner_input(self, question: str) -> str:
         return "\n\n".join(
             [
-                "You are now the Flash-Searcher tool-calling agent.",
-                f"This is plan/search attempt {attempt_index} of {self.max_plans}.",
-                "Use the initial plan as memory, then iteratively search and fetch webpages until the answer is verified.",
-                "Use google_search for broad discovery and web_fetch for evidence extraction from promising pages.",
-                "Before each tool call, reason briefly about what uncertainty the call resolves.",
-                "Do not stop at a plausible candidate: verify every hard constraint from the original question.",
-                "Ignore benchmark mirrors, answer dumps, and pages that only restate this exact question.",
-                "When the answer is ready, call finish with only the exact short answer in the message field.",
-                "If evidence remains incomplete near the step limit, still call finish with the best-supported answer, not UNKNOWN.",
-                f"Original question:\n{question}",
-                "Initial Flash-Searcher plan:",
-                planning or "(planner returned no plan)",
+                "Construct a Flash-Searcher DAG for this BrowseComp question.",
+                "Return JSON only. Schema:",
+                '{"hard_constraints":["..."],"final_goal":"...",'
+                '"nodes":[{"id":"n1","goal":"...","depends_on":[],"node_type":"search|verify|compare","priority":0}]}',
+                "DAG rules:",
+                "- Nodes are coarse searchable/verification subtasks, not single exact queries.",
+                "- Independent clues should be separate nodes so they can run in parallel.",
+                "- Verification nodes should depend only on the candidate-producing nodes they need.",
+                "- Include a compare/fusion-support node only if it can search or verify evidence; final answer fusion happens separately.",
+                f"Question:\n{question}",
             ]
         )
 
-    def _final_answer_input(
+    def _search_input(
         self,
         question: str,
-        attempt_summaries: list[dict[str, Any]],
+        dag: SearchDAG,
+        node: SearchNode,
+        dependency_results: dict[str, SearchNodeResult],
     ) -> str:
+        completed_deps = [dep for dep in node.depends_on if dep in dependency_results]
+        missing_deps = [dep for dep in node.depends_on if dep not in dependency_results]
         return "\n\n".join(
             [
-                f"The Flash-Searcher tool-calling agent did not provide a clean final answer after {len(attempt_summaries)} plan/search attempts.",
-                "Use all plans and action traces to provide the final answer now.",
+                "Execute one Flash-Searcher DAG node for a BrowseComp web search task.",
+                "Use tools to search/fetch evidence for this node only.",
+                "Return JSON only with schema:",
+                '{"answer":"local answer or UNKNOWN","confidence":"high|medium|low|unknown",'
+                '"evidence":["..."],"missing_constraints":["..."],"queries":["..."],"urls":["..."]}',
                 "Rules:",
-                "- Return only the exact short answer; no explanation or citation.",
-                "- Do not return UNKNOWN; choose the best-supported answer from the trace.",
-                "- Reject candidates that violate hard constraints in the original question.",
-                "- Preserve exact names/titles, including subtitles after a colon.",
+                "- Prefer exact evidence from primary/entity-adjacent pages.",
+                "- Do not use benchmark mirrors, answer dumps, or pages that only repeat the question.",
+                "- If this is speculative because some dependencies are missing, search only the parts that can be advanced now.",
+                "- If uncertain, still provide the best local candidate with low confidence; use UNKNOWN only when no useful candidate exists.",
                 f"Original question:\n{question}",
-                "Plan/search attempt summaries:",
+                "Global hard constraints:",
+                json.dumps(dag.hard_constraints, ensure_ascii=False, indent=2),
+                f"Node id: {node.node_id}",
+                f"Node type: {node.node_type}",
+                f"Node goal:\n{node.goal}",
+                f"Completed dependencies: {completed_deps}",
+                f"Missing dependencies: {missing_deps}",
+                "Dependency results:",
                 json.dumps(
-                    [
-                        {
-                            "attempt": item.get("attempt"),
-                            "planning": self._coerce_str(item.get("planning"))[:3000],
-                            "search_status": item.get("search_status"),
-                            "search_answer": item.get("search_answer"),
-                            "search_output": item.get("search_output"),
-                            "queries": item.get("queries", [])[:30],
-                            "urls": item.get("urls", [])[:30],
-                            "trace_digest": self._coerce_str(item.get("trace_digest"))[:8000],
-                        }
-                        for item in attempt_summaries
-                    ],
+                    [self._node_result_to_dict(dependency_results[dep], include_raw=False) for dep in completed_deps],
                     ensure_ascii=False,
                     indent=2,
                 ),
             ]
         )
 
-    def _needs_final_answer_fallback(self, answer: str, trajectory) -> bool:
-        if not answer or answer.strip().upper() == "UNKNOWN":
-            return True
-        status = str(getattr(trajectory, "status", "") or "").lower()
-        if status and status not in {"completed", "success"}:
-            return True
-        result = getattr(trajectory, "result", {}) or {}
-        return isinstance(result, dict) and result.get("reason") == "max_turns_exceeded"
+    def _optimizer_input(
+        self,
+        question: str,
+        dag: SearchDAG,
+        node_results: dict[str, SearchNodeResult],
+        round_info: SchedulerRound,
+    ) -> str:
+        return "\n\n".join(
+            [
+                "You are the Flash-Searcher dynamic plan optimizer.",
+                "Inspect the current DAG progress and optionally add or update search/verification nodes.",
+                "Return JSON only. Schema:",
+                '{"notes":"...","answer_ready":false,"new_nodes":[{"id":"n_new","goal":"...","depends_on":["n1"],"node_type":"search|verify|compare","priority":0}],'
+                '"updates":[{"id":"n2","goal":"refined goal","priority":1}]}',
+                "Rules:",
+                "- Add nodes only for missing hard constraints, conflicts, or failed search directions.",
+                "- Do not add final-answer nodes; answer fusion is handled separately.",
+                "- Keep new_nodes small and high-value.",
+                f"Original question:\n{question}",
+                "DAG state:",
+                json.dumps(dag.to_dict(), ensure_ascii=False, indent=2),
+                "Node results:",
+                json.dumps(
+                    [self._node_result_to_dict(item, include_raw=False) for item in node_results.values()],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                "Latest scheduler round:",
+                json.dumps(self._round_to_dict(round_info), ensure_ascii=False, indent=2),
+            ]
+        )
+
+    def _finalizer_input(
+        self,
+        question: str,
+        dag: SearchDAG,
+        node_results: dict[str, SearchNodeResult],
+        rounds: list[SchedulerRound],
+    ) -> str:
+        return "\n\n".join(
+            [
+                "Fuse the Flash-Searcher DAG evidence into the final BrowseComp answer.",
+                "Return only the exact short answer. No explanation, no citation, no JSON.",
+                "Do not return UNKNOWN; choose the best-supported answer from the DAG evidence.",
+                "Hard rules:",
+                "- Check every hard constraint from the original question.",
+                "- Prefer high-confidence verified evidence over speculative low-confidence nodes.",
+                "- Reject candidates contradicted by node evidence or missing hard constraints.",
+                "- Preserve exact full names/titles, including subtitles after a colon.",
+                f"Original question:\n{question}",
+                "DAG state:",
+                json.dumps(dag.to_dict(), ensure_ascii=False, indent=2),
+                "Scheduler rounds:",
+                json.dumps([self._round_to_dict(item) for item in rounds], ensure_ascii=False, indent=2),
+                "Node results:",
+                json.dumps(
+                    [self._node_result_to_dict(item, include_raw=False) for item in node_results.values()],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            ]
+        )
+
+    def _build_dag(self, planner_output: str, question: str) -> SearchDAG:
+        payload = self._extract_json_object(planner_output)
+        raw_nodes = payload.get("nodes") if isinstance(payload, dict) else None
+        if not isinstance(raw_nodes, list) or not raw_nodes:
+            self.logger.warning("Planner did not return a valid DAG; using fallback DAG")
+            raw_nodes = [
+                {"id": "n1", "goal": "Search broadly for candidate answers matching the main clues.", "depends_on": [], "node_type": "search", "priority": 3},
+                {"id": "n2", "goal": "Search alternate wording and sources for independent candidates.", "depends_on": [], "node_type": "search", "priority": 2},
+                {"id": "n3", "goal": "Verify the best candidates against all hard constraints.", "depends_on": ["n1", "n2"], "node_type": "verify", "priority": 1},
+            ]
+            payload = {"hard_constraints": [], "final_goal": f"Answer: {question}", "nodes": raw_nodes}
+
+        nodes: dict[str, SearchNode] = {}
+        for index, raw_node in enumerate(raw_nodes, 1):
+            if not isinstance(raw_node, dict):
+                continue
+            node_id = self._coerce_str(raw_node.get("id")) or f"n{index}"
+            goal = self._coerce_str(raw_node.get("goal") or raw_node.get("task"))
+            if not goal:
+                continue
+            depends_on_raw = raw_node.get("depends_on") or raw_node.get("dependencies") or []
+            if not isinstance(depends_on_raw, list):
+                depends_on_raw = []
+            nodes[node_id] = SearchNode(
+                node_id=node_id,
+                goal=goal,
+                depends_on=[self._coerce_str(dep) for dep in depends_on_raw if self._coerce_str(dep)],
+                node_type=self._coerce_str(raw_node.get("node_type")) or "search",
+                priority=self._coerce_int(raw_node.get("priority"), default=0),
+            )
+
+        for node in nodes.values():
+            node.depends_on = [dep for dep in node.depends_on if dep in nodes and dep != node.node_id]
+
+        if not nodes:
+            nodes = {"n1": SearchNode(node_id="n1", goal=f"Search for the answer to: {question}", priority=1)}
+
+        return SearchDAG(
+            nodes=nodes,
+            hard_constraints=self._coerce_str_list(payload.get("hard_constraints") if isinstance(payload, dict) else []),
+            final_goal=self._coerce_str(payload.get("final_goal") if isinstance(payload, dict) else "") or question,
+        )
+
+    def _execute_dag(
+        self,
+        dag: SearchDAG,
+        question: str,
+        task_id: str,
+        on_step=None,
+    ) -> tuple[dict[str, SearchNodeResult], list[SchedulerRound], list[dict[str, Any]]]:
+        completed: set[str] = set()
+        executed: set[str] = set()
+        node_results: dict[str, SearchNodeResult] = {}
+        rounds: list[SchedulerRound] = []
+        optimizer_outputs: list[dict[str, Any]] = []
+        dynamic_nodes_added = 0
+
+        for round_index in range(1, self.max_rounds + 1):
+            ready = dag.ready_nodes(completed)
+            ready_ids = {node.node_id for node in ready}
+            speculative: list[SearchNode] = []
+            if self.allow_partial_ready and len(ready) < self.max_workers:
+                capacity = self.max_workers - len(ready)
+                speculative = dag.partially_ready_nodes(completed, exclude=ready_ids)[:capacity]
+                for node in speculative:
+                    node.speculative = True
+
+            selected = ready + speculative
+            if not selected:
+                break
+
+            round_info = SchedulerRound(
+                round_index=round_index,
+                ready_node_ids=[node.node_id for node in ready],
+                speculative_node_ids=[node.node_id for node in speculative],
+            )
+            rounds.append(round_info)
+            self.logger.info(
+                "DAG round %s: ready=%s speculative=%s",
+                round_index,
+                round_info.ready_node_ids,
+                round_info.speculative_node_ids,
+            )
+
+            for node in selected:
+                node.status = "running"
+                executed.add(node.node_id)
+
+            round_results = self._run_nodes_parallel(
+                nodes=selected,
+                dag=dag,
+                question=question,
+                task_id=task_id,
+                round_index=round_index,
+                node_results=node_results,
+                on_step=on_step,
+            )
+            for node_result in round_results:
+                node = dag.nodes[node_result.node_id]
+                node.status = node_result.status
+                node.error = node_result.error
+                node_results[node_result.node_id] = node_result
+                if node_result.status == "completed":
+                    completed.add(node_result.node_id)
+                    round_info.completed_node_ids.append(node_result.node_id)
+
+            if round_index < self.max_rounds and dynamic_nodes_added < self.max_dynamic_nodes:
+                optimizer_payload = self._run_optimizer(
+                    question=question,
+                    dag=dag,
+                    node_results=node_results,
+                    round_info=round_info,
+                    task_id=task_id,
+                    round_index=round_index,
+                    on_step=on_step,
+                )
+                optimizer_outputs.append(optimizer_payload)
+                round_info.optimizer_notes = self._coerce_str(optimizer_payload.get("notes"))
+                added = self._apply_optimizer_payload(dag, optimizer_payload, dynamic_nodes_added)
+                dynamic_nodes_added += added
+                if optimizer_payload.get("answer_ready") is True:
+                    break
+
+            if all(node.status in {"completed", "failed", "skipped"} for node in dag.nodes.values()):
+                break
+
+        for node in dag.nodes.values():
+            if node.node_id not in node_results:
+                node.status = "skipped"
+                node.error = "Node was not scheduled before max rounds or dependencies remained unresolved."
+                node_results[node.node_id] = SearchNodeResult(
+                    node_id=node.node_id,
+                    status="skipped",
+                    dependency_node_ids=list(node.depends_on),
+                    missing_dependency_node_ids=[dep for dep in node.depends_on if dep not in completed],
+                    error=node.error,
+                )
+        return node_results, rounds, optimizer_outputs
+
+    def _run_nodes_parallel(
+        self,
+        nodes: list[SearchNode],
+        dag: SearchDAG,
+        question: str,
+        task_id: str,
+        round_index: int,
+        node_results: dict[str, SearchNodeResult],
+        on_step=None,
+    ) -> list[SearchNodeResult]:
+        results: list[SearchNodeResult] = []
+        max_workers = min(self.max_workers, len(nodes))
+        assignments = []
+        for node_index, node in enumerate(nodes):
+            worker = self._make_worker_agent(node, round_index)
+            assignments.append((node_index, node, worker))
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_node = {
+                executor.submit(
+                    self._run_single_node,
+                    node_index,
+                    node,
+                    worker,
+                    dag,
+                    question,
+                    task_id,
+                    round_index,
+                    dict(node_results),
+                    on_step,
+                ): node
+                for node_index, node, worker in assignments
+            }
+            for future in as_completed(future_to_node):
+                node = future_to_node[future]
+                try:
+                    results.append(future.result())
+                except Exception as exc:
+                    self.logger.error("DAG node %s failed: %s", node.node_id, exc, exc_info=True)
+                    results.append(SearchNodeResult(node_id=node.node_id, status="failed", error=str(exc)))
+        return results
+
+    def _run_single_node(
+        self,
+        node_index: int,
+        node: SearchNode,
+        worker,
+        dag: SearchDAG,
+        question: str,
+        task_id: str,
+        round_index: int,
+        node_results: dict[str, SearchNodeResult],
+        on_step=None,
+    ) -> SearchNodeResult:
+        trajectory, raw_output = self._run_text_agent(
+            worker,
+            exp_index=round_index * 100 + node_index,
+            task_id=f"{task_id}_{node.node_id}_r{round_index}",
+            task_type="flash_dag_node",
+            description=self._search_input(question, dag, node, node_results),
+            on_step=on_step,
+        )
+        parsed = self._extract_json_object(raw_output)
+        answer = self._coerce_str(parsed.get("answer") if isinstance(parsed, dict) else "")
+        if not answer:
+            answer = self._sanitize_answer(raw_output) or "UNKNOWN"
+        evidence = self._coerce_str_list(parsed.get("evidence") if isinstance(parsed, dict) else [])
+        missing_constraints = self._coerce_str_list(parsed.get("missing_constraints") if isinstance(parsed, dict) else [])
+        queries = self._coerce_str_list(parsed.get("queries") if isinstance(parsed, dict) else [])
+        urls = self._coerce_str_list(parsed.get("urls") if isinstance(parsed, dict) else [])
+        confidence = self._coerce_str(parsed.get("confidence") if isinstance(parsed, dict) else "") or "unknown"
+        tool_usage = self._extract_tool_usage(trajectory)
+        queries = queries or tool_usage["queries"]
+        urls = urls or tool_usage["urls"]
+        status = "completed" if answer or evidence else "failed"
+        return SearchNodeResult(
+            node_id=node.node_id,
+            status=status,
+            answer=answer,
+            confidence=confidence,
+            evidence=evidence,
+            missing_constraints=missing_constraints,
+            queries=queries,
+            urls=urls,
+            tool_call_counts=tool_usage["tool_call_counts"],
+            dependency_node_ids=list(node.depends_on),
+            missing_dependency_node_ids=[dep for dep in node.depends_on if dep not in node_results],
+            speculative=node.speculative,
+            raw_output=raw_output,
+            steps=len(getattr(trajectory, "steps", []) or []),
+        )
+
+    def _make_worker_agent(self, node: SearchNode, round_index: int):
+        worker_name = f"flash_dag_{node.node_id}_r{round_index}"
+        if self.worker_factory is not None:
+            return self.worker_factory(worker_name)
+        return self.searcher
+
+    def _run_optimizer(
+        self,
+        question: str,
+        dag: SearchDAG,
+        node_results: dict[str, SearchNodeResult],
+        round_info: SchedulerRound,
+        task_id: str,
+        round_index: int,
+        on_step=None,
+    ) -> dict[str, Any]:
+        _, optimizer_output = self._run_text_agent(
+            self.optimizer,
+            exp_index=5_000 + round_index,
+            task_id=f"{task_id}_optimizer_r{round_index}",
+            task_type="flash_dag_optimizer",
+            description=self._optimizer_input(question, dag, node_results, round_info),
+            on_step=on_step,
+        )
+        payload = self._extract_json_object(optimizer_output)
+        if not isinstance(payload, dict):
+            payload = {}
+        payload.setdefault("raw_output", optimizer_output[:2000])
+        return payload
+
+    def _apply_optimizer_payload(
+        self,
+        dag: SearchDAG,
+        payload: dict[str, Any],
+        dynamic_nodes_added: int,
+    ) -> int:
+        updates = payload.get("updates", [])
+        if isinstance(updates, list):
+            for update in updates:
+                if not isinstance(update, dict):
+                    continue
+                node_id = self._coerce_str(update.get("id"))
+                if node_id not in dag.nodes:
+                    continue
+                node = dag.nodes[node_id]
+                if self._coerce_str(update.get("goal")):
+                    node.goal = self._coerce_str(update.get("goal"))
+                if "priority" in update:
+                    node.priority = self._coerce_int(update.get("priority"), node.priority)
+
+        added = 0
+        raw_new_nodes = payload.get("new_nodes", [])
+        if not isinstance(raw_new_nodes, list):
+            return 0
+        for raw_node in raw_new_nodes:
+            if added + dynamic_nodes_added >= self.max_dynamic_nodes:
+                break
+            if not isinstance(raw_node, dict):
+                continue
+            node_id = self._coerce_str(raw_node.get("id")) or f"dyn_{dynamic_nodes_added + added + 1}"
+            if node_id in dag.nodes:
+                continue
+            goal = self._coerce_str(raw_node.get("goal") or raw_node.get("task"))
+            if not goal:
+                continue
+            depends_on = self._coerce_str_list(raw_node.get("depends_on") or raw_node.get("dependencies"))
+            dag.add_or_update_node(
+                SearchNode(
+                    node_id=node_id,
+                    goal=goal,
+                    depends_on=depends_on,
+                    node_type=self._coerce_str(raw_node.get("node_type")) or "search",
+                    priority=self._coerce_int(raw_node.get("priority"), default=0),
+                )
+            )
+            added += 1
+        return added
 
     def _extract_tool_usage(self, trajectory) -> dict[str, Any]:
         tool_call_counts: Counter[str] = Counter()
         queries: list[str] = []
         urls: list[str] = []
-
         for step in getattr(trajectory, "steps", []) or []:
             assistant_message = getattr(step, "assistant_message", None)
             tool_calls = getattr(assistant_message, "tool_calls", None) or []
@@ -374,53 +601,12 @@ class FlashSearchExp(BaseExp):
                     queries.extend(self._coerce_str_list(args.get("query")))
                 elif tool_name == "web_fetch":
                     urls.extend(self._coerce_str_list(args.get("url")))
-
-        return {
-            "tool_call_counts": dict(tool_call_counts),
-            "queries": queries,
-            "urls": urls,
-        }
-
-    def _merge_tool_usage(
-        self,
-        state: FlashSearcherRunState,
-        usage: dict[str, Any],
-    ) -> None:
-        counts = Counter(state.tool_call_counts)
-        counts.update(usage.get("tool_call_counts", {}))
-        state.tool_call_counts = dict(counts)
-        state.queries.extend(usage.get("queries", []))
-        state.urls.extend(usage.get("urls", []))
-
-    def _trajectory_digest(self, trajectory, max_chars: int = 8000) -> str:
-        chunks: list[str] = []
-        for step in getattr(trajectory, "steps", []) or []:
-            step_id = getattr(step, "step_id", "?")
-            assistant_message = getattr(step, "assistant_message", None)
-            content = self._coerce_str(getattr(assistant_message, "content", ""))
-            tool_calls = getattr(assistant_message, "tool_calls", None) or []
-            if content:
-                chunks.append(f"Step {step_id} assistant: {content[:1200]}")
-            for tool_call in tool_calls:
-                function = getattr(tool_call, "function", None)
-                chunks.append(
-                    f"Step {step_id} tool_call {getattr(function, 'name', '')}: "
-                    f"{self._coerce_str(getattr(function, 'arguments', ''))[:1000]}"
-                )
-            for tool_response in getattr(step, "tool_responses", []) or []:
-                name = getattr(tool_response, "name", "")
-                content = self._coerce_str(getattr(tool_response, "content", ""))
-                chunks.append(f"Step {step_id} tool_response {name}: {content[:1600]}")
-        digest = "\n\n".join(chunks)
-        if len(digest) > max_chars:
-            return digest[: max_chars // 2] + "\n\n...[trace truncated]...\n\n" + digest[-max_chars // 2 :]
-        return digest
+        return {"tool_call_counts": dict(tool_call_counts), "queries": queries, "urls": urls}
 
     def _sanitize_answer(self, text: str) -> str:
         text = (text or "").strip()
         if not text:
             return ""
-
         payload = self._extract_json_object(text)
         if isinstance(payload, dict):
             for key in ("answer", "final_answer", "message"):
@@ -428,7 +614,6 @@ class FlashSearchExp(BaseExp):
                 if value:
                     text = value
                     break
-
         tag_match = re.search(r"<answer>\s*(.*?)\s*</answer>", text, re.I | re.S)
         if tag_match:
             text = tag_match.group(1).strip()
@@ -441,12 +626,14 @@ class FlashSearchExp(BaseExp):
                 return line[:300].strip()
         return ""
 
-    def _best_answer_from_text(self, *texts: str) -> str:
-        for text in reversed(texts):
-            answer = self._sanitize_answer(text)
-            if answer and answer.upper() != "UNKNOWN":
-                return answer
-        return "best guess unavailable"
+    def _best_node_answer(self, node_results: dict[str, SearchNodeResult]) -> str:
+        confidence_rank = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
+        candidates = [
+            item for item in node_results.values()
+            if item.answer and item.answer.upper() != "UNKNOWN"
+        ]
+        candidates.sort(key=lambda item: (confidence_rank.get(item.confidence.lower(), 0), len(item.evidence)), reverse=True)
+        return candidates[0].answer if candidates else "best guess unavailable"
 
     def _extract_json_object(self, text: str) -> dict[str, Any]:
         if not text:
@@ -487,6 +674,62 @@ class FlashSearchExp(BaseExp):
             return [self._coerce_str(item) for item in value if self._coerce_str(item)]
         return [self._coerce_str(value)] if self._coerce_str(value) else []
 
+    def _coerce_int(self, value: Any, default: int = 0) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _node_result_to_dict(self, node_result: SearchNodeResult, include_raw: bool = True) -> dict[str, Any]:
+        payload = {
+            "node_id": node_result.node_id,
+            "status": node_result.status,
+            "answer": node_result.answer,
+            "confidence": node_result.confidence,
+            "evidence": node_result.evidence,
+            "missing_constraints": node_result.missing_constraints,
+            "queries": node_result.queries,
+            "urls": node_result.urls,
+            "tool_call_counts": node_result.tool_call_counts,
+            "dependency_node_ids": node_result.dependency_node_ids,
+            "missing_dependency_node_ids": node_result.missing_dependency_node_ids,
+            "speculative": node_result.speculative,
+            "steps": node_result.steps,
+            "error": node_result.error,
+        }
+        if include_raw:
+            payload["raw_output"] = node_result.raw_output
+        return payload
+
+    def _round_to_dict(self, round_info: SchedulerRound) -> dict[str, Any]:
+        return {
+            "round_index": round_info.round_index,
+            "ready_node_ids": round_info.ready_node_ids,
+            "speculative_node_ids": round_info.speculative_node_ids,
+            "completed_node_ids": round_info.completed_node_ids,
+            "optimizer_notes": round_info.optimizer_notes,
+        }
+
+    def _build_analysis(
+        self,
+        dag: SearchDAG,
+        node_results: dict[str, SearchNodeResult],
+        rounds: list[SchedulerRound],
+    ) -> dict[str, Any]:
+        counts = Counter()
+        for item in node_results.values():
+            counts.update(item.tool_call_counts)
+        return {
+            "round_count": len(rounds),
+            "node_count": len(dag.nodes),
+            "completed_nodes": sum(1 for item in node_results.values() if item.status == "completed"),
+            "failed_nodes": sum(1 for item in node_results.values() if item.status == "failed"),
+            "skipped_nodes": sum(1 for item in node_results.values() if item.status == "skipped"),
+            "speculative_nodes": sum(1 for item in node_results.values() if item.speculative),
+            "critical_path_length": dag.critical_path_length(),
+            "tool_call_counts": dict(counts),
+        }
+
     def _serialize_result(self, result: dict[str, Any]) -> dict[str, Any]:
         return {
             "task_id": result.get("task_id"),
@@ -494,7 +737,11 @@ class FlashSearchExp(BaseExp):
             "steps": result.get("steps", 0),
             "agent_answer": result.get("agent_answer", ""),
             "ground_truth": result.get("ground_truth"),
-            "flash_searcher_state": result.get("flash_searcher_state", {}),
+            "dag_plan": result.get("dag_plan", {}),
+            "node_results": result.get("node_results", {}),
+            "scheduler_rounds": result.get("scheduler_rounds", []),
+            "optimizer_outputs": result.get("optimizer_outputs", []),
+            "analysis": result.get("analysis", {}),
             "error": result.get("error"),
         }
 

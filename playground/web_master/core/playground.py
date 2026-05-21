@@ -1,7 +1,8 @@
 """WebMaster playground implementation.
 
-This playground adapts the Flash-Searcher agent topology to EvoMaster:
-planning agent -> tool-calling search agent -> final-answer fallback agent.
+This playground adapts the Flash-Searcher paper architecture to EvoMaster:
+DAG planner -> adaptive parallel scheduler -> search workers -> dynamic optimizer
+-> answer fusion finalizer.
 """
 
 from __future__ import annotations
@@ -28,20 +29,21 @@ BROWSE_TOOL_NAMES = {"think", "finish", "google_search", "web_fetch"}
 ROLE_TOOL_NAMES = {
     "planner_agent": [],
     "search_agent": ["think", "finish", "google_search", "web_fetch"],
+    "optimizer_agent": [],
     "finalizer_agent": [],
 }
 
 
 @register_playground("web_master")
 class WebMasterPlayground(BasePlayground):
-    """Flash-Searcher style BrowseComp playground."""
+    """Flash-Searcher DAG-parallel BrowseComp playground."""
 
     def __init__(self, config_dir: Path = None, config_path: Path = None):
         if config_path is None and config_dir is None:
             config_dir = project_root / "configs" / "web_master"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.agents.declare("planner_agent", "search_agent", "finalizer_agent")
+        self.agents.declare("planner_agent", "search_agent", "optimizer_agent", "finalizer_agent")
         self._browse_tool_names: list[str] = []
         self.dataset = self._load_dataset()
 
@@ -54,6 +56,10 @@ class WebMasterPlayground(BasePlayground):
         return self.agents.search_agent
 
     @property
+    def optimizer(self):
+        return self.agents.optimizer_agent
+
+    @property
     def finalizer(self):
         return self.agents.finalizer_agent
 
@@ -62,18 +68,13 @@ class WebMasterPlayground(BasePlayground):
         if not WEB_MASTER_DATASET_PATH.exists():
             self.logger.warning("Dataset not found: %s", WEB_MASTER_DATASET_PATH)
             return {}
-
         with open(WEB_MASTER_DATASET_PATH, "r", encoding="utf-8") as handle:
             data = json.load(handle)
         return {int(item["id"]): item for item in data if "id" in item}
 
     def _parse_task(self, task_description: str) -> tuple[str, str | None]:
         """Support `dataset:<id>` / `id:<id>` shortcuts in addition to raw text."""
-        match = re.match(
-            r"^(?:dataset|id):\s*(\d+)$",
-            task_description.strip(),
-            re.IGNORECASE,
-        )
+        match = re.match(r"^(?:dataset|id):\s*(\d+)$", task_description.strip(), re.IGNORECASE)
         if match:
             qid = int(match.group(1))
             item = self.dataset.get(qid)
@@ -89,12 +90,10 @@ class WebMasterPlayground(BasePlayground):
         tool_config: dict[str, Any] | None = None,
     ) -> None:
         super()._setup_tools(skill_config=skill_config, tool_config=tool_config)
-
         custom_tools = build_browse_tools()
         for tool in custom_tools:
             if self.tools.get_tool(tool.name) is None:
                 self.tools.register(tool)
-
         self._browse_tool_names = [tool.name for tool in custom_tools]
         self.logger.info("Registered WebMaster browse tools: %s", self._browse_tool_names)
 
@@ -102,24 +101,18 @@ class WebMasterPlayground(BasePlayground):
         super()._setup_agents()
         if not self._browse_tool_names:
             return
-
         for slot_name, agent in self.agents.items():
             if agent is None:
                 continue
             role_tools = ROLE_TOOL_NAMES.get(slot_name)
             if role_tools is None:
-                enabled_tool_names = self._filter_solver_tools(
-                    list(agent.enabled_tool_names or [])
-                )
+                enabled_tool_names = self._filter_solver_tools(list(agent.enabled_tool_names or []))
             else:
                 enabled_tool_names = [
-                    tool_name
-                    for tool_name in role_tools
-                    if agent.tools.get_tool(tool_name) is not None
+                    tool_name for tool_name in role_tools if agent.tools.get_tool(tool_name) is not None
                 ]
             agent.enabled_tool_names = enabled_tool_names
             self.logger.debug("Agent %s enabled tools: %s", slot_name, enabled_tool_names)
-
             web_fetch_tool = agent.tools.get_tool("web_fetch")
             if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
                 web_fetch_tool.set_llm(agent.llm)
@@ -142,17 +135,33 @@ class WebMasterPlayground(BasePlayground):
         self._setup_agents()
         self.logger.info("WebMaster setup complete")
 
+    def make_search_worker_agent(self, worker_name: str):
+        """Create an isolated search worker with fresh browse-tool state."""
+        agent = self._create_agent(name="search")
+        agent.set_agent_name(worker_name)
+        agent.enabled_tool_names = [
+            tool_name
+            for tool_name in ROLE_TOOL_NAMES["search_agent"]
+            if agent.tools.get_tool(tool_name) is not None
+        ]
+        web_fetch_tool = agent.tools.get_tool("web_fetch")
+        if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
+            web_fetch_tool.set_llm(agent.llm)
+        return agent
+
     def _create_exp(self):
         experiment_config = getattr(self.config, "experiment", {}) or {}
         exp = FlashSearchExp(
             planner=self.planner,
             searcher=self.searcher,
+            optimizer=self.optimizer,
             finalizer=self.finalizer,
             config=self.config,
-            max_steps=int(experiment_config.get("max_steps", 20)),
-            max_plans=int(experiment_config.get("max_plans", 3)),
-            planning_interval=int(experiment_config.get("planning_interval", 1)),
-            summary_interval=int(experiment_config.get("summary_interval", 5)),
+            worker_factory=self.make_search_worker_agent,
+            max_workers=int(experiment_config.get("max_workers", 3)),
+            max_rounds=int(experiment_config.get("max_rounds", 4)),
+            allow_partial_ready=bool(experiment_config.get("allow_partial_ready", True)),
+            max_dynamic_nodes=int(experiment_config.get("max_dynamic_nodes", 4)),
         )
         if self.run_dir:
             exp.set_run_dir(self.run_dir)
@@ -168,25 +177,15 @@ class WebMasterPlayground(BasePlayground):
         try:
             self.setup()
             self._setup_trajectory_file(output_file)
-
             question, gt_from_task = self._parse_task(task_description)
             ground_truth = getattr(self, "_ground_truth", None) or gt_from_task
-
             exp = self._create_exp()
             exp.ground_truth = ground_truth
-
             task_id = getattr(self, "task_id", None) or "exp_001"
-            result = exp.run(
-                question,
-                task_id=task_id,
-                images=images,
-                on_step=on_step,
-            )
-
+            result = exp.run(question, task_id=task_id, images=images, on_step=on_step)
             if ground_truth:
                 self.logger.info("Ground truth: %s", ground_truth)
                 self.logger.info("Agent final answer: %s", result.get("agent_answer", ""))
-
             return result
         finally:
             self.cleanup()
