@@ -30,9 +30,11 @@ llm:
 # Flash-Searcher Experiment Configuration
 # ============================================
 experiment:
-  mode: "flash"
-  max_workers: 3
-  max_rounds: 4
+  mode: "flash_searcher"
+  max_steps: 20
+  max_plans: 3
+  planning_interval: 1
+  summary_interval: 5
 
 # ============================================
 # Agent Configuration
@@ -54,8 +56,8 @@ agents:
 
   search:
     llm: "openai"
-    max_turns: 12
-    finish_on_text_response: true
+    max_turns: 20
+    finish_on_text_response: false
     tools:
       builtin: ["think", "finish", "google_search", "web_fetch"]
     context:

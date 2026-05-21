@@ -1,6 +1,7 @@
 """WebMaster playground implementation.
 
-Version A implements a Flash-Searcher style DAG-parallel BrowseComp agent.
+This playground adapts the Flash-Searcher agent topology to EvoMaster:
+planning agent -> tool-calling search agent -> final-answer fallback agent.
 """
 
 from __future__ import annotations
@@ -42,7 +43,6 @@ class WebMasterPlayground(BasePlayground):
         self.logger = logging.getLogger(self.__class__.__name__)
         self.agents.declare("planner_agent", "search_agent", "finalizer_agent")
         self._browse_tool_names: list[str] = []
-        self._base_enabled_tool_names: dict[str, list[str] | None] = {}
         self.dataset = self._load_dataset()
 
     @property
@@ -106,19 +106,18 @@ class WebMasterPlayground(BasePlayground):
         for slot_name, agent in self.agents.items():
             if agent is None:
                 continue
-            role_enabled = ROLE_TOOL_NAMES.get(slot_name)
-            if role_enabled is None:
+            role_tools = ROLE_TOOL_NAMES.get(slot_name)
+            if role_tools is None:
                 enabled_tool_names = self._filter_solver_tools(
                     list(agent.enabled_tool_names or [])
                 )
             else:
                 enabled_tool_names = [
                     tool_name
-                    for tool_name in role_enabled
+                    for tool_name in role_tools
                     if agent.tools.get_tool(tool_name) is not None
                 ]
             agent.enabled_tool_names = enabled_tool_names
-            self._base_enabled_tool_names[slot_name] = list(enabled_tool_names)
             self.logger.debug("Agent %s enabled tools: %s", slot_name, enabled_tool_names)
 
             web_fetch_tool = agent.tools.get_tool("web_fetch")
@@ -143,28 +142,6 @@ class WebMasterPlayground(BasePlayground):
         self._setup_agents()
         self.logger.info("WebMaster setup complete")
 
-    def make_search_worker_agent(self, worker_name: str):
-        """Create an isolated search worker with fresh browse tool state."""
-        agent = self._create_agent(name="search")
-        agent.set_agent_name(worker_name)
-        agent.enabled_tool_names = [
-            tool_name
-            for tool_name in ROLE_TOOL_NAMES["search_agent"]
-            if agent.tools.get_tool(tool_name) is not None
-        ]
-        web_fetch_tool = agent.tools.get_tool("web_fetch")
-        if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
-            web_fetch_tool.set_llm(agent.llm)
-        return agent
-
-    def make_answer_forcer_agent(self, worker_name: str):
-        """Create an isolated no-tool agent used to force a node best guess."""
-        agent = self._create_agent(name="finalizer")
-        agent.set_agent_name(worker_name)
-        agent.enable_tools = False
-        agent.enabled_tool_names = []
-        return agent
-
     def _create_exp(self):
         experiment_config = getattr(self.config, "experiment", {}) or {}
         exp = FlashSearchExp(
@@ -172,10 +149,10 @@ class WebMasterPlayground(BasePlayground):
             searcher=self.searcher,
             finalizer=self.finalizer,
             config=self.config,
-            worker_factory=self.make_search_worker_agent,
-            answer_forcer_factory=self.make_answer_forcer_agent,
-            max_workers=int(experiment_config.get("max_workers", 3)),
-            max_rounds=int(experiment_config.get("max_rounds", 4)),
+            max_steps=int(experiment_config.get("max_steps", 20)),
+            max_plans=int(experiment_config.get("max_plans", 3)),
+            planning_interval=int(experiment_config.get("planning_interval", 1)),
+            summary_interval=int(experiment_config.get("summary_interval", 5)),
         )
         if self.run_dir:
             exp.set_run_dir(self.run_dir)
