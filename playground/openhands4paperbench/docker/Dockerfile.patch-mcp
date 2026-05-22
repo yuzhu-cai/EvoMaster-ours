@@ -1,0 +1,10 @@
+ARG BASE_OPENHANDS_IMAGE=pb-env-openhands:1.16.0
+FROM ${BASE_OPENHANDS_IMAGE}
+
+COPY mcp/google_search_mcp.py /opt/openhands4paperbench/google_search_mcp.py
+
+RUN chmod 755 /opt/openhands4paperbench/google_search_mcp.py && \
+    /root/.local/share/uv/tools/openhands/bin/python -m py_compile \
+      /opt/openhands4paperbench/google_search_mcp.py
+
+CMD ["bash"]

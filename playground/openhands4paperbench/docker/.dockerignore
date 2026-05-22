@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!README.md
+!build-with-host-openhands.sh
+!mcp/
+!mcp/**
