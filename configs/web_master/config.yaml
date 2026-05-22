@@ -33,8 +33,6 @@ experiment:
   mode: "flash_searcher_dag"
   max_workers: 3
   max_rounds: 8
-  allow_partial_ready: true
-  max_dynamic_nodes: 5
 
 # ============================================
 # Agent Configuration
@@ -67,20 +65,6 @@ agents:
       preserve_recent_turns: 6
     system_prompt_file: "prompts/flash_search_prefix.txt"
     user_prompt_file: "prompts/flash_search_user.txt"
-
-  optimizer:
-    llm: "openai"
-    max_turns: 1
-    finish_on_text_response: true
-    tools:
-      builtin: []
-    context:
-      max_tokens: 48000
-      truncation_strategy: "latest_half"
-      preserve_system_messages: true
-      preserve_recent_turns: 2
-    system_prompt_file: "prompts/flash_optimizer_prefix.txt"
-    user_prompt_file: "prompts/flash_optimizer_user.txt"
 
   finalizer:
     llm: "openai"

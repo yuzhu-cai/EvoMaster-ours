@@ -14,6 +14,7 @@ import requests
 from pydantic import Field
 
 from evomaster.agent.tools.base import BaseTool, BaseToolParams
+from .arg_repair import recover_list_of_strings, recover_string_field
 
 if TYPE_CHECKING:
     from evomaster.agent.session import BaseSession
@@ -95,7 +96,20 @@ class WebFetchTool(BaseTool):
         try:
             params = self.parse_params(args_json)
         except Exception as e:
-            return f"Parameter validation error: {e}", {"error": str(e)}
+            recovered_urls = recover_list_of_strings(
+                args_json,
+                "url",
+                strip_wrapping_quotes=True,
+            )
+            recovered_goal = recover_string_field(args_json, "goal")
+            if not recovered_urls or not recovered_goal:
+                return f"Parameter validation error: {e}", {"error": str(e)}
+
+            self.logger.warning(
+                "Recovered malformed web_fetch arguments for %d URL(s)",
+                len(recovered_urls),
+            )
+            params = WebFetchToolParams(url=recovered_urls, goal=recovered_goal)
 
         assert isinstance(params, WebFetchToolParams)
         urls = params.url

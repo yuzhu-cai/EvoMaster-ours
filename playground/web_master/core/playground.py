@@ -1,8 +1,7 @@
 """WebMaster playground implementation.
 
 This playground adapts the Flash-Searcher paper architecture to EvoMaster:
-DAG planner -> adaptive parallel scheduler -> search workers -> dynamic optimizer
--> answer fusion finalizer.
+DAG planner -> topological parallel scheduler -> search workers -> answer fusion finalizer.
 """
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ BROWSE_TOOL_NAMES = {"think", "finish", "google_search", "web_fetch"}
 ROLE_TOOL_NAMES = {
     "planner_agent": [],
     "search_agent": ["think", "finish", "google_search", "web_fetch"],
-    "optimizer_agent": [],
     "finalizer_agent": [],
 }
 
@@ -43,7 +41,7 @@ class WebMasterPlayground(BasePlayground):
             config_dir = project_root / "configs" / "web_master"
         super().__init__(config_dir=config_dir, config_path=config_path)
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.agents.declare("planner_agent", "search_agent", "optimizer_agent", "finalizer_agent")
+        self.agents.declare("planner_agent", "search_agent", "finalizer_agent")
         self._browse_tool_names: list[str] = []
         self.dataset = self._load_dataset()
 
@@ -54,10 +52,6 @@ class WebMasterPlayground(BasePlayground):
     @property
     def searcher(self):
         return self.agents.search_agent
-
-    @property
-    def optimizer(self):
-        return self.agents.optimizer_agent
 
     @property
     def finalizer(self):
@@ -154,14 +148,11 @@ class WebMasterPlayground(BasePlayground):
         exp = FlashSearchExp(
             planner=self.planner,
             searcher=self.searcher,
-            optimizer=self.optimizer,
             finalizer=self.finalizer,
             config=self.config,
             worker_factory=self.make_search_worker_agent,
             max_workers=int(experiment_config.get("max_workers", 3)),
             max_rounds=int(experiment_config.get("max_rounds", 4)),
-            allow_partial_ready=bool(experiment_config.get("allow_partial_ready", True)),
-            max_dynamic_nodes=int(experiment_config.get("max_dynamic_nodes", 4)),
         )
         if self.run_dir:
             exp.set_run_dir(self.run_dir)

@@ -100,9 +100,9 @@ class BrowseMasterPlayground(BasePlayground):
             self._base_enabled_tool_names[slot_name] = list(enabled_tool_names)
             self.logger.debug("Agent %s enabled tools: %s", slot_name, enabled_tool_names)
 
-            web_fetch_tool = self.tools.get_tool("web_fetch")
-            if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
-                web_fetch_tool.set_llm(agent.llm)
+            # web_fetch_tool = self.tools.get_tool("web_fetch")
+            # if web_fetch_tool is not None and hasattr(web_fetch_tool, "set_llm"):
+            #     web_fetch_tool.set_llm(agent.llm)
 
     @staticmethod
     def _filter_solver_tools(tool_names: list[str]) -> list[str]:

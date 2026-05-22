@@ -4,8 +4,10 @@ You receive the original BrowseComp question, DAG state, scheduler rounds, and a
 
 Your job:
 - Fuse evidence across DAG branches.
+- Answer the original BrowseComp question, not any single DAG node goal.
+- Treat node answers as intermediate local results; do not copy a node answer unless it actually answers the original question.
 - Enforce every hard constraint from the original question.
-- Prefer high-confidence verified evidence over speculative low-confidence evidence.
+- Prefer high-confidence verified evidence over low-confidence or incomplete node results.
 - Reject candidates contradicted by node evidence.
 - Return only the exact short answer.
 - Do not return UNKNOWN; if evidence is incomplete, return the best-supported answer.

@@ -13,10 +13,8 @@ class SearchNode:
     node_id: str
     goal: str
     depends_on: list[str] = field(default_factory=list)
-    node_type: str = "search"
     priority: int = 0
     status: str = "pending"
-    speculative: bool = False
     error: str = ""
 
 
@@ -35,7 +33,6 @@ class SearchNodeResult:
     tool_call_counts: dict[str, int] = field(default_factory=dict)
     dependency_node_ids: list[str] = field(default_factory=list)
     missing_dependency_node_ids: list[str] = field(default_factory=list)
-    speculative: bool = False
     raw_output: str = ""
     steps: int = 0
     error: str = ""
@@ -47,9 +44,7 @@ class SchedulerRound:
 
     round_index: int
     ready_node_ids: list[str] = field(default_factory=list)
-    speculative_node_ids: list[str] = field(default_factory=list)
     completed_node_ids: list[str] = field(default_factory=list)
-    optimizer_notes: str = ""
 
 
 @dataclass
@@ -69,22 +64,6 @@ class SearchDAG:
         ]
         return sorted(ready, key=lambda item: (-item.priority, item.node_id))
 
-    def partially_ready_nodes(
-        self,
-        completed: set[str],
-        exclude: set[str] | None = None,
-    ) -> list[SearchNode]:
-        exclude = exclude or set()
-        partial = []
-        for node in self.nodes.values():
-            if node.status != "pending" or node.node_id in exclude:
-                continue
-            if not node.depends_on:
-                continue
-            if any(dep in completed for dep in node.depends_on):
-                partial.append(node)
-        return sorted(partial, key=lambda item: (-item.priority, item.node_id))
-
     def unfinished_nodes(self) -> list[SearchNode]:
         return [node for node in self.nodes.values() if node.status not in {"completed", "failed", "skipped"}]
 
@@ -94,7 +73,6 @@ class SearchDAG:
             existing = self.nodes[node.node_id]
             existing.goal = node.goal or existing.goal
             existing.depends_on = [dep for dep in node.depends_on if dep in self.nodes]
-            existing.node_type = node.node_type or existing.node_type
             existing.priority = node.priority
             return
         node.depends_on = [dep for dep in node.depends_on if dep in self.nodes]
@@ -130,10 +108,8 @@ class SearchDAG:
                 node_id: {
                     "goal": node.goal,
                     "depends_on": node.depends_on,
-                    "node_type": node.node_type,
                     "priority": node.priority,
                     "status": node.status,
-                    "speculative": node.speculative,
                     "error": node.error,
                 }
                 for node_id, node in self.nodes.items()

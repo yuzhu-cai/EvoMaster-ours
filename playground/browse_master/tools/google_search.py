@@ -16,6 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 from pydantic import Field
 
 from evomaster.agent.tools.base import BaseTool, BaseToolParams
+from .arg_repair import recover_list_of_strings
 
 if TYPE_CHECKING:
     from evomaster.agent.session import BaseSession
@@ -65,7 +66,20 @@ class GoogleSearchTool(BaseTool):
         try:
             params = self.parse_params(args_json)
         except Exception as e:
-            return f"Parameter validation error: {e}", {"error": str(e)}
+            recovered_queries = recover_list_of_strings(
+                args_json,
+                "query",
+                strip_wrapping_quotes=False,
+            )
+            if not recovered_queries:
+                return f"Parameter validation error: {e}", {"error": str(e)}
+
+            self.logger.warning(
+                "Recovered malformed google_search arguments into %d quer%s",
+                len(recovered_queries),
+                "y" if len(recovered_queries) == 1 else "ies",
+            )
+            params = GoogleSearchToolParams(query=recovered_queries)
 
         assert isinstance(params, GoogleSearchToolParams)
         queries = params.query

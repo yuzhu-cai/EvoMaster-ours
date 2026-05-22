@@ -15,10 +15,10 @@ llm:
 
   deepseek:
     provider: "deepseek"
-    model: "deepseek-v4-pro"
+    model: "${DEEPSEEK_MODEL}"
     api_key: "${DEEPSEEK_API_KEY}"
-    base_url: "https://api.deepseek.com"
-    temperature: 0.7
+    base_url: "${DEEPSEEK_API_BASE}"
+    temperature: 0.3
     max_tokens: 128000
     timeout: 60
     max_retries: 3

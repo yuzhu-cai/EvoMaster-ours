@@ -1,4 +1,4 @@
-"""DAG-parallel Flash-Searcher style BrowseComp experiment workflow."""
+"""Plan-once DAG-parallel BrowseComp experiment workflow."""
 
 from __future__ import annotations
 
@@ -24,26 +24,20 @@ class FlashSearchExp(BaseExp):
         self,
         planner,
         searcher,
-        optimizer,
         finalizer,
         config,
         worker_factory: Callable[[str], Any] | None = None,
         max_workers: int = 3,
         max_rounds: int = 4,
-        allow_partial_ready: bool = True,
-        max_dynamic_nodes: int = 4,
     ):
         super().__init__(agent=searcher, config=config)
         self.logger = logging.getLogger(self.__class__.__name__)
         self.planner = planner
         self.searcher = searcher
-        self.optimizer = optimizer or planner
         self.finalizer = finalizer or planner
         self.worker_factory = worker_factory
         self.max_workers = max(1, int(max_workers))
         self.max_rounds = max(1, int(max_rounds))
-        self.allow_partial_ready = bool(allow_partial_ready)
-        self.max_dynamic_nodes = max(0, int(max_dynamic_nodes))
         self.ground_truth = None
 
     @property
@@ -80,7 +74,7 @@ class FlashSearchExp(BaseExp):
                 on_step=on_step,
             )
             dag = self._build_dag(planner_output, task_description)
-            node_results, rounds, optimizer_outputs = self._execute_dag(
+            node_results, rounds = self._execute_dag(
                 dag=dag,
                 question=task_description,
                 task_id=task_id,
@@ -96,7 +90,7 @@ class FlashSearchExp(BaseExp):
             )
             final_answer = self._sanitize_answer(final_output)
             if not final_answer or final_answer.upper() == "UNKNOWN":
-                final_answer = self._best_node_answer(node_results)
+                final_answer = ""
 
             result.update(
                 {
@@ -109,7 +103,6 @@ class FlashSearchExp(BaseExp):
                         for node_id, node_result in node_results.items()
                     },
                     "scheduler_rounds": [self._round_to_dict(item) for item in rounds],
-                    "optimizer_outputs": optimizer_outputs,
                     "analysis": self._build_analysis(dag, node_results, rounds),
                     "planner_trajectory": planner_trajectory,
                     "final_trajectory": final_trajectory,
@@ -161,12 +154,14 @@ class FlashSearchExp(BaseExp):
                 "Construct a Flash-Searcher DAG for this BrowseComp question.",
                 "Return JSON only. Schema:",
                 '{"hard_constraints":["..."],"final_goal":"...",'
-                '"nodes":[{"id":"n1","goal":"...","depends_on":[],"node_type":"search|verify|compare","priority":0}]}',
+                '"nodes":[{"id":"n1","goal":"...","depends_on":[],"priority":0}]}',
                 "DAG rules:",
                 "- Nodes are coarse searchable/verification subtasks, not single exact queries.",
                 "- Independent clues should be separate nodes so they can run in parallel.",
                 "- Verification nodes should depend only on the candidate-producing nodes they need.",
-                "- Include a compare/fusion-support node only if it can search or verify evidence; final answer fusion happens separately.",
+                "- The initial DAG must cover the whole problem; there will be no re-planning or dynamic node creation.",
+                "- Nodes may produce local intermediate answers; the final answer to the original question is produced only by the finalizer.",
+                "- Include enough evidence-gathering and verification nodes for the finalizer to answer the original question.",
                 f"Question:\n{question}",
             ]
         )
@@ -190,13 +185,13 @@ class FlashSearchExp(BaseExp):
                 "Rules:",
                 "- Prefer exact evidence from primary/entity-adjacent pages.",
                 "- Do not use benchmark mirrors, answer dumps, or pages that only repeat the question.",
-                "- If this is speculative because some dependencies are missing, search only the parts that can be advanced now.",
+                "- Dependency results may be incomplete or failed; use them as context, not as the final answer.",
                 "- If uncertain, still provide the best local candidate with low confidence; use UNKNOWN only when no useful candidate exists.",
+                "- Your node answer is local to this subtask. Do not try to answer the original question unless this node goal explicitly asks for that.",
                 f"Original question:\n{question}",
                 "Global hard constraints:",
                 json.dumps(dag.hard_constraints, ensure_ascii=False, indent=2),
                 f"Node id: {node.node_id}",
-                f"Node type: {node.node_type}",
                 f"Node goal:\n{node.goal}",
                 f"Completed dependencies: {completed_deps}",
                 f"Missing dependencies: {missing_deps}",
@@ -206,38 +201,6 @@ class FlashSearchExp(BaseExp):
                     ensure_ascii=False,
                     indent=2,
                 ),
-            ]
-        )
-
-    def _optimizer_input(
-        self,
-        question: str,
-        dag: SearchDAG,
-        node_results: dict[str, SearchNodeResult],
-        round_info: SchedulerRound,
-    ) -> str:
-        return "\n\n".join(
-            [
-                "You are the Flash-Searcher dynamic plan optimizer.",
-                "Inspect the current DAG progress and optionally add or update search/verification nodes.",
-                "Return JSON only. Schema:",
-                '{"notes":"...","answer_ready":false,"new_nodes":[{"id":"n_new","goal":"...","depends_on":["n1"],"node_type":"search|verify|compare","priority":0}],'
-                '"updates":[{"id":"n2","goal":"refined goal","priority":1}]}',
-                "Rules:",
-                "- Add nodes only for missing hard constraints, conflicts, or failed search directions.",
-                "- Do not add final-answer nodes; answer fusion is handled separately.",
-                "- Keep new_nodes small and high-value.",
-                f"Original question:\n{question}",
-                "DAG state:",
-                json.dumps(dag.to_dict(), ensure_ascii=False, indent=2),
-                "Node results:",
-                json.dumps(
-                    [self._node_result_to_dict(item, include_raw=False) for item in node_results.values()],
-                    ensure_ascii=False,
-                    indent=2,
-                ),
-                "Latest scheduler round:",
-                json.dumps(self._round_to_dict(round_info), ensure_ascii=False, indent=2),
             ]
         )
 
@@ -254,8 +217,10 @@ class FlashSearchExp(BaseExp):
                 "Return only the exact short answer. No explanation, no citation, no JSON.",
                 "Do not return UNKNOWN; choose the best-supported answer from the DAG evidence.",
                 "Hard rules:",
+                "- Answer the original question, not any single DAG node goal.",
+                "- Treat node answers as intermediate local results; never copy a node answer unless it actually answers the original question.",
                 "- Check every hard constraint from the original question.",
-                "- Prefer high-confidence verified evidence over speculative low-confidence nodes.",
+                "- Prefer high-confidence verified evidence over low-confidence or incomplete node results.",
                 "- Reject candidates contradicted by node evidence or missing hard constraints.",
                 "- Preserve exact full names/titles, including subtitles after a colon.",
                 f"Original question:\n{question}",
@@ -278,9 +243,9 @@ class FlashSearchExp(BaseExp):
         if not isinstance(raw_nodes, list) or not raw_nodes:
             self.logger.warning("Planner did not return a valid DAG; using fallback DAG")
             raw_nodes = [
-                {"id": "n1", "goal": "Search broadly for candidate answers matching the main clues.", "depends_on": [], "node_type": "search", "priority": 3},
-                {"id": "n2", "goal": "Search alternate wording and sources for independent candidates.", "depends_on": [], "node_type": "search", "priority": 2},
-                {"id": "n3", "goal": "Verify the best candidates against all hard constraints.", "depends_on": ["n1", "n2"], "node_type": "verify", "priority": 1},
+                {"id": "n1", "goal": "Search broadly for candidate answers matching the main clues.", "depends_on": [], "priority": 3},
+                {"id": "n2", "goal": "Search alternate wording and sources for independent candidates.", "depends_on": [], "priority": 2},
+                {"id": "n3", "goal": "Verify the best candidates against all hard constraints.", "depends_on": ["n1", "n2"], "priority": 1},
             ]
             payload = {"hard_constraints": [], "final_goal": f"Answer: {question}", "nodes": raw_nodes}
 
@@ -299,7 +264,6 @@ class FlashSearchExp(BaseExp):
                 node_id=node_id,
                 goal=goal,
                 depends_on=[self._coerce_str(dep) for dep in depends_on_raw if self._coerce_str(dep)],
-                node_type=self._coerce_str(raw_node.get("node_type")) or "search",
                 priority=self._coerce_int(raw_node.get("priority"), default=0),
             )
 
@@ -321,44 +285,26 @@ class FlashSearchExp(BaseExp):
         question: str,
         task_id: str,
         on_step=None,
-    ) -> tuple[dict[str, SearchNodeResult], list[SchedulerRound], list[dict[str, Any]]]:
-        completed: set[str] = set()
-        executed: set[str] = set()
+    ) -> tuple[dict[str, SearchNodeResult], list[SchedulerRound]]:
+        settled: set[str] = set()
         node_results: dict[str, SearchNodeResult] = {}
         rounds: list[SchedulerRound] = []
-        optimizer_outputs: list[dict[str, Any]] = []
-        dynamic_nodes_added = 0
 
         for round_index in range(1, self.max_rounds + 1):
-            ready = dag.ready_nodes(completed)
-            ready_ids = {node.node_id for node in ready}
-            speculative: list[SearchNode] = []
-            if self.allow_partial_ready and len(ready) < self.max_workers:
-                capacity = self.max_workers - len(ready)
-                speculative = dag.partially_ready_nodes(completed, exclude=ready_ids)[:capacity]
-                for node in speculative:
-                    node.speculative = True
-
-            selected = ready + speculative
+            ready = dag.ready_nodes(settled)
+            selected = ready[: self.max_workers]
             if not selected:
                 break
 
             round_info = SchedulerRound(
                 round_index=round_index,
-                ready_node_ids=[node.node_id for node in ready],
-                speculative_node_ids=[node.node_id for node in speculative],
+                ready_node_ids=[node.node_id for node in selected],
             )
             rounds.append(round_info)
-            self.logger.info(
-                "DAG round %s: ready=%s speculative=%s",
-                round_index,
-                round_info.ready_node_ids,
-                round_info.speculative_node_ids,
-            )
+            self.logger.info("DAG round %s: ready=%s", round_index, round_info.ready_node_ids)
 
             for node in selected:
                 node.status = "running"
-                executed.add(node.node_id)
 
             round_results = self._run_nodes_parallel(
                 nodes=selected,
@@ -374,26 +320,8 @@ class FlashSearchExp(BaseExp):
                 node.status = node_result.status
                 node.error = node_result.error
                 node_results[node_result.node_id] = node_result
-                if node_result.status == "completed":
-                    completed.add(node_result.node_id)
-                    round_info.completed_node_ids.append(node_result.node_id)
-
-            if round_index < self.max_rounds and dynamic_nodes_added < self.max_dynamic_nodes:
-                optimizer_payload = self._run_optimizer(
-                    question=question,
-                    dag=dag,
-                    node_results=node_results,
-                    round_info=round_info,
-                    task_id=task_id,
-                    round_index=round_index,
-                    on_step=on_step,
-                )
-                optimizer_outputs.append(optimizer_payload)
-                round_info.optimizer_notes = self._coerce_str(optimizer_payload.get("notes"))
-                added = self._apply_optimizer_payload(dag, optimizer_payload, dynamic_nodes_added)
-                dynamic_nodes_added += added
-                if optimizer_payload.get("answer_ready") is True:
-                    break
+                settled.add(node_result.node_id)
+                round_info.completed_node_ids.append(node_result.node_id)
 
             if all(node.status in {"completed", "failed", "skipped"} for node in dag.nodes.values()):
                 break
@@ -406,10 +334,10 @@ class FlashSearchExp(BaseExp):
                     node_id=node.node_id,
                     status="skipped",
                     dependency_node_ids=list(node.depends_on),
-                    missing_dependency_node_ids=[dep for dep in node.depends_on if dep not in completed],
+                    missing_dependency_node_ids=[dep for dep in node.depends_on if dep not in settled],
                     error=node.error,
                 )
-        return node_results, rounds, optimizer_outputs
+        return node_results, rounds
 
     def _run_nodes_parallel(
         self,
@@ -498,7 +426,6 @@ class FlashSearchExp(BaseExp):
             tool_call_counts=tool_usage["tool_call_counts"],
             dependency_node_ids=list(node.depends_on),
             missing_dependency_node_ids=[dep for dep in node.depends_on if dep not in node_results],
-            speculative=node.speculative,
             raw_output=raw_output,
             steps=len(getattr(trajectory, "steps", []) or []),
         )
@@ -508,78 +435,6 @@ class FlashSearchExp(BaseExp):
         if self.worker_factory is not None:
             return self.worker_factory(worker_name)
         return self.searcher
-
-    def _run_optimizer(
-        self,
-        question: str,
-        dag: SearchDAG,
-        node_results: dict[str, SearchNodeResult],
-        round_info: SchedulerRound,
-        task_id: str,
-        round_index: int,
-        on_step=None,
-    ) -> dict[str, Any]:
-        _, optimizer_output = self._run_text_agent(
-            self.optimizer,
-            exp_index=5_000 + round_index,
-            task_id=f"{task_id}_optimizer_r{round_index}",
-            task_type="flash_dag_optimizer",
-            description=self._optimizer_input(question, dag, node_results, round_info),
-            on_step=on_step,
-        )
-        payload = self._extract_json_object(optimizer_output)
-        if not isinstance(payload, dict):
-            payload = {}
-        payload.setdefault("raw_output", optimizer_output[:2000])
-        return payload
-
-    def _apply_optimizer_payload(
-        self,
-        dag: SearchDAG,
-        payload: dict[str, Any],
-        dynamic_nodes_added: int,
-    ) -> int:
-        updates = payload.get("updates", [])
-        if isinstance(updates, list):
-            for update in updates:
-                if not isinstance(update, dict):
-                    continue
-                node_id = self._coerce_str(update.get("id"))
-                if node_id not in dag.nodes:
-                    continue
-                node = dag.nodes[node_id]
-                if self._coerce_str(update.get("goal")):
-                    node.goal = self._coerce_str(update.get("goal"))
-                if "priority" in update:
-                    node.priority = self._coerce_int(update.get("priority"), node.priority)
-
-        added = 0
-        raw_new_nodes = payload.get("new_nodes", [])
-        if not isinstance(raw_new_nodes, list):
-            return 0
-        for raw_node in raw_new_nodes:
-            if added + dynamic_nodes_added >= self.max_dynamic_nodes:
-                break
-            if not isinstance(raw_node, dict):
-                continue
-            node_id = self._coerce_str(raw_node.get("id")) or f"dyn_{dynamic_nodes_added + added + 1}"
-            if node_id in dag.nodes:
-                continue
-            goal = self._coerce_str(raw_node.get("goal") or raw_node.get("task"))
-            if not goal:
-                continue
-            depends_on = self._coerce_str_list(raw_node.get("depends_on") or raw_node.get("dependencies"))
-            dag.add_or_update_node(
-                SearchNode(
-                    node_id=node_id,
-                    goal=goal,
-                    depends_on=depends_on,
-                    node_type=self._coerce_str(raw_node.get("node_type")) or "search",
-                    priority=self._coerce_int(raw_node.get("priority"), default=0),
-                )
-            )
-            added += 1
-        return added
 
     def _extract_tool_usage(self, trajectory) -> dict[str, Any]:
         tool_call_counts: Counter[str] = Counter()
@@ -625,15 +480,6 @@ class FlashSearchExp(BaseExp):
             if line:
                 return line[:300].strip()
         return ""
-
-    def _best_node_answer(self, node_results: dict[str, SearchNodeResult]) -> str:
-        confidence_rank = {"high": 3, "medium": 2, "low": 1, "unknown": 0}
-        candidates = [
-            item for item in node_results.values()
-            if item.answer and item.answer.upper() != "UNKNOWN"
-        ]
-        candidates.sort(key=lambda item: (confidence_rank.get(item.confidence.lower(), 0), len(item.evidence)), reverse=True)
-        return candidates[0].answer if candidates else "best guess unavailable"
 
     def _extract_json_object(self, text: str) -> dict[str, Any]:
         if not text:
@@ -693,7 +539,6 @@ class FlashSearchExp(BaseExp):
             "tool_call_counts": node_result.tool_call_counts,
             "dependency_node_ids": node_result.dependency_node_ids,
             "missing_dependency_node_ids": node_result.missing_dependency_node_ids,
-            "speculative": node_result.speculative,
             "steps": node_result.steps,
             "error": node_result.error,
         }
@@ -705,9 +550,7 @@ class FlashSearchExp(BaseExp):
         return {
             "round_index": round_info.round_index,
             "ready_node_ids": round_info.ready_node_ids,
-            "speculative_node_ids": round_info.speculative_node_ids,
             "completed_node_ids": round_info.completed_node_ids,
-            "optimizer_notes": round_info.optimizer_notes,
         }
 
     def _build_analysis(
@@ -725,7 +568,6 @@ class FlashSearchExp(BaseExp):
             "completed_nodes": sum(1 for item in node_results.values() if item.status == "completed"),
             "failed_nodes": sum(1 for item in node_results.values() if item.status == "failed"),
             "skipped_nodes": sum(1 for item in node_results.values() if item.status == "skipped"),
-            "speculative_nodes": sum(1 for item in node_results.values() if item.speculative),
             "critical_path_length": dag.critical_path_length(),
             "tool_call_counts": dict(counts),
         }
@@ -740,7 +582,6 @@ class FlashSearchExp(BaseExp):
             "dag_plan": result.get("dag_plan", {}),
             "node_results": result.get("node_results", {}),
             "scheduler_rounds": result.get("scheduler_rounds", []),
-            "optimizer_outputs": result.get("optimizer_outputs", []),
             "analysis": result.get("analysis", {}),
             "error": result.get("error"),
         }

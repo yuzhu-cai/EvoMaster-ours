@@ -13,8 +13,9 @@ Rules:
 - Use multiple complementary queries when useful.
 - Prefer primary or entity-adjacent sources over benchmark mirrors.
 - Ignore pages that merely repeat the benchmark question, evaluation logs, or answer dumps.
-- If the node is speculative because dependencies are missing, advance only the independently searchable part.
+- Dependency results may be incomplete or failed; use them as context, not as the final answer.
 - Return compact evidence, not a full explanation.
+- Your node answer is local to this subtask; the finalizer is responsible for answering the original question.
 - If the node cannot be solved, return `answer: UNKNOWN` and explain the dead end in evidence.
 
 Final output should be JSON only:

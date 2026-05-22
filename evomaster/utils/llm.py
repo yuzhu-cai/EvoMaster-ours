@@ -751,7 +751,7 @@ class DeepSeekLLM(BaseLLM):
             "messages": messages,
             "temperature": kwargs.get("temperature", self.config.temperature),
             "timeout": kwargs.get("timeout", self.config.timeout),
-            "reasoning_effort":"max",
+            "reasoning_effort":"high",
             "extra_body": {
                 "chat_template_kwargs": {"thinking": True},
                 "separate_reasoning": True
