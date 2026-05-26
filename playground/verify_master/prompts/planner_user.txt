@@ -1,7 +1,0 @@
-Read the planning context below and return exactly one tag block.
-Only use the subtask-answer history; do not invent hidden evidence.
-If one previous answer already resolves the original task, output the final answer immediately.
-If the latest answer does not really fit its subtask, repair the subtask by narrowing or changing angle.
-Keep the next subtask atomic.
-
-{description}

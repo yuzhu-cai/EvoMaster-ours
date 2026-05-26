@@ -1,3 +1,0 @@
-Unused legacy prompt.
-
-The current WebMaster DAG workflow plans once, executes the initial DAG, and then uses the finalizer for answer fusion. No optimizer agent is configured.

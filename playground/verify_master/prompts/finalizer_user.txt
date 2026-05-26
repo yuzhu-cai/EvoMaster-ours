@@ -1,4 +1,0 @@
-Read the material below and return exactly one `<answer>...</answer>` block.
-Use only the subtask-answer history.
-
-{description}

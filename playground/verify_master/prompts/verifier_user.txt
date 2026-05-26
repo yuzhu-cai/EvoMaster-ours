@@ -1,4 +1,0 @@
-Verify the material below and respond only with the required XML-like tags.
-Judge only from the provided evidence and reasoning context.
-
-{description}

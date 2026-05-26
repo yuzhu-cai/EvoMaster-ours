@@ -1,4 +1,0 @@
-Solve the assigned subtask using the available tools, then return only one short answer block.
-Do not output evidence, citations, or explanation.
-
-{description}
