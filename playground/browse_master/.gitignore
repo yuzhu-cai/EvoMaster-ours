@@ -1,3 +1,4 @@
 test/
 reports/
 scripts/.nfs*
+*.md

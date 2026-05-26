@@ -1,13 +1,12 @@
-Answer the following benchmark question.
+Answer the benchmark question using web-only research.
 
-Rules for this run:
+Rules:
 - Solve the underlying facts, not the wording of the query.
 - Ignore benchmark mirrors or pages that repeat the question almost verbatim.
-- Treat route distance, episode/season, obituary, acknowledgment, and exact-name constraints as hard clues that should be directly verified before finishing.
-- If the task depends on map-style distance or driving miles, prefer the dedicated distance tool over snippet guessing.
-- Once one candidate is clearly best-supported on the hard clues, stop searching and call `finish`.
-- If progress stalls, compare your top candidates against the unresolved hard clues instead of endlessly reformulating queries.
-- Return only the exact final answer via the `finish` tool.
+- Treat route distance, episode/season, obituary, acknowledgement, exact names, dates, and numbers as hard clues.
+- Preserve all important findings in the evolving report because raw history is not retained.
+- When one candidate is best-supported on the hard clues, call the native finish tool.
+- Return only the exact final answer in finish.message.
 
 Question:
 {description}
