@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import time
 from pathlib import Path
@@ -19,6 +20,20 @@ from paperbench.solvers.upload import upload_heavy_logs, upload_status
 from paperbench.solvers.utils import check_for_existing_run
 
 logger = structlog.stdlib.get_logger(component=__name__)
+
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>)}\]]+|www\.[^\s\"'<>)}\]]+", re.IGNORECASE)
+_FORGE_RE = re.compile(
+    r"\b(?:github|gitlab|bitbucket)\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+",
+    re.IGNORECASE,
+)
+
+
+def _redact_monitor_sensitive_text(text: str) -> str:
+    """Keep host logs useful without echoing evaluator-blacklisted repository URLs."""
+
+    text = _URL_RE.sub("<URL>", text)
+    return _FORGE_RE.sub("<REPOSITORY>", text)
 
 
 def _q(value: str | Path) -> str:
@@ -98,6 +113,9 @@ class CodexCliSolver(BasePBSolver):
         stdout = await self._download_optional_text(computer, stdout_path)
         stderr = await self._download_optional_text(computer, stderr_path)
         final_answer = await self._download_optional_text(computer, final_answer_path)
+        stdout = _redact_monitor_sensitive_text(stdout)
+        stderr = _redact_monitor_sensitive_text(stderr)
+        final_answer = _redact_monitor_sensitive_text(final_answer)
 
         bf.makedirs(task.run_dir)
         bf.write_bytes(bf.join(task.run_dir, "codex.stdout.jsonl"), stdout.encode("utf-8"))

@@ -7,6 +7,8 @@ PYTHONPATH. Keep behavior opt-in so normal PaperBench runs are unchanged.
 from __future__ import annotations
 
 import asyncio
+import builtins
+import io
 import os
 
 
@@ -113,5 +115,30 @@ def _patch_simple_judge_structured_model() -> None:
         SimpleJudge.__init__ = patched_init
 
 
+def _patch_debug_split_single_paper() -> None:
+    """Make `paper_split=debug` resolve to one requested paper for local reruns."""
+
+    paper_id = os.getenv("CODEX4PAPERBENCH_DEBUG_SPLIT_PAPER", "").strip()
+    if not paper_id:
+        return
+
+    original_open = builtins.open
+
+    def patched_open(file, *args, **kwargs):
+        try:
+            path = os.fspath(file)
+        except TypeError:
+            path = ""
+
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if path.endswith("/experiments/splits/debug.txt") and "r" in mode and "+" not in mode:
+            return io.StringIO(f"{paper_id}\n")
+
+        return original_open(file, *args, **kwargs)
+
+    builtins.open = patched_open
+
+
+_patch_debug_split_single_paper()
 _patch_openai_completer_client()
 _patch_simple_judge_structured_model()
