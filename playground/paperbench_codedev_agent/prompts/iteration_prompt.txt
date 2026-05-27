@@ -1,0 +1,34 @@
+Continue improving the same PaperBench Code-Dev submission.
+
+Paper ID: {paper_id}
+Round: {round_index} of {max_rounds}
+Elapsed: {elapsed_minutes} minutes ({elapsed_seconds} seconds)
+Runtime budget seconds: {runtime_budget_seconds}
+
+Paths:
+- Paper directory: {paper_mount}
+- Submission git repository: {submission_dir}
+- Workspace: {workspace}
+- Submission tarball: {submission_tar_path}
+
+Last static audit:
+{last_audit}
+
+Last optional grade status, if enabled:
+{last_grade}
+
+Do not restart from scratch. Read the existing repository, identify the highest-value missing implementation coverage, and make one or more concrete source-code improvements. Good continuation work includes:
+- adding a missing paper algorithm, loss, model component, data loader, metric, or experiment entry point;
+- replacing placeholder or README-only claims with real code;
+- adding tests/smoke checks that exercise key code paths;
+- improving README mapping so every claimed paper contribution points to files;
+- removing weak language such as toy, placeholder, stand-in, scaffold, or not implemented.
+
+Before finish in this round:
+1. Commit changes in {submission_dir}.
+2. Run paperbench_status(action="audit", paper_dir="{paper_mount}", submission_dir="{submission_dir}", workspace="{workspace}", artifact_path="{submission_tar_path}").
+3. Run paperbench_status(action="validate", paper_dir="{paper_mount}", submission_dir="{submission_dir}", workspace="{workspace}", artifact_path="{submission_tar_path}").
+4. If all plausible improvements are exhausted after the minimum rounds, create {workspace}/artifacts/STOP_ITERATION with a short rationale.
+
+Do not call finish immediately just because a tarball exists. This round is for improving hidden Code-Dev leaf coverage.
+

@@ -1,0 +1,4 @@
+paper_id: rice
+paper_dir: /data/yuzhu/Devs/third_party/frontier-evals/project/paperbench/data/papers/rice
+description: Reproduce the core Code-Dev contributions of the rice PaperBench paper.
+

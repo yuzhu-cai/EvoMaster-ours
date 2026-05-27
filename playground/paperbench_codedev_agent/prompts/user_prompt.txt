@@ -1,0 +1,43 @@
+Task ID: {task_id}
+Task Type: {task_type}
+Benchmark: PaperBench Code-Dev
+Paper ID: {paper_id}
+
+You are reproducing a research paper for PaperBench Code-Dev.
+
+Paths:
+- Paper directory: {paper_mount}
+- Final submission git repository: {submission_dir}
+- Scratch/log workspace: {workspace}
+- Final submission tarball path: {submission_tar_path}
+
+Official PaperBench Code-Dev instructions:
+{official_code_only_instructions}
+
+Starter repository note:
+If {submission_dir} already contains files, treat them as a clean-room starter implementation. First run a fast audit (`find`, `git status`, tests if present), then spend your time filling missing paper-specific code coverage instead of recreating the repository.
+
+Task spec:
+{task_spec_json}
+
+Paper excerpt to orient you. This may be truncated; read {paper_mount}/paper.md directly for full details:
+{paper_excerpt}
+
+Addendum excerpt. This may be truncated; read {paper_mount}/addendum.md directly for full details:
+{addendum_excerpt}
+
+Required workflow:
+1. Inspect {paper_mount}/paper.md and {paper_mount}/addendum.md. Start with paperbench_paper(action="summary") and paperbench_paper(action="outline"), then use at most a few targeted paperbench_paper(action="grep"/"section") calls before coding. Do not inspect blacklist.txt.
+2. If a starter repo exists, list it compactly with `find {submission_dir} -path '*/.git' -prune -o -type f -print`; do not dump `.git`.
+3. Identify the main-body contributions and prioritize implementation coverage by importance.
+4. Create or update a real repository at {submission_dir}. Use a package structure, scripts, configs, and tests/smoke checks appropriate for the paper.
+5. Implement paper-specific code paths, not generic templates. Every major paper method/experiment should have corresponding source code.
+6. Run cheap checks such as syntax compilation and unit/smoke tests when feasible.
+7. Use paperbench_status(action="audit") to detect missing repository pieces and weak scaffold language.
+8. Commit the repository with git.
+9. Run paperbench_status(action="validate", paper_dir="{paper_mount}", submission_dir="{submission_dir}", workspace="{workspace}", artifact_path="{submission_tar_path}").
+10. Call finish only after validation passes and you can summarize the implemented components and remaining limitations.
+
+Runtime budget seconds configured by the harness: {runtime_budget_seconds}
+
+Important: PaperBench Code-Dev scores code-development leaves. Dense, coherent, paper-specific implementation wins. Empty abstractions, README-only promises, toy proxies, and future-work caveats lose credit.

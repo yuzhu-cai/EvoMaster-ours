@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rice-reproduce"
+version = "0.1.0"
+description = "Clean-room reproduction code for RICE: explanation-guided RL refinement"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "numpy>=1.23",
+  "torch>=2.0",
+  "gymnasium>=0.28",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+rl = ["stable-baselines3>=2.0", "shimmy>=0.2", "mujoco>=2.3"]
+driving = ["metadrive-simulator>=0.4"]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["rice_reproduce*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

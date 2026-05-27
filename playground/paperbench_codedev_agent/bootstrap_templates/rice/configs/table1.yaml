@@ -1,0 +1,6 @@
+seeds: [0, 1, 2]
+dense_mujoco: [Hopper-v3, Walker2d-v3, Reacher-v2, HalfCheetah-v3]
+real_world: [SelfishMining-v0, CybORG-CAGE2-v0, Macro-v1]
+refiners: [ppo_finetune, jsrl, statemask_r, rice]
+explanations: [random, statemask, ours]
+fidelity_k: [0.1, 0.2, 0.3, 0.4]

@@ -175,6 +175,22 @@ def _docker_volume_spec(resolved_host_path: str, volume_decl: str | dict[str, An
     return f"{resolved_host_path}:{target}{mode}"
 
 
+def _redact_docker_command_for_log(cmd: list[str]) -> str:
+    """Render a docker command for logs without leaking environment secrets."""
+    rendered: list[str] = []
+    redact_next_env = False
+    for part in cmd:
+        if redact_next_env:
+            key = part.split("=", 1)[0]
+            rendered.append(shlex.quote(f"{key}=<redacted>"))
+            redact_next_env = False
+            continue
+        rendered.append(shlex.quote(part))
+        if part == "-e":
+            redact_next_env = True
+    return " ".join(rendered)
+
+
 class DockerEnv(BaseEnv):
     """Docker environment implementation.
 
@@ -656,8 +672,7 @@ class DockerEnv(BaseEnv):
         cmd.extend([sc.image, "tail", "-f", "/dev/null"])
 
         self.logger.info(
-            "Starting container: "
-            + " ".join(shlex.quote(c) for c in cmd)
+            "Starting container: " + _redact_docker_command_for_log(cmd)
         )
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         if r.returncode != 0:

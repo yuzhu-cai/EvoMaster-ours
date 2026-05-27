@@ -250,6 +250,15 @@ def _install_sdk_retry_reason_filter() -> None:
 _install_sdk_retry_reason_filter()
 
 
+def _error_status_code(error: Exception) -> int | None:
+    status = getattr(error, "status_code", None)
+    if status is not None:
+        return int(status)
+    response = getattr(error, "response", None)
+    status = getattr(response, "status_code", None)
+    return int(status) if status is not None else None
+
+
 class LLMConfig(BaseModel):
     """LLM configuration."""
     provider: Literal["openai", "anthropic","deepseek","openrouter"] = Field(description="LLM provider")
@@ -258,6 +267,15 @@ class LLMConfig(BaseModel):
     base_url: str | None = Field(default=None, description="API Base URL")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0, description="Sampling temperature")
     max_tokens: int | None = Field(default=None, description="Maximum generation tokens")
+    max_completion_tokens: int | None = Field(default=None, description="OpenAI reasoning-model generation token limit")
+    max_tokens_param: Literal["auto", "max_tokens", "max_completion_tokens"] = Field(
+        default="auto",
+        description="Which Chat Completions token-limit parameter to send.",
+    )
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = Field(
+        default=None,
+        description="Optional reasoning effort for OpenAI-compatible reasoning models.",
+    )
     timeout: int = Field(default=300, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")
     retry_delay: float = Field(default=1.0, description="Retry delay in seconds")
@@ -516,7 +534,7 @@ class BaseLLM(ABC):
                     raise ContextOverflowError(str(e)) from e
 
                 # Other 4xx (non-429 rate-limit) are also not retried
-                status = getattr(e, "status_code", None)
+                status = _error_status_code(e)
                 if status and 400 <= status < 500 and status != 429:
                     self.logger.warning("Non-retryable %d error: %s", status, e)
                     raise
@@ -541,7 +559,7 @@ class BaseLLM(ABC):
         Reference: OpenCode OVERFLOW_PATTERNS, covering error messages from mainstream providers.
         """
         error_msg = str(error).lower()
-        status = getattr(error, "status_code", None)
+        status = _error_status_code(error)
         # HTTP 413 (Request Entity Too Large) is always an overflow
         if status == 413:
             return True
@@ -603,8 +621,15 @@ class OpenAILLM(BaseLLM):
             "timeout": kwargs.get("timeout", self.config.timeout)
         }
 
-        if self.config.max_tokens:
-            request_params["max_tokens"] = kwargs.get("max_tokens", self.config.max_tokens)
+        token_limit = kwargs.get(
+            "max_completion_tokens",
+            kwargs.get("max_tokens", self.config.max_completion_tokens or self.config.max_tokens),
+        )
+        token_param = self._token_limit_param_name()
+        if token_limit:
+            request_params[token_param] = token_limit
+        if self.config.reasoning_effort:
+            request_params["reasoning_effort"] = self.config.reasoning_effort
 
         if tools:
             request_params["tools"] = tools
@@ -616,9 +641,23 @@ class OpenAILLM(BaseLLM):
         try:
             response = self.client.chat.completions.create(**request_params)
         except TypeError as e:
-            if "by_alias" not in str(e):
+            if not self._should_raw_fallback(e):
                 raise
-            return self._call_raw_chat(request_params)
+            try:
+                return self._call_raw_chat(request_params)
+            except Exception as raw_error:
+                if self._is_unsupported_token_param(raw_error, token_param):
+                    return self._call_raw_chat(
+                        self._with_alternate_token_param(request_params, token_param)
+                    )
+                raise
+        except Exception as e:
+            if self._is_unsupported_token_param(e, token_param):
+                response = self.client.chat.completions.create(
+                    **self._with_alternate_token_param(request_params, token_param)
+                )
+            else:
+                raise
 
         # Parse the response
         choice = response.choices[0]
@@ -642,6 +681,7 @@ class OpenAILLM(BaseLLM):
         return LLMResponse(
             content=message.content,
             tool_calls=tool_calls,
+            reasoning_content=getattr(message, "reasoning_content", None),
             finish_reason=choice.finish_reason,
             usage={
                 "prompt_tokens": response.usage.prompt_tokens,
@@ -652,6 +692,45 @@ class OpenAILLM(BaseLLM):
                 "model": response.model,
                 "response_id": response.id,
             }
+        )
+
+    def _token_limit_param_name(self) -> str:
+        """Return the token limit parameter compatible with this model/config."""
+        if self.config.max_tokens_param != "auto":
+            return self.config.max_tokens_param
+
+        model = (self.config.model or "").lower()
+        reasoning_markers = ("gpt-5", "o1", "o3", "o4")
+        if any(marker in model for marker in reasoning_markers):
+            return "max_completion_tokens"
+        return "max_tokens"
+
+    @staticmethod
+    def _alternate_token_param(param: str) -> str:
+        return "max_completion_tokens" if param == "max_tokens" else "max_tokens"
+
+    def _with_alternate_token_param(self, request_params: dict[str, Any], current_param: str) -> dict[str, Any]:
+        """Swap max_tokens <-> max_completion_tokens after gateway compatibility errors."""
+        alternate = self._alternate_token_param(current_param)
+        retry_params = request_params.copy()
+        if current_param in retry_params:
+            retry_params[alternate] = retry_params.pop(current_param)
+        return retry_params
+
+    @staticmethod
+    def _should_raw_fallback(error: TypeError) -> bool:
+        msg = str(error)
+        return "by_alias" in msg or "unexpected keyword" in msg
+
+    @staticmethod
+    def _is_unsupported_token_param(error: Exception, token_param: str) -> bool:
+        if _error_status_code(error) != 400:
+            return False
+        msg = str(error).lower()
+        return (
+            token_param.lower() in msg
+            and "unsupported" in msg
+            and ("max_tokens" in msg or "max_completion_tokens" in msg)
         )
 
     def _call_raw_chat(self, request_params: dict[str, Any]) -> LLMResponse:
@@ -667,7 +746,13 @@ class OpenAILLM(BaseLLM):
             "Content-Type": "application/json",
         }
         response = httpx.post(url, headers=headers, json=body, timeout=timeout)
-        response.raise_for_status()
+        if response.status_code >= 400:
+            body_preview = response.text[:2000]
+            raise httpx.HTTPStatusError(
+                f"HTTP {response.status_code} from {url}: {body_preview}",
+                request=response.request,
+                response=response,
+            )
         data = response.json()
 
         choice = data.get("choices", [{}])[0]
@@ -689,6 +774,8 @@ class OpenAILLM(BaseLLM):
         return LLMResponse(
             content=message.get("content"),
             tool_calls=tool_calls,
+            reasoning_content=message.get("reasoning_content")
+            or (message.get("provider_specific_fields") or {}).get("reasoning_content"),
             finish_reason=choice.get("finish_reason"),
             usage={
                 "prompt_tokens": usage.get("prompt_tokens", 0),
