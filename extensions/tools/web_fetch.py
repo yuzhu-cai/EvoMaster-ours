@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout, as_completed
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import requests
@@ -85,17 +85,37 @@ class WebFetchTool(BaseTool):
         self.logger.info("Web fetch URLs: %s, goal: %s", urls, goal)
 
         results = []
-        with ThreadPoolExecutor(max_workers=min(len(urls), 5)) as pool:
+        max_workers = max(1, min(len(urls), int(os.environ.get("EVOMASTER_WEB_FETCH_MAX_WORKERS", "8") or 8)))
+        request_timeout = float(os.environ.get("EVOMASTER_WEB_FETCH_REQUEST_TIMEOUT", "20") or 20)
+        retries = max(1, int(os.environ.get("EVOMASTER_WEB_FETCH_RETRIES", "2") or 2))
+        default_overall = max(30.0, request_timeout * retries * ((len(urls) + max_workers - 1) // max_workers) + 10.0)
+        overall_timeout = float(os.environ.get("EVOMASTER_WEB_FETCH_OVERALL_TIMEOUT", str(default_overall)) or default_overall)
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_url = {
                 pool.submit(self._fetch_and_extract, u, goal, jina_api_key): u
                 for u in urls
             }
-            for future in as_completed(future_to_url, timeout=300):
-                url = future_to_url[future]
-                try:
-                    results.append(future.result())
-                except Exception as e:
-                    results.append(f"[web_fetch] Failed {url}: {e}")
+            completed: set[Any] = set()
+            try:
+                for future in as_completed(future_to_url, timeout=overall_timeout):
+                    completed.add(future)
+                    url = future_to_url[future]
+                    try:
+                        results.append(future.result())
+                    except Exception as e:
+                        results.append(f"[web_fetch] Failed {url}: {e}")
+            except FuturesTimeout:
+                for future, url in future_to_url.items():
+                    if future in completed:
+                        continue
+                    if future.done():
+                        try:
+                            results.append(future.result())
+                        except Exception as e:
+                            results.append(f"[web_fetch] Failed {url}: {e}")
+                    else:
+                        future.cancel()
+                        results.append(f"[web_fetch] Timed out before {url} completed after {overall_timeout:.0f}s")
 
         response = "\n---\n".join(results)
         return response, {"urls": urls, "goal": goal}
@@ -121,32 +141,30 @@ class WebFetchTool(BaseTool):
         if jina_api_key:
             headers["Authorization"] = f"Bearer {jina_api_key}"
 
-        for attempt in range(3):
+        timeout = float(os.environ.get("EVOMASTER_WEB_FETCH_REQUEST_TIMEOUT", "20") or 20)
+        retries = max(1, int(os.environ.get("EVOMASTER_WEB_FETCH_RETRIES", "2") or 2))
+        last_error = ""
+        for attempt in range(retries):
             try:
                 response = requests.get(
                     f"https://r.jina.ai/{url}",
                     headers=headers,
-                    timeout=50,
+                    timeout=timeout,
                 )
                 if response.status_code == 200:
                     content = response.text
                     if not content or not content.strip():
                         return f"[web_fetch] Empty content from {url}"
                     return content
-                else:
-                    self.logger.warning(
-                        "Jina API returned %d for %s", response.status_code, url
-                    )
-                    if attempt == 2:
-                        return f"[web_fetch] Failed to fetch {url}: HTTP {response.status_code}"
+                self.logger.warning("Jina API returned %d for %s", response.status_code, url)
+                last_error = f"HTTP {response.status_code}"
             except Exception as e:
                 self.logger.warning("Web fetch attempt %d failed for %s: %s", attempt + 1, url, e)
-                if attempt < 2:
-                    time.sleep(0.5)
-                else:
-                    return f"[web_fetch] Failed to fetch {url}: {e}"
+                last_error = str(e)
+            if attempt < retries - 1:
+                time.sleep(0.5)
 
-        return f"[web_fetch] Failed to fetch {url}"
+        return f"[web_fetch] Failed to fetch {url}: {last_error}"
 
     def _extract_with_llm(self, content: str, url: str, goal: str) -> str:
         """Use LLM to extract goal-relevant information from web page content."""

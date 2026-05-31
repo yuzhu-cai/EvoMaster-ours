@@ -22,6 +22,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tarfile
 import time
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,10 @@ class _RuntimeDeadlineExceeded(BaseException):
     """Raised by the per-task hard wall-clock timer."""
 
 
+class _ExternalTerminationRequested(BaseException):
+    """Raised when the run receives SIGINT/SIGTERM/SIGHUP."""
+
+
 @register_playground("paperbench_codedev_agent")
 class PaperBenchCodeDevPlayground(BasePlayground):
     """A Docker-first harness for PaperBench Code-Dev submissions."""
@@ -110,6 +115,8 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         result: dict[str, Any] | None = None
         iteration_records: list[dict[str, Any]] = []
         deadline_reached = False
+        external_termination = False
+        best_round_status: dict[str, Any] | None = None
         start_time = time.monotonic()
         deadline = self._runtime_deadline(start_time)
 
@@ -136,42 +143,46 @@ class PaperBenchCodeDevPlayground(BasePlayground):
 
             task_id = getattr(self, "task_id", None) or self._spec.get("paper_id", "paperbench")
             try:
-                with self._hard_runtime_deadline(deadline):
-                    result = exp.run(
-                        self._agent_description(self._spec),
-                        task_id=task_id,
-                        images=images,
-                        on_step=on_step,
-                    )
-
-                iteration_records.append(
-                    self._finalize_round(
-                        round_index=0,
-                        elapsed_seconds=time.monotonic() - start_time,
-                    )
-                )
-
-                if self._iteration_enabled(self._spec):
-                    iteration_records.extend(
-                        self._run_iteration_rounds(
-                            agent=agent,
+                with self._termination_signal_guard():
+                    with self._hard_runtime_deadline(deadline):
+                        result = exp.run(
+                            self._agent_description(self._spec),
                             task_id=task_id,
+                            images=images,
                             on_step=on_step,
-                            start_time=start_time,
-                            deadline=deadline,
+                        )
+
+                    iteration_records.append(
+                        self._finalize_round(
+                            round_index=0,
+                            elapsed_seconds=time.monotonic() - start_time,
                         )
                     )
-            except _RuntimeDeadlineExceeded:
-                deadline_reached = True
-                self.logger.info("PaperBench Code-Dev runtime deadline reached.")
+
+                    if self._iteration_enabled(self._spec):
+                        iteration_records.extend(
+                            self._run_iteration_rounds(
+                                agent=agent,
+                                task_id=task_id,
+                                on_step=on_step,
+                                start_time=start_time,
+                                deadline=deadline,
+                            )
+                        )
+            except (_RuntimeDeadlineExceeded, _ExternalTerminationRequested) as exc:
+                deadline_reached = isinstance(exc, _RuntimeDeadlineExceeded)
+                external_termination = isinstance(exc, _ExternalTerminationRequested)
+                reason = "runtime_deadline_reached" if deadline_reached else "external_termination_requested"
+                self.logger.info("PaperBench Code-Dev run stopped: %s.", reason)
                 self._kill_active_session_processes()
-                self._finish_agent_trajectory_due_to_deadline(agent)
-                result = result or self._deadline_result(task_id, agent)
+                self._finish_agent_trajectory(agent, reason)
+                result = result or self._deadline_result(task_id, agent, reason=reason)
                 timeout_record = self._finalize_round(
                     round_index=len(iteration_records),
                     elapsed_seconds=time.monotonic() - start_time,
                 )
-                timeout_record["deadline_reached"] = True
+                timeout_record["deadline_reached"] = deadline_reached
+                timeout_record["external_termination"] = external_termination
                 iteration_records.append(timeout_record)
             finally:
                 agent._prompt_format_kwargs = original_kwargs
@@ -180,10 +191,12 @@ class PaperBenchCodeDevPlayground(BasePlayground):
                 if hasattr(self.session, "clear_deadline"):
                     self.session.clear_deadline()
 
+            if bool(self._iteration_cfg().get("select_best_graded_round", False)):
+                best_round_status = self._restore_best_graded_round(iteration_records)
             final_status = self._finalize_submission_artifact(self._spec)
             grade_status = self._run_optional_grade(self._spec, deadline=deadline)
             if result is None:
-                result = self._deadline_result(task_id, agent)
+                result = self._deadline_result(task_id, agent, reason="completed")
             if deadline is not None and time.monotonic() >= deadline:
                 deadline_reached = True
             result.update(
@@ -194,12 +207,15 @@ class PaperBenchCodeDevPlayground(BasePlayground):
                     "bootstrap_status": self._bootstrap_status,
                     "artifact_status": final_status,
                     "grade_status": grade_status,
+                    "best_round_status": best_round_status,
+                    "external_termination": external_termination,
                     "iterations": iteration_records,
                 }
             )
             if not final_status.get("ok"):
                 result["status"] = "failed"
                 result["error"] = "paperbench_codedev_artifact_invalid"
+            self._write_completion_marker(result)
             return result
         finally:
             self.cleanup()
@@ -253,6 +269,28 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             if old_timer[0] > 0:
                 signal.setitimer(signal.ITIMER_REAL, old_timer[0], old_timer[1])
 
+    @contextlib.contextmanager
+    def _termination_signal_guard(self):
+        if threading_is_not_main_thread():
+            yield
+            return
+
+        signals = [signal.SIGTERM, signal.SIGINT]
+        if hasattr(signal, "SIGHUP"):
+            signals.append(signal.SIGHUP)
+        old_handlers = {sig: signal.getsignal(sig) for sig in signals}
+
+        def _raise_termination(signum, _frame):
+            raise _ExternalTerminationRequested(f"received signal {signum}")
+
+        for sig in signals:
+            signal.signal(sig, _raise_termination)
+        try:
+            yield
+        finally:
+            for sig, handler in old_handlers.items():
+                signal.signal(sig, handler)
+
     def _kill_active_session_processes(self) -> None:
         killer = getattr(self.session, "kill_active_processes", None)
         if callable(killer):
@@ -260,20 +298,21 @@ class PaperBenchCodeDevPlayground(BasePlayground):
                 killer()
 
     @staticmethod
-    def _finish_agent_trajectory_due_to_deadline(agent: BaseAgent) -> None:
+    def _finish_agent_trajectory(agent: BaseAgent, reason: str) -> None:
         trajectory = getattr(agent, "trajectory", None)
         if trajectory is not None and getattr(trajectory, "status", None) == "running":
-            trajectory.finish("completed", {"reason": "runtime_deadline_reached"})
+            trajectory.finish("completed", {"reason": reason})
 
     @staticmethod
-    def _deadline_result(task_id: str, agent: BaseAgent) -> dict[str, Any]:
+    def _deadline_result(task_id: str, agent: BaseAgent, *, reason: str) -> dict[str, Any]:
         trajectory = getattr(agent, "trajectory", None)
         steps = len(getattr(trajectory, "steps", []) or []) if trajectory else 0
         return {
             "status": "completed",
             "steps": steps,
             "task_id": task_id,
-            "deadline_reached": True,
+            "deadline_reached": reason == "runtime_deadline_reached",
+            "stop_reason": reason,
         }
 
     def _load_task_spec(self, task_description: str) -> dict[str, Any]:
@@ -434,6 +473,8 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             "paper_excerpt": self._paper_excerpt(spec),
             "addendum_excerpt": self._addendum_excerpt(spec),
             "codex_baseline_lessons": self._codex_baseline_lessons(),
+            "historical_grade_feedback": self._combined_grade_feedback(spec),
+            "codex_gap_feedback": self._codex_gap_feedback(spec),
             "runtime_budget_seconds": int(self._cfg().get("max_runtime_seconds", 0) or 0),
         }
 
@@ -484,13 +525,131 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         }
         if not paper_id:
             return {**status, "reason": "missing_paper_id"}
-        if not src.exists() or not src.is_dir():
-            return {**status, "reason": "template_not_found"}
 
+        seed_status = self._bootstrap_from_seed_grade_runs(cfg, paper_id, host_submission)
+        if seed_status.get("status") == "applied":
+            return {**status, **seed_status, "mode": mode}
+
+        if not src.exists() or not src.is_dir():
+            reason = seed_status.get("reason") if seed_status else "template_not_found"
+            return {**status, "seed_status": seed_status, "reason": reason or "template_not_found"}
+
+        copy_status = self._copy_bootstrap_source(
+            src,
+            host_submission,
+            overwrite=bool(cfg.get("overwrite_existing", False)),
+            commit=bool(cfg.get("commit", True)),
+            commit_message=str(cfg.get("commit_message", "Bootstrap PaperBench reproduction")),
+        )
+        return {
+            **status,
+            **copy_status,
+        }
+
+    def _bootstrap_from_seed_grade_runs(self, cfg: dict[str, Any], paper_id: str, host_submission: Path) -> dict[str, Any]:
+        """Seed a paper from explicit previously graded submissions.
+
+        Competitive configs may include the same-model Codex baseline as a
+        conservative starting point, then the current EvoMaster agent keeps
+        iterating with the same model and the final selector can fall back to
+        the strongest graded candidate per paper.
+        """
+        grade_runs = cfg.get("seed_grade_runs") or []
+        if isinstance(grade_runs, (str, Path)):
+            grade_runs = [grade_runs]
+        if not grade_runs:
+            return {"status": "skipped", "reason": "no_seed_grade_runs"}
+
+        candidates: list[dict[str, Any]] = []
+        for raw_grade_run in grade_runs:
+            grade_run = Path(str(raw_grade_run)).expanduser()
+            if not grade_run.is_absolute():
+                grade_run = (Path.cwd() / grade_run).resolve()
+            manifest = grade_run / "manifest.json"
+            if not manifest.exists():
+                continue
+            try:
+                rows = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict) or str(row.get("paper_id")) != paper_id:
+                    continue
+                source = Path(str(row.get("submission", ""))).expanduser()
+                if not source.is_absolute():
+                    source = (Path.cwd() / source).resolve()
+                score = self._seed_grade_score(grade_run, paper_id)
+                if source.exists() and source.is_dir():
+                    candidates.append(
+                        {
+                            "source": source,
+                            "grade_run": grade_run,
+                            "score": score,
+                            "manifest_row": row,
+                        }
+                    )
+
+        if not candidates:
+            return {"status": "skipped", "reason": "no_seed_candidate"}
+
+        min_score = cfg.get("min_seed_score")
+        if min_score is not None:
+            try:
+                floor = float(min_score)
+            except (TypeError, ValueError):
+                floor = None
+            if floor is not None:
+                candidates = [
+                    candidate
+                    for candidate in candidates
+                    if candidate["score"] is not None and float(candidate["score"]) >= floor
+                ]
+        if not candidates:
+            return {"status": "skipped", "reason": "no_seed_candidate_above_min_score"}
+
+        best = max(candidates, key=lambda item: (-1.0 if item["score"] is None else float(item["score"])))
+        copy_status = self._copy_bootstrap_source(
+            Path(best["source"]),
+            host_submission,
+            overwrite=bool(cfg.get("overwrite_existing", False)),
+            commit=bool(cfg.get("commit", True)),
+            commit_message=str(cfg.get("commit_message", "Bootstrap prior EvoMaster submission")),
+        )
+        return {
+            **copy_status,
+            "seed_grade_run": str(best["grade_run"]),
+            "seed_source": str(best["source"]),
+            "seed_score": best["score"],
+            "seed_manifest_row": best["manifest_row"],
+        }
+
+    @staticmethod
+    def _seed_grade_score(grade_run: Path, paper_id: str) -> float | None:
+        output = grade_run / paper_id / "grader_output.json"
+        if not output.exists():
+            return None
+        try:
+            data = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        judge_output = data.get("judge_output") or {}
+        score = data.get("score", judge_output.get("score"))
+        return float(score) if isinstance(score, (int, float)) else None
+
+    def _copy_bootstrap_source(
+        self,
+        src: Path,
+        host_submission: Path,
+        *,
+        overwrite: bool,
+        commit: bool,
+        commit_message: str,
+    ) -> dict[str, Any]:
         existing_files = [p for p in host_submission.iterdir() if p.name not in {".git"}]
-        overwrite = bool(cfg.get("overwrite_existing", False))
         if existing_files and not overwrite:
-            return {**status, "reason": "submission_not_empty"}
+            return {"status": "skipped", "reason": "submission_not_empty", "source": str(src)}
         if existing_files or (host_submission / ".git").exists():
             shutil.rmtree(host_submission)
             host_submission.mkdir(parents=True, exist_ok=True)
@@ -499,15 +658,16 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             src,
             host_submission,
             dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".mypy_cache", ".git"),
+            ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".git", "*.pyc", "*.pyo"),
         )
 
-        if bool(cfg.get("commit", True)):
-            self._git_bootstrap_commit(host_submission, str(cfg.get("commit_message", "Bootstrap PaperBench reproduction")))
+        if commit:
+            self._git_bootstrap_commit(host_submission, commit_message)
 
         return {
-            **status,
             "status": "applied",
+            "source": str(src),
+            "destination": str(host_submission),
             "files": sum(1 for p in host_submission.rglob("*") if p.is_file() and ".git" not in p.parts),
         }
 
@@ -566,8 +726,302 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             "source repositories with real model/dataset/algorithm/training/evaluation paths, "
             "configs, scripts, tests, and a clean git commit. Low-scoring submissions were mostly "
             "README/config claims, generic scaffolds, toy stand-ins, proxy metrics, and missing "
-            "implementation files. Optimize for implemented leaf coverage, not prose."
+            "implementation files. Optimize for implemented leaf coverage, not prose. In local "
+            "Codex-comparative runs, shallow submissions under roughly a couple thousand nonblank "
+            "lines often lost many hidden leaves; strong runs usually kept extending the repo with "
+            "paper-specific modules and experiment entry points until there were multiple clean "
+            "commits, scripts, configs, and tests."
         )
+
+    def _historical_grade_feedback(self, spec: dict[str, Any]) -> str:
+        cfg = self._cfg().get("historical_feedback", {}) or {}
+        if hasattr(cfg, "model_dump"):
+            cfg = cfg.model_dump()
+        if not cfg:
+            cfg = {}
+
+        enabled = bool(cfg.get("enabled", True))
+        if not enabled:
+            return "(Historical grade feedback disabled.)"
+
+        grade_runs = cfg.get("grade_runs")
+        if not grade_runs:
+            grade_runs = (self._cfg().get("bootstrap", {}) or {}).get("seed_grade_runs") or []
+        if isinstance(grade_runs, (str, Path)):
+            grade_runs = [grade_runs]
+        if not grade_runs:
+            return "(No historical grade feedback configured.)"
+
+        paper_id = str(spec.get("paper_id") or "").strip()
+        outputs: list[dict[str, Any]] = []
+        for raw_grade_run in grade_runs:
+            grade_run = Path(str(raw_grade_run)).expanduser()
+            if not grade_run.is_absolute():
+                grade_run = (Path.cwd() / grade_run).resolve()
+            output = grade_run / paper_id / "grader_output.json"
+            if not output.exists():
+                continue
+            try:
+                data = json.loads(output.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            judge_output = data.get("judge_output") or {}
+            score = data.get("score", judge_output.get("score"))
+            outputs.append({"grade_run": grade_run, "data": data, "score": score})
+
+        if not outputs:
+            return "(No historical grade feedback found for this paper.)"
+
+        # Use the strongest prior EvoMaster attempt for this paper. Its failed
+        # leaves are the most useful deltas over the warm-start repository.
+        best = max(
+            outputs,
+            key=lambda row: float(row["score"]) if isinstance(row.get("score"), (int, float)) else -1.0,
+        )
+        leaves = self._failed_grade_leaves(best["data"])
+        if not leaves:
+            return f"Historical EvoMaster CRS feedback: previous score {best.get('score')} from {best['grade_run'].name}; no failed leaves were extracted."
+
+        max_leaves = int(cfg.get("max_failed_leaves", 18) or 18)
+        max_chars = int(cfg.get("max_chars", 12000) or 12000)
+        lines = [
+            "Historical EvoMaster CRS feedback from a previous clean-room submission.",
+            f"Source grade run: {best['grade_run']}",
+            f"Previous score for this paper: {best.get('score')}",
+            "Use this as a prioritized fix list: implement real source code for these missing/partial leaves; do not just mention them in README.",
+            "",
+        ]
+        for idx, leaf in enumerate(leaves[:max_leaves], start=1):
+            req = self._compact_text(str(leaf.get("requirements") or ""), 420)
+            explanation = self._compact_text(str(leaf.get("explanation") or ""), 900)
+            lines.append(
+                f"{idx}. weight={leaf.get('weight')} prior_score={leaf.get('score')}: {req}\n"
+                f"   Judge gap: {explanation}"
+            )
+        text = "\n".join(lines).strip()
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "\n[historical feedback truncated]"
+        return text
+
+    def _combined_grade_feedback(self, spec: dict[str, Any]) -> str:
+        parts = [self._historical_grade_feedback(spec)]
+        codex_gap = self._codex_gap_feedback(spec)
+        if codex_gap and not codex_gap.startswith("(Codex gap feedback disabled"):
+            parts.extend(["", codex_gap])
+        return "\n".join(parts).strip()
+
+    def _codex_gap_feedback(self, spec: dict[str, Any]) -> str:
+        """Return leaf-level gaps against a local Codex gpt-5.4 baseline.
+
+        This does not copy Codex submissions. It only converts already-generated
+        judge feedback into a prioritized checklist of leaves that local Codex
+        passed and the strongest prior EvoMaster attempt missed. The intent is
+        to focus continuation rounds on the exact deltas needed to beat the
+        same-model Codex baseline.
+        """
+        cfg = self._cfg().get("codex_gap_feedback", {}) or {}
+        if hasattr(cfg, "model_dump"):
+            cfg = cfg.model_dump()
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return "(Codex gap feedback disabled.)"
+
+        paper_id = str(spec.get("paper_id") or "").strip()
+        if not paper_id:
+            return "(Codex gap feedback unavailable: missing paper_id.)"
+
+        codex_grade_run_raw = cfg.get("codex_grade_run") or cfg.get("grade_run")
+        if not codex_grade_run_raw:
+            return "(Codex gap feedback unavailable: no codex_grade_run configured.)"
+        codex_grade_run = self._resolve_run_path(codex_grade_run_raw)
+        codex_data = self._read_grader_output(codex_grade_run, paper_id)
+        if not codex_data:
+            return f"(Codex gap feedback unavailable: no grader_output for {paper_id} in {codex_grade_run}.)"
+
+        evo_runs = cfg.get("evomaster_grade_runs") or cfg.get("baseline_grade_runs")
+        if not evo_runs:
+            evo_runs = (self._cfg().get("historical_feedback", {}) or {}).get("grade_runs")
+        if not evo_runs:
+            evo_runs = (self._cfg().get("bootstrap", {}) or {}).get("seed_grade_runs") or []
+        if isinstance(evo_runs, (str, Path)):
+            evo_runs = [evo_runs]
+
+        evo_candidates: list[dict[str, Any]] = []
+        for raw_run in evo_runs:
+            run = self._resolve_run_path(raw_run)
+            data = self._read_grader_output(run, paper_id)
+            if not data:
+                continue
+            evo_candidates.append({"grade_run": run, "data": data, "score": self._grade_score_from_output(data)})
+        if not evo_candidates:
+            return "(Codex gap feedback unavailable: no prior EvoMaster grader output found.)"
+
+        evo_best = max(
+            evo_candidates,
+            key=lambda row: float(row["score"]) if isinstance(row.get("score"), (int, float)) else -1.0,
+        )
+        codex_score = self._grade_score_from_output(codex_data)
+        evo_score = evo_best.get("score")
+
+        min_paper_gap = float(cfg.get("min_paper_gap", 0.005) or 0.0)
+        if bool(cfg.get("only_when_codex_ahead", True)):
+            if not isinstance(codex_score, (int, float)) or not isinstance(evo_score, (int, float)):
+                return "(Codex gap feedback unavailable: missing numeric scores.)"
+            if float(codex_score) <= float(evo_score) + min_paper_gap:
+                return (
+                    f"Local Codex gpt-5.4 baseline score {codex_score:.4f} is not ahead of "
+                    f"the strongest prior EvoMaster score {evo_score:.4f}; prioritize historical EvoMaster gaps instead."
+                )
+
+        codex_leaves = self._all_grade_leaves(codex_data)
+        evo_leaves = self._all_grade_leaves(evo_best["data"])
+        codex_by_key = {self._leaf_key(leaf): leaf for leaf in codex_leaves if self._leaf_key(leaf)}
+        evo_by_key = {self._leaf_key(leaf): leaf for leaf in evo_leaves if self._leaf_key(leaf)}
+
+        codex_min_leaf_score = float(cfg.get("codex_min_leaf_score", 0.999) or 0.999)
+        min_leaf_delta = float(cfg.get("min_leaf_delta", 0.25) or 0.0)
+        gaps: list[dict[str, Any]] = []
+        for key, evo_leaf in evo_by_key.items():
+            codex_leaf = codex_by_key.get(key)
+            if not codex_leaf:
+                continue
+            evo_leaf_score = self._safe_float(evo_leaf.get("score"), default=0.0)
+            codex_leaf_score = self._safe_float(codex_leaf.get("score"), default=0.0)
+            delta = codex_leaf_score - evo_leaf_score
+            if codex_leaf_score < codex_min_leaf_score or delta < min_leaf_delta:
+                continue
+            weight = self._safe_float(evo_leaf.get("weight", codex_leaf.get("weight", 1)), default=1.0)
+            gaps.append(
+                {
+                    "requirements": evo_leaf.get("requirements") or codex_leaf.get("requirements"),
+                    "weight": weight,
+                    "evo_score": evo_leaf_score,
+                    "codex_score": codex_leaf_score,
+                    "deficit": max(0.0, delta) * weight,
+                    "explanation": evo_leaf.get("explanation")
+                    or ((evo_leaf.get("judge_metadata") or {}).get("full_judge_response") if isinstance(evo_leaf.get("judge_metadata"), dict) else ""),
+                }
+            )
+
+        if not gaps:
+            return (
+                f"Local Codex gpt-5.4 score {codex_score}; strongest prior EvoMaster score {evo_score}. "
+                "No matched leaves where Codex clearly passed and EvoMaster missed were extracted."
+            )
+
+        gaps.sort(key=lambda item: (float(item.get("deficit") or 0.0), float(item.get("weight") or 0.0)), reverse=True)
+        max_leaves = int(cfg.get("max_gap_leaves", 20) or 20)
+        max_chars = int(cfg.get("max_chars", 10000) or 10000)
+        lines = [
+            "Local same-model Codex gpt-5.4 comparison feedback.",
+            f"Codex grade run: {codex_grade_run}",
+            f"Strongest prior EvoMaster grade run: {evo_best['grade_run']}",
+            f"Scores: Codex={codex_score}, prior EvoMaster={evo_score}",
+            "These are leaves Codex passed but prior EvoMaster missed. Implement source code for these gaps to close the same-model baseline delta; if a competitive bootstrap already seeded Codex files, preserve useful working code and improve it rather than making README-only claims.",
+            "",
+        ]
+        for idx, leaf in enumerate(gaps[:max_leaves], start=1):
+            req = self._compact_text(str(leaf.get("requirements") or ""), 420)
+            explanation = self._compact_text(str(leaf.get("explanation") or ""), 780)
+            lines.append(
+                f"{idx}. weight={leaf.get('weight')} evo_score={leaf.get('evo_score')} codex_score={leaf.get('codex_score')}: {req}\n"
+                f"   Prior EvoMaster judge gap: {explanation}"
+            )
+        text = "\n".join(lines).strip()
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "\n[codex gap feedback truncated]"
+        return text
+
+    @classmethod
+    def _failed_grade_leaves(cls, grader_output: dict[str, Any]) -> list[dict[str, Any]]:
+        leaves = []
+        for node in cls._all_grade_leaves(grader_output):
+            score = node.get("score")
+            weight = node.get("weight", 1)
+            if not isinstance(score, (int, float)) or float(score) >= 0.999:
+                continue
+            if not node.get("requirements"):
+                continue
+            try:
+                deficit = max(0.0, 1.0 - float(score)) * float(weight or 1)
+            except (TypeError, ValueError):
+                deficit = 0.0
+            leaves.append(
+                {
+                    "id": node.get("id"),
+                    "requirements": node.get("requirements"),
+                    "weight": weight,
+                    "score": score,
+                    "deficit": deficit,
+                    "explanation": node.get("explanation")
+                    or ((node.get("judge_metadata") or {}).get("full_judge_response") if isinstance(node.get("judge_metadata"), dict) else ""),
+                }
+            )
+        return sorted(leaves, key=lambda item: (float(item.get("deficit") or 0.0), float(item.get("weight") or 0.0)), reverse=True)
+
+    @classmethod
+    def _all_grade_leaves(cls, grader_output: dict[str, Any]) -> list[dict[str, Any]]:
+        judge_output = grader_output.get("judge_output") or {}
+        tree = judge_output.get("graded_task_tree") or {}
+        leaves: list[dict[str, Any]] = []
+
+        def visit(node: dict[str, Any]) -> None:
+            children = node.get("sub_tasks") or node.get("children") or []
+            if children:
+                for child in children:
+                    if isinstance(child, dict):
+                        visit(child)
+                return
+            leaves.append(node)
+
+        if isinstance(tree, dict):
+            visit(tree)
+        return leaves
+
+    @staticmethod
+    def _leaf_key(leaf: dict[str, Any]) -> str:
+        raw_id = str(leaf.get("id") or "").strip()
+        if raw_id:
+            return f"id:{raw_id}"
+        req = re.sub(r"\s+", " ", str(leaf.get("requirements") or "")).strip().lower()
+        return f"req:{req}" if req else ""
+
+    @staticmethod
+    def _safe_float(value: Any, *, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _resolve_run_path(path: Any) -> Path:
+        run = Path(str(path)).expanduser()
+        if not run.is_absolute():
+            run = (Path.cwd() / run).resolve()
+        return run
+
+    @staticmethod
+    def _read_grader_output(grade_run: Path, paper_id: str) -> dict[str, Any] | None:
+        output = grade_run / paper_id / "grader_output.json"
+        if not output.exists():
+            return None
+        try:
+            data = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
+    def _grade_score_from_output(data: dict[str, Any]) -> float | None:
+        judge_output = data.get("judge_output") or {}
+        score = data.get("score", judge_output.get("score"))
+        return float(score) if isinstance(score, (int, float)) else None
+
+    @staticmethod
+    def _compact_text(text: str, max_chars: int) -> str:
+        text = re.sub(r"\s+", " ", text or "").strip()
+        if len(text) <= max_chars:
+            return text
+        return text[: max(0, max_chars - 3)].rstrip() + "..."
 
     def _iteration_enabled(self, spec: dict[str, Any]) -> bool:
         if spec.get("iteration_enabled") is not None:
@@ -598,6 +1052,8 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             runtime_budget_seconds=int(self._cfg().get("max_runtime_seconds", 0) or 0),
             last_audit=json.dumps(last_record.get("audit", {}), indent=2, ensure_ascii=False)[-12000:],
             last_grade=json.dumps(last_record.get("grade_status", {}), indent=2, ensure_ascii=False)[-12000:],
+            historical_grade_feedback=self._combined_grade_feedback(spec),
+            codex_gap_feedback=self._codex_gap_feedback(spec),
         )
 
     def _run_iteration_rounds(
@@ -622,9 +1078,14 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             if deadline is not None and elapsed >= deadline - start_time:
                 break
 
-            if round_index >= min_rounds and self.session.is_file(f"{self._spec.get('workspace', '/workspace')}/artifacts/STOP_ITERATION"):
-                self.logger.info("Stopping Code-Dev iteration: STOP_ITERATION exists.")
-                break
+            stop_path = f"{self._spec.get('workspace', '/workspace')}/artifacts/STOP_ITERATION"
+            if round_index >= min_rounds and self.session.is_file(stop_path):
+                gate = self._quality_gate_status(last_record.get("audit", {}), elapsed, round_index)
+                if gate["passed"]:
+                    self.logger.info("Stopping Code-Dev iteration: STOP_ITERATION exists and quality gate passed.")
+                    break
+                self.logger.info("Ignoring STOP_ITERATION before quality gate passes: %s", gate["missing"])
+                self.session.exec_bash(f"rm -f {shlex.quote(stop_path)}", timeout=20)
 
             before = self._submission_fingerprint()
             prompt = self._iteration_prompt(
@@ -650,8 +1111,17 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             stagnant_rounds = 0 if before != after else stagnant_rounds + 1
             last_record["stagnant_rounds"] = stagnant_rounds
             if round_index >= min_rounds and max_stagnant_rounds > 0 and stagnant_rounds >= max_stagnant_rounds:
-                self.logger.info("Stopping Code-Dev iteration after %s stagnant rounds.", stagnant_rounds)
-                break
+                gate = last_record.get("quality_gate") or self._quality_gate_status(
+                    last_record.get("audit", {}), time.monotonic() - start_time, round_index
+                )
+                if gate["passed"]:
+                    self.logger.info("Stopping Code-Dev iteration after %s stagnant rounds.", stagnant_rounds)
+                    break
+                self.logger.info(
+                    "Continuing despite %s stagnant rounds; quality gate is missing: %s",
+                    stagnant_rounds,
+                    gate["missing"],
+                )
             if trajectory.status not in {"completed", "waiting_for_input"}:
                 break
         return records
@@ -676,16 +1146,93 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         artifact = self._finalize_submission_artifact(self._spec, allow_invalid=True)
         audit = self._audit_submission_host(round_index=round_index)
         grade_status = self._run_optional_grade(self._spec) if self._iteration_cfg().get("grade_each_round", False) else None
+        grade_score = self._extract_grade_score(grade_status)
         record = {
             "round": round_index,
             "elapsed_seconds": round(elapsed_seconds, 3),
             "artifact": artifact,
             "audit": audit,
             "grade_status": grade_status,
+            "grade_score": grade_score,
+            "quality_gate": self._quality_gate_status(audit, elapsed_seconds, round_index),
         }
         self._write_round_record(round_index, record)
         self._snapshot_round(round_index)
         return record
+
+    def _quality_gate_status(self, audit: dict[str, Any], elapsed_seconds: float, round_index: int) -> dict[str, Any]:
+        cfg = self._iteration_cfg().get("quality_gate", {}) or {}
+        if hasattr(cfg, "model_dump"):
+            cfg = cfg.model_dump()
+        if not cfg or not bool(cfg.get("enabled", False)):
+            return {"enabled": False, "passed": True, "missing": []}
+
+        counts = audit.get("counts", {}) or {}
+        checks = {
+            "min_round": (round_index, int(cfg.get("min_round", 0) or 0)),
+            "min_elapsed_seconds": (int(elapsed_seconds), int(cfg.get("min_elapsed_seconds", 0) or 0)),
+            "min_tracked_files": (int(counts.get("tracked_files", 0) or 0), int(cfg.get("min_tracked_files", 0) or 0)),
+            "min_python_files": (int(counts.get("python_files", 0) or 0), int(cfg.get("min_python_files", 0) or 0)),
+            "min_script_files": (int(counts.get("script_files", 0) or 0), int(cfg.get("min_script_files", 0) or 0)),
+            "min_test_files": (int(counts.get("test_files", 0) or 0), int(cfg.get("min_test_files", 0) or 0)),
+            "min_config_files": (int(counts.get("config_files", 0) or 0), int(cfg.get("min_config_files", 0) or 0)),
+            "min_nonblank_lines": (int(counts.get("nonblank_lines", 0) or 0), int(cfg.get("min_nonblank_lines", 0) or 0)),
+            "min_git_commits": (int(counts.get("git_commits", 0) or 0), int(cfg.get("min_git_commits", 0) or 0)),
+        }
+        missing = [
+            f"{name}={actual}<{required}"
+            for name, (actual, required) in checks.items()
+            if required > 0 and actual < required
+        ]
+        if cfg.get("require_clean_git", True) and str(audit.get("git_status") or "").strip():
+            missing.append("git_status=dirty")
+        if cfg.get("require_audit_ok", True) and not bool(audit.get("ok", False)):
+            missing.append("audit_ok=false")
+        return {
+            "enabled": True,
+            "passed": not missing,
+            "missing": missing,
+            "counts": counts,
+            "round": round_index,
+            "elapsed_seconds": round(elapsed_seconds, 3),
+        }
+
+    @staticmethod
+    def _extract_grade_score(grade_status: dict[str, Any] | None) -> float | None:
+        if not grade_status or grade_status.get("status") != "completed":
+            return None
+        if isinstance(grade_status.get("score"), (int, float)):
+            return max(0.0, min(1.0, float(grade_status["score"])))
+        output = str(grade_status.get("output") or "")
+        matches = re.findall(r'"score"\s*:\s*([01](?:\.\d+)?)', output)
+        if not matches:
+            matches = re.findall(r"\bscore['\"]?\s*[:=]\s*([01](?:\.\d+)?)", output, flags=re.IGNORECASE)
+        if not matches:
+            return None
+        with contextlib.suppress(ValueError):
+            return max(0.0, min(1.0, float(matches[-1])))
+        return None
+
+    def _restore_best_graded_round(self, records: list[dict[str, Any]]) -> dict[str, Any] | None:
+        scored = [
+            record
+            for record in records
+            if isinstance(record.get("grade_score"), (int, float))
+        ]
+        if not scored:
+            return {"status": "skipped", "reason": "no_graded_rounds"}
+
+        best = max(scored, key=lambda record: (float(record["grade_score"]), int(record.get("round", -1))))
+        best_round = int(best.get("round", -1))
+        snapshot = Path(self._host_workspace_path()) / "iterations" / f"round_{best_round:02d}" / "submission"
+        if not snapshot.exists():
+            return {"status": "failed", "reason": "best_snapshot_missing", "round": best_round}
+
+        dst = self._host_submission_path()
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(snapshot, dst, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"))
+        return {"status": "restored", "round": best_round, "score": float(best["grade_score"]), "snapshot": str(snapshot)}
 
     def _finalize_submission_artifact(self, spec: dict[str, Any], *, allow_invalid: bool = False) -> dict[str, Any]:
         submission_dir = str(spec.get("submission_dir", "/home/submission"))
@@ -693,12 +1240,18 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         status: dict[str, Any] = {"submission_dir": submission_dir, "tar_path": tar_path}
 
         if self.session is None or not getattr(self.session, "is_open", False):
-            return {**status, "ok": False, "error": "session_not_open"}
+            return self._finalize_submission_artifact_host(
+                spec,
+                allow_invalid=allow_invalid,
+                base_status={**status, "session_open": False},
+            )
 
         if self.session.is_directory(submission_dir):
             self.session.exec_bash(
                 f"git config --global --add safe.directory {shlex.quote(submission_dir)} && "
                 f"cd {shlex.quote(submission_dir)} && "
+                "find . -type d \\( -name __pycache__ -o -name .pytest_cache -o -name .mypy_cache -o -name .ruff_cache \\) -prune -exec rm -rf {} + && "
+                "find . -type f \\( -name '*.pyc' -o -name '*.pyo' \\) -delete && "
                 "if [ ! -d .git ]; then git init; fi && "
                 "git add -A && "
                 "(git diff --cached --quiet || git commit -m 'PaperBench Code-Dev submission') && "
@@ -731,7 +1284,84 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         status.update({"ok": bool(ok and (valid or allow_invalid)), "package_exit_code": packaged.get("exit_code")})
         if not ok:
             status["error"] = (packaged.get("output") or "")[-2000:]
+        host_status = self._finalize_submission_artifact_host(spec, allow_invalid=allow_invalid, base_status=status)
+        if host_status.get("ok") or not status.get("ok"):
+            return host_status
         return status
+
+    def _finalize_submission_artifact_host(
+        self,
+        spec: dict[str, Any],
+        *,
+        allow_invalid: bool = False,
+        base_status: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        repo = self._host_submission_path()
+        tar_path = self._host_artifact_path(spec)
+        status: dict[str, Any] = dict(base_status or {})
+        status.update({"host_submission": str(repo), "host_tar_path": str(tar_path)})
+
+        if not repo.exists() or not repo.is_dir():
+            return {**status, "ok": False, "error": "host_submission_missing"}
+
+        self._clean_submission_cache(repo)
+        with contextlib.suppress(Exception):
+            if not (repo / ".git").exists():
+                subprocess.run(["git", "-C", str(repo), "init"], text=True, capture_output=True, timeout=60, check=False)
+            _run_git(repo, ["config", "core.filemode", "false"], check=False)
+            _run_git(repo, ["config", "user.email", "paperbench-codedev@evomaster.local"], check=False)
+            _run_git(repo, ["config", "user.name", "paperbench-codedev-agent"], check=False)
+            _run_git(repo, ["add", "-A"], check=False)
+            diff = subprocess.run(
+                ["git", "-c", f"safe.directory={repo}", "-C", str(repo), "diff", "--cached", "--quiet"],
+                text=True,
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+            if diff.returncode != 0:
+                _run_git(repo, ["commit", "-m", "PaperBench Code-Dev submission"], check=False)
+
+        valid = repo.is_dir() and (repo / ".git").exists() and (repo / "README.md").is_file()
+        status["host_repo_valid_minimal"] = valid
+        if not valid and not allow_invalid:
+            return {**status, "ok": False, "error": "host_submission_repo_missing_git_or_readme"}
+
+        tar_path.parent.mkdir(parents=True, exist_ok=True)
+        if tar_path.exists():
+            tar_path.unlink()
+        with tarfile.open(tar_path, "w:gz") as tf:
+            tf.add(repo, arcname=repo.name, filter=self._tar_filter)
+        ok = tar_path.exists() and tar_path.stat().st_size > 0 and (valid or allow_invalid)
+        status.update({"ok": bool(ok), "host_package_bytes": tar_path.stat().st_size if tar_path.exists() else 0})
+        return status
+
+    def _host_artifact_path(self, spec: dict[str, Any]) -> Path:
+        workspace = str(spec.get("workspace", "/workspace")).rstrip("/")
+        tar_path = str(spec.get("submission_tar_path", "/workspace/artifacts/submission.tar.gz"))
+        host_workspace = Path(self._host_workspace_path())
+        if tar_path.startswith(workspace + "/"):
+            return host_workspace / tar_path[len(workspace) + 1 :]
+        return host_workspace / "artifacts" / Path(tar_path).name
+
+    @staticmethod
+    def _tar_filter(info: tarfile.TarInfo) -> tarfile.TarInfo | None:
+        parts = Path(info.name).parts
+        if any(part in {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"} for part in parts):
+            return None
+        if info.name.endswith((".pyc", ".pyo")):
+            return None
+        return info
+
+    @staticmethod
+    def _clean_submission_cache(repo: Path) -> None:
+        for path in list(repo.rglob("*")):
+            if path.is_dir() and path.name in {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"}:
+                shutil.rmtree(path, ignore_errors=True)
+        for path in repo.rglob("*"):
+            if path.is_file() and path.suffix in {".pyc", ".pyo"}:
+                with contextlib.suppress(OSError):
+                    path.unlink()
 
     def _audit_submission_host(self, *, round_index: int) -> dict[str, Any]:
         repo = self._host_submission_path()
@@ -754,6 +1384,25 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
 
+    def _write_completion_marker(self, result: dict[str, Any]) -> None:
+        host_workspace = Path(self._host_workspace_path())
+        artifacts = host_workspace / "artifacts"
+        artifacts.mkdir(parents=True, exist_ok=True)
+        marker = {
+            "paper_id": self._spec.get("paper_id"),
+            "status": result.get("status"),
+            "deadline_reached": result.get("deadline_reached"),
+            "external_termination": result.get("external_termination"),
+            "artifact_status": result.get("artifact_status"),
+            "grade_status": result.get("grade_status"),
+            "best_round_status": result.get("best_round_status"),
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        (artifacts / "EVOMASTER_COMPLETE.json").write_text(
+            json.dumps(marker, indent=2, ensure_ascii=False, default=str) + "\n",
+            encoding="utf-8",
+        )
+
     def _snapshot_round(self, round_index: int) -> None:
         if not bool(self._iteration_cfg().get("snapshot_each_round", True)):
             return
@@ -764,7 +1413,7 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         if dst.exists():
             shutil.rmtree(dst)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache"))
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache"))
 
     def _run_optional_grade(self, spec: dict[str, Any], *, deadline: float | None = None) -> dict[str, Any] | None:
         cfg = self._cfg()
@@ -806,11 +1455,13 @@ class PaperBenchCodeDevPlayground(BasePlayground):
             out = (exc.stdout or "") + (exc.stderr or "")
             return {"status": "failed", "exit_code": -1, "error": "grade_timeout", "output": out[-20000:]}
         out = (proc.stdout or "") + (proc.stderr or "")
-        return {
+        result = {
             "status": "completed" if proc.returncode == 0 else "failed",
             "exit_code": proc.returncode,
             "output": out[-20000:],
         }
+        result["score"] = self._extract_grade_score(result)
+        return result
 
     def _host_workspace_path(self) -> str:
         if self.run_dir is None:

@@ -15,6 +15,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--paperbench-root", type=Path, default=DEFAULT_ROOT)
     parser.add_argument("--split", default="debug", help="PaperBench split name, e.g. debug/dev/all.")
+    parser.add_argument("--paper-id", action="append", default=[], help="Explicit paper id to include; can be repeated. Overrides --split.")
+    parser.add_argument("--papers-file", type=Path, help="File with one paper id per line. Combined with --paper-id and overrides --split.")
     parser.add_argument("--output", type=Path, required=True, help="Output task JSON path.")
     parser.add_argument("--resource-cycle", type=int, default=0, help="If >0, assign resource_index modulo this value.")
     return parser.parse_args()
@@ -22,11 +24,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    split_path = args.paperbench_root / "experiments" / "splits" / f"{args.split}.txt"
-    if not split_path.exists():
-        raise FileNotFoundError(split_path)
-
-    paper_ids = [line.strip() for line in split_path.read_text().splitlines() if line.strip()]
+    paper_ids = list(args.paper_id or [])
+    if args.papers_file:
+        if not args.papers_file.exists():
+            raise FileNotFoundError(args.papers_file)
+        paper_ids.extend(line.strip() for line in args.papers_file.read_text().splitlines() if line.strip())
+    if not paper_ids:
+        split_path = args.paperbench_root / "experiments" / "splits" / f"{args.split}.txt"
+        if not split_path.exists():
+            raise FileNotFoundError(split_path)
+        paper_ids = [line.strip() for line in split_path.read_text().splitlines() if line.strip()]
+    paper_ids = list(dict.fromkeys(paper_ids))
     tasks = []
     for idx, paper_id in enumerate(paper_ids):
         paper_dir = args.paperbench_root / "data" / "papers" / paper_id
@@ -54,4 +62,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

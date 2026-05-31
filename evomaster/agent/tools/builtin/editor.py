@@ -46,7 +46,7 @@ class EditorToolParams(BaseToolParams):
     
     * State is persistent across command calls and discussions with the user
     * If `path` is a text file, `view` displays the result of applying `cat -n`. If `path` is a directory, `view` lists non-hidden files and directories up to 2 levels deep
-    * The `create` command cannot be used if the specified `path` already exists as a file
+    * The `create` command creates new files and may replace an existing regular file after saving undo history
     * If a `command` generates a long output, it will be truncated and marked with `<response clipped>`
     * The `undo_edit` command will revert the last edit made to the file at `path`
 
@@ -96,7 +96,7 @@ class EditorToolParams(BaseToolParams):
     )
     view_range: list[int] = Field(
         default_factory=list,
-        description="Optional parameter of `view` command when `path` points to a file. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start.",
+        description="Optional parameter of `view` command when `path` points to a file. If provided, the file will be shown in the indicated line number range, e.g. [11, 12] will show lines 11 and 12. Indexing at 1 to start. Use -1 as the end to read through EOF; overly large end lines are clamped to EOF.",
     )
 
 
@@ -174,14 +174,14 @@ class EditorTool(BaseTool):
         
         # For the create command, stricter checks are needed
         if command == "create":
-            # Confirm once more that the path does not exist (prevent false positives)
-            if session.is_file(path):
-                raise ToolParameterError("path", path, f"File already exists at: {path}. Cannot overwrite files using command `create`.")
             if session.is_directory(path):
                 raise ToolParameterError("path", path, f"The path {path} is a directory. Cannot create a file with the same name as a directory.")
             if session.path_exists(path):
-                # Path exists but is neither a file nor a directory; might be some other type (e.g. symlink)
-                raise ToolParameterError("path", path, f"Path already exists at: {path}. Cannot overwrite using command `create`.")
+                # Existing regular files are intentionally replaceable because
+                # coding agents often emit a complete file via `create` after
+                # seeing stale starter content. Other special paths stay unsafe.
+                if not session.is_file(path):
+                    raise ToolParameterError("path", path, f"Path already exists at: {path}. Cannot overwrite using command `create`.")
         
         if path_type == "dir" and command != "view":
             raise ToolParameterError("path", path, f"The path {path} is a directory and only the `view` command can be used on directories.")
@@ -227,7 +227,7 @@ class EditorTool(BaseTool):
                 if end < start:
                     raise ToolParameterError("view_range", view_range, f"End line {end} should be >= start line {start}.")
                 if end > n_lines:
-                    raise ToolParameterError("view_range", view_range, f"End line {end} exceeds file length {n_lines}.")
+                    end = n_lines
             
             if end == -1:
                 content = "\n".join(lines[start - 1:])
@@ -239,9 +239,15 @@ class EditorTool(BaseTool):
 
     def _create(self, session: BaseSession, path: str, file_text: str) -> tuple[str, dict[str, Any]]:
         """Create a file."""
+        replaced = False
+        if session.is_file(path):
+            old_content = session.read_file(path)
+            self._file_history.setdefault(path, []).append((old_content, "utf-8"))
+            replaced = True
         session.write_file(path, file_text)
-        self._file_history[path] = [(file_text, "utf-8")]
-        return f"File created successfully at: {path}", {}
+        self._file_history.setdefault(path, []).append((file_text, "utf-8"))
+        action = "replaced" if replaced else "created"
+        return f"File {action} successfully at: {path}", {"replaced": replaced}
 
     def _str_replace(
         self,
@@ -359,4 +365,3 @@ class EditorTool(BaseTool):
             for i, line in enumerate(content.split("\n"))
         ]
         return f"Here's the result of running `cat -n` on {descriptor}:\n" + "\n".join(numbered_lines) + "\n"
-

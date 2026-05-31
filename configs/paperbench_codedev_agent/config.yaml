@@ -10,21 +10,58 @@ paperbench_codedev:
     enabled: true
     template: auto
     templates_dir: playground/paperbench_codedev_agent/bootstrap_templates
+    seed_grade_runs:
+      - runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z
+      - runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z
+    min_seed_score: 0.0
     overwrite_existing: false
     commit: true
   paper_excerpt_chars: 12000
   addendum_excerpt_chars: 6000
+  historical_feedback:
+    enabled: true
+    grade_runs:
+      - runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z
+      - runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z
+    max_failed_leaves: 12
+    max_chars: 9000
+  codex_gap_feedback:
+    enabled: true
+    codex_grade_run: runs/codex4paperbench/codex_gpt54_regen_regrade_crs_gpt55_responses_medium_c4x40_20260527T071410Z
+    evomaster_grade_runs:
+      - runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z
+      - runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z
+    only_when_codex_ahead: true
+    min_paper_gap: 0.005
+    codex_min_leaf_score: 0.999
+    min_leaf_delta: 0.25
+    max_gap_leaves: 18
+    max_chars: 10000
   max_runtime_seconds: 43200
   grade_command: ''
   grade_timeout: 7200
   iteration:
     enabled: true
-    max_rounds: 8
-    min_rounds: 2
-    max_stagnant_rounds: 2
+    max_rounds: 12
+    min_rounds: 4
+    max_stagnant_rounds: 4
     snapshot_each_round: true
     prompt_file: prompts/iteration_prompt.txt
     grade_each_round: false
+    select_best_graded_round: false
+    quality_gate:
+      enabled: true
+      min_round: 4
+      min_elapsed_seconds: 3600
+      min_tracked_files: 30
+      min_python_files: 16
+      min_script_files: 2
+      min_test_files: 1
+      min_config_files: 1
+      min_nonblank_lines: 1800
+      min_git_commits: 3
+      require_clean_git: true
+      require_audit_ok: true
 llm:
   openai:
     provider: openai

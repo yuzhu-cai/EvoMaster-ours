@@ -27,6 +27,7 @@ def parse_args():
     p.add_argument('--context-window', type=int, default=272000)
     p.add_argument('--max-output-tokens', type=int, default=4096)
     p.add_argument('--openai-timeout', type=float, default=240)
+    p.add_argument('--force', action='store_true', help='Regrade papers even when grader_output.json already exists.')
     return p.parse_args()
 
 
@@ -37,7 +38,7 @@ async def run_one(sem, args, row):
     out.mkdir(parents=True, exist_ok=True)
     done = out / 'grader_output.json'
     log = out / 'grade.log'
-    if done.exists():
+    if done.exists() and not args.force:
         return {'paper_id': paper, 'status': 'skipped', 'out': str(done)}
     cmd = [
         'conda', 'run', '-n', 'paperbench', 'python', str(GRADE_SCRIPT),
@@ -91,7 +92,35 @@ async def main():
             print(json.dumps(res, ensure_ascii=False), flush=True)
             sf.write(json.dumps(res, ensure_ascii=False) + '\n')
             sf.flush()
+    write_summary(args.grade_run)
     return 0
+
+
+def write_summary(grade_run: Path):
+    rows = []
+    for path in sorted(grade_run.glob('*/grader_output.json')):
+        try:
+            data = json.loads(path.read_text())
+        except Exception as exc:
+            rows.append({'paper_id': path.parent.name, 'error': f'json_parse_failed: {exc}', 'path': str(path)})
+            continue
+        judge_output = data.get('judge_output') or {}
+        rows.append({
+            'paper_id': data.get('paper_id') or path.parent.name,
+            'score': data.get('score', judge_output.get('score')),
+            'num_leaf_nodes': judge_output.get('num_leaf_nodes'),
+            'num_invalid_leaf_nodes': judge_output.get('num_invalid_leaf_nodes'),
+            'path': str(path),
+        })
+    values = [row['score'] for row in rows if isinstance(row.get('score'), (int, float))]
+    summary = {
+        'grade_run': str(grade_run),
+        'n': len(values),
+        'mean_score': sum(values) / len(values) if values else None,
+        'papers': sorted(rows, key=lambda row: str(row.get('paper_id'))),
+    }
+    (grade_run / 'summary.json').write_text(json.dumps(summary, indent=2, ensure_ascii=False) + '\n')
+    return summary
 
 
 if __name__ == '__main__':

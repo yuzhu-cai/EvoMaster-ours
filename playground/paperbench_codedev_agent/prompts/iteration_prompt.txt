@@ -17,6 +17,9 @@ Last static audit:
 Last optional grade status, if enabled:
 {last_grade}
 
+Historical EvoMaster and same-model Codex gap feedback, if available:
+{historical_grade_feedback}
+
 Do not restart from scratch. Read the existing repository, identify the highest-value missing implementation coverage, and make one or more concrete source-code improvements. Good continuation work includes:
 - adding a missing paper algorithm, loss, model component, data loader, metric, or experiment entry point;
 - replacing placeholder or README-only claims with real code;
@@ -24,11 +27,16 @@ Do not restart from scratch. Read the existing repository, identify the highest-
 - improving README mapping so every claimed paper contribution points to files;
 - removing weak language such as toy, placeholder, stand-in, scaffold, or not implemented.
 
+Competitive quality target:
+- Continue adding concrete code until the static audit is comfortably above the configured quality gate.
+- Aim for dense paper-specific coverage comparable to strong Codex baselines: many real Python modules, several scripts/configs/tests, clean commits, and thousands of nonblank source/doc lines where the paper scope warrants it.
+- If optional grade feedback lists failed leaves, prioritize the largest weighted deficits with source implementations, not README-only edits.
+- If same-model Codex gap feedback is present, first close leaves Codex passed and prior EvoMaster missed; those are the measured deltas needed to beat the Codex gpt-5.4 baseline.
+
 Before finish in this round:
 1. Commit changes in {submission_dir}.
 2. Run paperbench_status(action="audit", paper_dir="{paper_mount}", submission_dir="{submission_dir}", workspace="{workspace}", artifact_path="{submission_tar_path}").
 3. Run paperbench_status(action="validate", paper_dir="{paper_mount}", submission_dir="{submission_dir}", workspace="{workspace}", artifact_path="{submission_tar_path}").
-4. If all plausible improvements are exhausted after the minimum rounds, create {workspace}/artifacts/STOP_ITERATION with a short rationale.
+4. Only create {workspace}/artifacts/STOP_ITERATION after the minimum rounds if all plausible improvements are exhausted and the last audit already satisfies the configured quality gate.
 
 Do not call finish immediately just because a tarball exists. This round is for improving hidden Code-Dev leaf coverage.
-

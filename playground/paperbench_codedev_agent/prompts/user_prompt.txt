@@ -26,10 +26,13 @@ Paper excerpt to orient you. This may be truncated; read {paper_mount}/paper.md 
 Addendum excerpt. This may be truncated; read {paper_mount}/addendum.md directly for full details:
 {addendum_excerpt}
 
+Historical EvoMaster and same-model Codex gap feedback, if available:
+{historical_grade_feedback}
+
 Required workflow:
 1. Inspect {paper_mount}/paper.md and {paper_mount}/addendum.md. Start with paperbench_paper(action="summary") and paperbench_paper(action="outline"), then use at most a few targeted paperbench_paper(action="grep"/"section") calls before coding. Do not inspect blacklist.txt.
 2. If a starter repo exists, list it compactly with `find {submission_dir} -path '*/.git' -prune -o -type f -print`; do not dump `.git`.
-3. Identify the main-body contributions and prioritize implementation coverage by importance.
+3. Identify the main-body contributions and prioritize implementation coverage by importance. If Codex gap feedback lists leaves that the same-model Codex baseline passed, treat those as high-priority deltas to implement in source code.
 4. Create or update a real repository at {submission_dir}. Use a package structure, scripts, configs, and tests/smoke checks appropriate for the paper.
 5. Implement paper-specific code paths, not generic templates. Every major paper method/experiment should have corresponding source code.
 6. Run cheap checks such as syntax compilation and unit/smoke tests when feasible.

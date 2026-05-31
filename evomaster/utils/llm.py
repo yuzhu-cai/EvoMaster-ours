@@ -6,7 +6,11 @@ Provides a unified LLM calling interface with support for multiple providers.
 from __future__ import annotations
 
 import base64
+import contextlib
 import logging
+import os
+import random
+import re
 import sys
 import threading
 import time
@@ -524,6 +528,7 @@ class BaseLLM(ABC):
 
         for attempt in range(self.config.max_retries):
             try:
+                self._apply_client_rate_limit()
                 return self._call(messages, tools, **kwargs)
             except Exception as e:
                 last_error = e
@@ -538,6 +543,8 @@ class BaseLLM(ABC):
                 if status and 400 <= status < 500 and status != 429:
                     self.logger.warning("Non-retryable %d error: %s", status, e)
                     raise
+                if status == 429:
+                    self._record_rate_limit_cooldown()
 
                 # Retryable error: normal retry
                 self.logger.warning(
@@ -551,6 +558,94 @@ class BaseLLM(ABC):
 
         # All retries exhausted
         raise RuntimeError(f"LLM call failed after {self.config.max_retries} attempts") from last_error
+
+    def _apply_client_rate_limit(self) -> None:
+        """Optionally serialize LLM calls across worker processes.
+
+        PaperBench batch runs can spawn many Python workers. If each worker
+        sends a 30k-80k token request at once, OpenAI-compatible gateways often
+        return TPM 429s and all workers retry in lock-step. Set
+        EVOMASTER_LLM_MIN_INTERVAL_SECONDS to a positive value to enforce a
+        host-wide minimum interval between calls for the same model/base URL.
+        """
+        try:
+            min_interval = float(os.environ.get("EVOMASTER_LLM_MIN_INTERVAL_SECONDS", "0") or 0)
+        except ValueError:
+            min_interval = 0.0
+        if min_interval <= 0:
+            return
+
+        try:
+            jitter = float(os.environ.get("EVOMASTER_LLM_RATE_LIMIT_JITTER_SECONDS", "0") or 0)
+        except ValueError:
+            jitter = 0.0
+
+        lock_dir = Path(os.environ.get("EVOMASTER_LLM_RATE_LIMIT_DIR", "/tmp/evomaster_llm_rate_limits"))
+        key_raw = os.environ.get("EVOMASTER_LLM_RATE_LIMIT_KEY") or f"{self.config.base_url or 'default'}::{self.config.model}"
+        key = re.sub(r"[^A-Za-z0-9_.-]+", "_", key_raw).strip("._") or "default"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / f"{key}.lock"
+        stamp_path = lock_dir / f"{key}.last"
+
+        try:
+            import fcntl
+        except ImportError:
+            if jitter > 0:
+                time.sleep(random.uniform(0, jitter))
+            return
+
+        with lock_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                last = 0.0
+                with contextlib.suppress(OSError, ValueError):
+                    last = float(stamp_path.read_text(encoding="utf-8").strip() or 0)
+                wait = min_interval - (time.monotonic() - last)
+                if wait > 0:
+                    time.sleep(wait)
+                if jitter > 0:
+                    time.sleep(random.uniform(0, jitter))
+                stamp_path.write_text(str(time.monotonic()), encoding="utf-8")
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _record_rate_limit_cooldown(self) -> None:
+        """Push the shared rate-limit stamp into the future after a 429.
+
+        A fixed inter-request interval prevents most bursts, but PaperBench
+        prompts can grow to tens of thousands of tokens. When the gateway still
+        returns TPM throttling, this host-wide cooldown keeps parallel workers
+        from retrying in lock-step.
+        """
+        try:
+            cooldown = float(os.environ.get("EVOMASTER_LLM_429_COOLDOWN_SECONDS", "0") or 0)
+        except ValueError:
+            cooldown = 0.0
+        if cooldown <= 0:
+            return
+
+        lock_dir = Path(os.environ.get("EVOMASTER_LLM_RATE_LIMIT_DIR", "/tmp/evomaster_llm_rate_limits"))
+        key_raw = os.environ.get("EVOMASTER_LLM_RATE_LIMIT_KEY") or f"{self.config.base_url or 'default'}::{self.config.model}"
+        key = re.sub(r"[^A-Za-z0-9_.-]+", "_", key_raw).strip("._") or "default"
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        lock_path = lock_dir / f"{key}.lock"
+        stamp_path = lock_dir / f"{key}.last"
+
+        try:
+            import fcntl
+        except ImportError:
+            time.sleep(cooldown)
+            return
+
+        with lock_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                current = 0.0
+                with contextlib.suppress(OSError, ValueError):
+                    current = float(stamp_path.read_text(encoding="utf-8").strip() or 0)
+                stamp_path.write_text(str(max(current, time.monotonic() + cooldown)), encoding="utf-8")
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
     def _is_context_overflow_error(error: Exception) -> bool:

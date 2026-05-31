@@ -1,3 +1,4 @@
+# High-budget PaperBench Code-Dev config intended for Codex-comparative gpt-5.4 runs.
 paperbench_codedev:
   paperbench_root: /data/yuzhu/Devs/third_party/frontier-evals/project/paperbench
   workspace: /workspace
@@ -11,6 +12,7 @@ paperbench_codedev:
     template: auto
     templates_dir: playground/paperbench_codedev_agent/bootstrap_templates
     seed_grade_runs:
+      - runs/codex4paperbench/codex_gpt54_regen_regrade_crs_gpt55_responses_medium_c4x40_20260527T071410Z
       - runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z
       - runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z
     min_seed_score: 0.0
@@ -42,24 +44,24 @@ paperbench_codedev:
   grade_timeout: 7200
   iteration:
     enabled: true
-    max_rounds: 24
-    min_rounds: 8
-    max_stagnant_rounds: 6
+    max_rounds: 32
+    min_rounds: 10
+    max_stagnant_rounds: 8
     snapshot_each_round: true
     prompt_file: prompts/iteration_prompt.txt
     grade_each_round: false
     select_best_graded_round: false
     quality_gate:
       enabled: true
-      min_round: 8
-      min_elapsed_seconds: 7200
-      min_tracked_files: 45
-      min_python_files: 24
-      min_script_files: 3
-      min_test_files: 2
+      min_round: 10
+      min_elapsed_seconds: 10800
+      min_tracked_files: 55
+      min_python_files: 30
+      min_script_files: 4
+      min_test_files: 4
       min_config_files: 1
-      min_nonblank_lines: 2600
-      min_git_commits: 5
+      min_nonblank_lines: 3200
+      min_git_commits: 7
       require_clean_git: true
       require_audit_ok: true
 llm:
@@ -68,7 +70,7 @@ llm:
     model: ${GPT_CHAT_MODEL}
     api_key: ${OPENAI_API_KEY}
     base_url: ${GPT_BASE_URL}
-    temperature: 0.25
+    temperature: 0.2
     max_tokens: 8192
     max_tokens_param: max_completion_tokens
     reasoning_effort: medium
@@ -79,7 +81,7 @@ llm:
 agents:
   codedev:
     llm: openai
-    max_turns: 220
+    max_turns: 260
     tools:
       builtin:
       - execute_bash

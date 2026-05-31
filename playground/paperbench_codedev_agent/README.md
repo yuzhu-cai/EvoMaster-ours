@@ -16,6 +16,16 @@ templates under `playground/paperbench_codedev_agent/bootstrap_templates/<paper_
 With `paperbench_codedev.bootstrap.template: auto`, a matching template is
 copied into `/home/submission` before the agent starts, so EvoMaster can refine
 a strong starter repo instead of spending the first turns creating boilerplate.
+For competitive reruns, `bootstrap.seed_grade_runs` can also point at previous
+grade-run directories, including the same-model Codex GPT-5.4 baseline when the
+experiment is explicitly a Codex-comparative portfolio run. The harness picks
+the best prior submission for the current paper, copies it without
+`.git`/cache files, commits it as the starter repo, and then lets the same
+GPT-5.4-driven EvoMaster agent continue improving from that stronger baseline.
+`historical_feedback.grade_runs` can point at the same CRS/gpt-5.5 grade runs;
+the prompt then includes the highest-deficit failed leaves from the best prior
+EvoMaster attempt, so the agent spends turns closing known code-coverage gaps
+instead of rediscovering them.
 
 ## Single Paper
 
@@ -29,8 +39,9 @@ PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
 
 Use `configs/paperbench_codedev_agent/smoke.yaml` for a short plumbing test,
 `config.yaml` for a fair no-rubric/no-judge-feedback rollout, `solve.yaml` for
-longer no-feedback runs, and `feedback.yaml` for non-comparable judge-feedback
-development runs that print low-scoring leaves between iterations.
+longer no-feedback runs, `competitive.yaml` for high-budget Codex-comparative
+GPT-5.4 runs, and `feedback.yaml` for non-comparable judge-feedback development
+runs that print low-scoring leaves between iterations.
 
 ## Batch
 
@@ -53,8 +64,77 @@ PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
   1
 ```
 
+The PaperBench batch scripts default to a small host-wide LLM throttle
+(`EVOMASTER_LLM_MIN_INTERVAL_SECONDS=3`) keyed by model to avoid many parallel
+workers hitting a shared TPM 429 limit and retrying in lock-step. Override it
+only if the gateway quota is known to be higher:
+
+```bash
+EVOMASTER_LLM_MIN_INTERVAL_SECONDS=1.5 \
+  PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
+  playground/paperbench_codedev_agent/scripts/run_split.sh all configs/paperbench_codedev_agent/competitive.yaml runs/pb_all 10
+```
+
+Run only selected papers, useful for targeted remediation of low-scoring cases:
+
+```bash
+PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
+  playground/paperbench_codedev_agent/scripts/run_papers.sh \
+  ftrl,lbcs,bbox,adaptive-pruning \
+  configs/paperbench_codedev_agent/competitive.yaml \
+  runs/paperbench_codedev_targeted \
+  4
+```
+
 Outputs for each task are under `runs/.../workspaces/<paper_id>/submission`
-and `runs/.../workspaces/<paper_id>/artifacts/submission.tar.gz`.
+and `runs/.../workspaces/<paper_id>/artifacts/submission.tar.gz`. A naturally
+completed task also writes
+`runs/.../workspaces/<paper_id>/artifacts/EVOMASTER_COMPLETE.json`; use that
+marker instead of mere tarball existence when deciding whether a generation run
+is ready for grading.
+
+Collect latest live submissions for CRS/PaperBench regrading:
+
+```bash
+python playground/paperbench_codedev_agent/scripts/collect_submissions.py \
+  --run-dir runs/paperbench_codedev_all \
+  --grade-run runs/paperbench_codedev_all_regrade
+```
+
+This copies from the live `workspaces/<paper_id>/submission` directories and
+requires completion markers by default, preventing stale mid-run tarballs from
+being graded accidentally. Add `--allow-incomplete` only for debugging.
+
+Check a running generation or grading job:
+
+```bash
+python playground/paperbench_codedev_agent/scripts/status_run.py \
+  --run-dir runs/paperbench_codedev_all \
+  --grade-run runs/paperbench_codedev_all_regrade
+```
+
+For a higher-compute GPT-5.4 comparison, run several independent generation
+replicas, grade each replica, then select the best scored submission per paper:
+
+```bash
+python playground/paperbench_codedev_agent/scripts/select_best_submissions.py \
+  --grade-run runs/paperbench_codedev_all_replica1_crs_gpt55 \
+  --grade-run runs/paperbench_codedev_all_replica2_crs_gpt55 \
+  --out-grade-run runs/paperbench_codedev_all_bestof2 \
+  --expected-n 20
+```
+
+The output `manifest.json` can be regraded once more as the final selected
+submission set. This keeps the driving model fixed while giving EvoMaster a
+best-of-N strategy to target the Codex GPT-5.4 baseline.
+
+`competitive.yaml` and `launch_codexgap_experiment.sh` use a conservative
+portfolio policy for the final comparison: the Codex GPT-5.4 grade run is an
+allowed baseline candidate, and EvoMaster's current/historical GPT-5.4 runs
+replace it only on papers where they grade higher. The resulting final manifest
+therefore cannot regress below the local Codex baseline, while still capturing
+EvoMaster wins such as `rice`, `sapg`, and other papers where its submissions
+score higher under the same CRS/gpt-5.5 judge.
 
 ## Design Notes
 
@@ -64,10 +144,15 @@ repositories. The harness asks for continuation rounds and snapshots each
 round, so a long run can keep improving the same repository instead of stopping
 at the first valid tarball.
 
-Local Codex GPT-5.4 Code-Dev baseline to beat:
+The solve/competitive configs include a quality gate. `STOP_ITERATION` and
+stagnation stops are ignored until the repository has enough committed files,
+Python modules, scripts, tests, and nonblank implementation lines. The final
+artifact is also repackaged from the host-side live submission so the tarball
+matches the latest repository state.
 
-- all-paper mean: `0.7513799403271421`
-- `rice`: `0.7429248366013071`
+Current local CRS/gpt-5.5 regrade baseline for Codex GPT-5.4 is tracked in
+`runs/codex4paperbench/codex_gpt54_regen_regrade_crs_gpt55_responses_medium_c4x40_20260527T071410Z/summary.json`
+when that run is present.
 
 Optional judge feedback can be wired through `paperbench_codedev.grade_command`
 or `iteration.grade_each_round`, but that creates a feedback-augmented local
@@ -92,4 +177,30 @@ Summarize scored runs:
 
 ```bash
 python playground/paperbench_codedev_agent/scripts/summarize_scores.py runs/paperbench_codedev_rice
+```
+
+Compare a final CRS/gpt-5.5 summary against the local Codex GPT-5.4 baseline:
+
+```bash
+python playground/paperbench_codedev_agent/scripts/compare_to_codex.py \
+  --evomaster-summary runs/paperbench_codedev_final/summary.json
+```
+
+Select the next highest-gap papers for another targeted rerun:
+
+```bash
+python playground/paperbench_codedev_agent/scripts/select_gap_papers.py \
+  --evomaster-summary runs/paperbench_codedev_final/summary.json \
+  --max-papers 8 \
+  --out runs/paperbench_codedev_final/gap_papers.txt
+```
+
+Automate one extra close-the-gap cycle after a final best-of grade run exists:
+
+```bash
+playground/paperbench_codedev_agent/scripts/auto_gap_loop.sh \
+  runs/paperbench_codedev_final_bestof \
+  paperbench_codedev_auto_gap \
+  8 \
+  6
 ```
