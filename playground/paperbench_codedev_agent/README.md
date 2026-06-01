@@ -34,7 +34,7 @@ PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
   playground/paperbench_codedev_agent/scripts/run_one.sh \
   rice \
   configs/paperbench_codedev_agent/config.yaml \
-  runs/paperbench_codedev_rice
+  runs/evomaster4paperbench/generation/targeted/paperbench_codedev_rice
 ```
 
 Use `configs/paperbench_codedev_agent/smoke.yaml` for a short plumbing test,
@@ -50,7 +50,7 @@ Create a task file from an official split:
 ```bash
 python playground/paperbench_codedev_agent/scripts/make_tasks.py \
   --split debug \
-  --output runs/paperbench_codedev_debug_tasks.json
+  --output runs/evomaster4paperbench/tasks/paperbench_codedev_debug_tasks.json
 ```
 
 Run in parallel:
@@ -60,9 +60,13 @@ PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
   playground/paperbench_codedev_agent/scripts/run_split.sh \
   debug \
   configs/paperbench_codedev_agent/solve.yaml \
-  runs/paperbench_codedev_debug \
+  runs/evomaster4paperbench/generation/full/paperbench_codedev_debug \
   1
 ```
+
+If the run directory argument is omitted, `run_one.sh`, `run_papers.sh`, and
+`run_split.sh` write under `runs/evomaster4paperbench` by default. Override the
+root with `PAPERBENCH_CODEDEV_RUN_ROOT=/path/to/root`.
 
 The PaperBench batch scripts default to a small host-wide LLM throttle
 (`EVOMASTER_LLM_MIN_INTERVAL_SECONDS=3`) keyed by model to avoid many parallel
@@ -72,7 +76,7 @@ only if the gateway quota is known to be higher:
 ```bash
 EVOMASTER_LLM_MIN_INTERVAL_SECONDS=1.5 \
   PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
-  playground/paperbench_codedev_agent/scripts/run_split.sh all configs/paperbench_codedev_agent/competitive.yaml runs/pb_all 10
+  playground/paperbench_codedev_agent/scripts/run_split.sh all configs/paperbench_codedev_agent/competitive.yaml runs/evomaster4paperbench/generation/full/pb_all 10
 ```
 
 Run only selected papers, useful for targeted remediation of low-scoring cases:
@@ -82,7 +86,7 @@ PAPERBENCH_CODEDEV_MODEL=ksyun/gpt-5.4 \
   playground/paperbench_codedev_agent/scripts/run_papers.sh \
   ftrl,lbcs,bbox,adaptive-pruning \
   configs/paperbench_codedev_agent/competitive.yaml \
-  runs/paperbench_codedev_targeted \
+  runs/evomaster4paperbench/generation/targeted/paperbench_codedev_targeted \
   4
 ```
 
@@ -97,8 +101,8 @@ Collect latest live submissions for CRS/PaperBench regrading:
 
 ```bash
 python playground/paperbench_codedev_agent/scripts/collect_submissions.py \
-  --run-dir runs/paperbench_codedev_all \
-  --grade-run runs/paperbench_codedev_all_regrade
+  --run-dir runs/evomaster4paperbench/generation/full/paperbench_codedev_all \
+  --grade-run runs/evomaster4paperbench/grades/final/paperbench_codedev_all_regrade
 ```
 
 This copies from the live `workspaces/<paper_id>/submission` directories and
@@ -109,8 +113,8 @@ Check a running generation or grading job:
 
 ```bash
 python playground/paperbench_codedev_agent/scripts/status_run.py \
-  --run-dir runs/paperbench_codedev_all \
-  --grade-run runs/paperbench_codedev_all_regrade
+  --run-dir runs/evomaster4paperbench/generation/full/paperbench_codedev_all \
+  --grade-run runs/evomaster4paperbench/grades/final/paperbench_codedev_all_regrade
 ```
 
 For a higher-compute GPT-5.4 comparison, run several independent generation
@@ -118,9 +122,9 @@ replicas, grade each replica, then select the best scored submission per paper:
 
 ```bash
 python playground/paperbench_codedev_agent/scripts/select_best_submissions.py \
-  --grade-run runs/paperbench_codedev_all_replica1_crs_gpt55 \
-  --grade-run runs/paperbench_codedev_all_replica2_crs_gpt55 \
-  --out-grade-run runs/paperbench_codedev_all_bestof2 \
+  --grade-run runs/evomaster4paperbench/grades/final/paperbench_codedev_all_replica1_crs_gpt55 \
+  --grade-run runs/evomaster4paperbench/grades/final/paperbench_codedev_all_replica2_crs_gpt55 \
+  --out-grade-run runs/evomaster4paperbench/grades/bestof/paperbench_codedev_all_bestof2 \
   --expected-n 20
 ```
 
@@ -163,9 +167,9 @@ Grade one finished submission from the host `paperbench` conda environment:
 ```bash
 source /data/conda/miniconda3/etc/profile.d/conda.sh
 conda run -n paperbench python playground/paperbench_codedev_agent/scripts/grade_submission.py \
-  --submission runs/paperbench_codedev_rice/workspaces/rice/submission \
+  --submission runs/evomaster4paperbench/generation/targeted/paperbench_codedev_rice/workspaces/rice/submission \
   --paper-id rice \
-  --out-dir runs/paperbench_codedev_rice/workspaces/rice/grade \
+  --out-dir runs/evomaster4paperbench/generation/targeted/paperbench_codedev_rice/workspaces/rice/grade \
   --env-file /data/yuzhu/Devs/EvoMaster-ours/.env \
   --model ksyun/gpt-5.4 \
   --reasoning-effort medium \
@@ -176,31 +180,38 @@ conda run -n paperbench python playground/paperbench_codedev_agent/scripts/grade
 Summarize scored runs:
 
 ```bash
-python playground/paperbench_codedev_agent/scripts/summarize_scores.py runs/paperbench_codedev_rice
+python playground/paperbench_codedev_agent/scripts/summarize_scores.py runs/evomaster4paperbench/generation/targeted/paperbench_codedev_rice
 ```
 
 Compare a final CRS/gpt-5.5 summary against the local Codex GPT-5.4 baseline:
 
 ```bash
 python playground/paperbench_codedev_agent/scripts/compare_to_codex.py \
-  --evomaster-summary runs/paperbench_codedev_final/summary.json
+  --evomaster-summary runs/evomaster4paperbench/grades/final/paperbench_codedev_final/summary.json
 ```
 
 Select the next highest-gap papers for another targeted rerun:
 
 ```bash
 python playground/paperbench_codedev_agent/scripts/select_gap_papers.py \
-  --evomaster-summary runs/paperbench_codedev_final/summary.json \
+  --evomaster-summary runs/evomaster4paperbench/grades/final/paperbench_codedev_final/summary.json \
   --max-papers 8 \
-  --out runs/paperbench_codedev_final/gap_papers.txt
+  --out runs/evomaster4paperbench/plans/paperbench_codedev_final/gap_papers.txt
 ```
 
 Automate one extra close-the-gap cycle after a final best-of grade run exists:
 
 ```bash
 playground/paperbench_codedev_agent/scripts/auto_gap_loop.sh \
-  runs/paperbench_codedev_final_bestof \
+  runs/evomaster4paperbench/grades/bestof/paperbench_codedev_final_bestof \
   paperbench_codedev_auto_gap \
   8 \
   6
+```
+
+Organize legacy root-level `runs/paperbench_codedev*` directories into a
+readable symlink view:
+
+```bash
+python playground/paperbench_codedev_agent/scripts/organize_runs.py
 ```

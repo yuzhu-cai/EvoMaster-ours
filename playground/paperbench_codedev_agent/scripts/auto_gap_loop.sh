@@ -15,6 +15,7 @@ CODEX_GRADE="${CODEX_GPT54_GRADE_RUN:-$(dirname "$CODEX_SUMMARY")}"
 OLD1="${PAPERBENCH_OLD_GRADE_RUN_1:-runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z}"
 OLD2="${PAPERBENCH_OLD_GRADE_RUN_2:-runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z}"
 MAX_ROUNDS="${PAPERBENCH_AUTO_GAP_MAX_ROUNDS:-3}"
+RUN_ROOT="${PAPERBENCH_CODEDEV_RUN_ROOT:-runs/evomaster4paperbench}"
 
 log(){ printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
@@ -37,7 +38,7 @@ fi
 CURRENT_BEST="$BASE_FINAL_GRADE_RUN"
 EXTRA_GRADE_RUNS=()
 for round in $(seq 1 "$MAX_ROUNDS"); do
-  GAP_DIR="runs/${OUT_PREFIX}_round${round}_gap_plan"
+  GAP_DIR="${RUN_ROOT}/plans/${OUT_PREFIX}_round${round}_gap_plan"
   GAP_FILE="$GAP_DIR/gap_papers.txt"
   GAP_JSON="$GAP_DIR/gap_papers.json"
   mkdir -p "$GAP_DIR"
@@ -52,9 +53,9 @@ for round in $(seq 1 "$MAX_ROUNDS"); do
   fi
   log "round $round selected gap papers: $(tr '\n' ',' < "$GAP_FILE" | sed 's/,$//')"
 
-  GEN_RUN="runs/${OUT_PREFIX}_round${round}_generation"
-  GRADE_RUN="runs/${OUT_PREFIX}_round${round}_grade_crs_gpt55"
-  BEST_RUN="runs/${OUT_PREFIX}_round${round}_bestof_crs_gpt55"
+  GEN_RUN="${RUN_ROOT}/generation/targeted/${OUT_PREFIX}_round${round}_generation"
+  GRADE_RUN="${RUN_ROOT}/grades/targeted/${OUT_PREFIX}_round${round}_grade_crs_gpt55"
+  BEST_RUN="${RUN_ROOT}/grades/bestof/${OUT_PREFIX}_round${round}_bestof_crs_gpt55"
   ROUND_CONFIG="$GAP_DIR/round_config.yaml"
 
   python - "$CONFIG" "$ROUND_CONFIG" "$CODEX_GRADE" "$CURRENT_BEST" "$OLD1" "$OLD2" "${EXTRA_GRADE_RUNS[@]}" <<'PY'

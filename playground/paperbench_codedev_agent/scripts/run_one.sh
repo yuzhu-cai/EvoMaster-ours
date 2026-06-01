@@ -6,7 +6,8 @@ cd "$ROOT_DIR"
 
 PAPER_ID="${1:-rice}"
 CONFIG="${2:-configs/paperbench_codedev_agent/config.yaml}"
-RUN_DIR="${3:-runs/paperbench_codedev_${PAPER_ID}_$(date -u +%Y%m%dT%H%M%SZ)}"
+RUN_ROOT="${PAPERBENCH_CODEDEV_RUN_ROOT:-runs/evomaster4paperbench}"
+RUN_DIR="${3:-${RUN_ROOT}/generation/targeted/paperbench_codedev_${PAPER_ID}_$(date -u +%Y%m%dT%H%M%SZ)}"
 MODEL="${PAPERBENCH_CODEDEV_MODEL:-ksyun/gpt-5.4}"
 ENV_FILE="${PAPERBENCH_CODEDEV_ENV:-$ROOT_DIR/.env}"
 
