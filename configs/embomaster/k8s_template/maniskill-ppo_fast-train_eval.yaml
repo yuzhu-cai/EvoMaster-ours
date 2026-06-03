@@ -1,0 +1,161 @@
+# ManiSkill PPO-Fast: train + evaluate in a single K8s Job.
+#
+# How this template is used by EvoMaster:
+# - evomaster/k8s_experiment_runner.py overrides the codebase hostPath at runtime
+#   so that each round's modified ManiSkill codebase (under the session dir) is
+#   mounted at /workspace/maniskill. The `hostPath` below is only a placeholder.
+# - The container calls `train_and_eval_ml-master.sh` which dispatches by
+#   TASK_NAME and runs `ppo_fast.py` twice (train, then --evaluate).
+# - ppo_fast.py writes ./submission/submission_<NODE_ID>.csv with columns:
+#     task,success_rate,result_dir
+#   We parse that CSV here and echo "FINAL_METRIC=<success_rate>" to stdout.
+# - EvoMaster's exp.py reads this via metric_pattern "FINAL_METRIC=([0-9]*\\.?[0-9]+)".
+#
+# Per-task parameters come from EvoMaster config's `k8s_runner.manifest_env`:
+#   TASK_NAME          e.g. push_cube / pick_cube / peginsertion / pull_cube / push_t / lift_peg_upright
+#   TASK_CONFIG        passthrough to train_and_eval_ml-master.sh $5 (unused by ppo_fast)
+#   EXPERT_DATA_NUM    passthrough $6 (unused by ppo_fast)
+#   SEED               passthrough $7 (unused; ppo_fast hardcodes its own seed)
+#   GPU_ID             passthrough $8 (unused; 1-GPU job)
+#   ACTION_DIM         passthrough $9 (unused; reserved)
+#   TRAIN_TIMEOUT      passthrough $10 (unused inside the shell; used as outer `timeout` wrapper)
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: maniskill-train-ppo-fast
+  namespace: default
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: maniskill-train
+        image: 10.1.0.116:5000/evomaster/maniskill:latest
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "push_cube"
+        - name: TASK_CONFIG
+          value: "bb.json"
+        - name: EXPERT_DATA_NUM
+          value: "50"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0"
+        - name: ACTION_DIM
+          value: "0"
+        - name: TRAIN_TIMEOUT
+          value: "7200"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "80Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "40Gi"
+
+        volumeMounts:
+        - name: maniskill-workspace
+          mountPath: /workspace/maniskill
+        - name: maniskill-asset
+          mountPath: /root/.maniskill
+        - name: dshm
+          mountPath: /dev/shm
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -eo pipefail
+
+          CODEBASE_PATH="/workspace/maniskill"
+          NODE_ID="${HOSTNAME:-maniskill-job}"
+          SUBMISSION_SUBDIR="submission"
+
+          echo "=============================================="
+          echo "[ManiSkill] PPO-Fast Train + Evaluate"
+          echo "=============================================="
+          echo "TASK_NAME:       ${TASK_NAME}"
+          echo "TASK_CONFIG:     ${TASK_CONFIG}"
+          echo "EXPERT_DATA_NUM: ${EXPERT_DATA_NUM}"
+          echo "SEED:            ${SEED}"
+          echo "GPU_ID:          ${GPU_ID}"
+          echo "ACTION_DIM:      ${ACTION_DIM}"
+          echo "TRAIN_TIMEOUT:   ${TRAIN_TIMEOUT}"
+          echo "CODEBASE_PATH:   ${CODEBASE_PATH}"
+          echo "NODE_ID:         ${NODE_ID}"
+          echo "=============================================="
+
+          if [ ! -d "${CODEBASE_PATH}" ]; then
+            echo "[ManiSkill] ERROR: codebase path not found: ${CODEBASE_PATH}"
+            exit 1
+          fi
+          cd "${CODEBASE_PATH}"
+
+          if [ ! -f train_and_eval_ml-master.sh ]; then
+            echo "[ManiSkill] ERROR: train_and_eval_ml-master.sh missing under ${CODEBASE_PATH}"
+            exit 1
+          fi
+
+          mkdir -p "./${SUBMISSION_SUBDIR}"
+          rm -f "./${SUBMISSION_SUBDIR}/submission_${NODE_ID}.csv" || true
+
+          TRAIN_EXIT=0
+          if timeout "${TRAIN_TIMEOUT}" bash train_and_eval_ml-master.sh \
+              "${CODEBASE_PATH}" \
+              "${NODE_ID}" \
+              "${CODEBASE_PATH}/${SUBMISSION_SUBDIR}" \
+              "${TASK_NAME}" \
+              "${TASK_CONFIG}" \
+              "${EXPERT_DATA_NUM}" \
+              "${SEED}" \
+              "${GPU_ID}" \
+              "${TRAIN_TIMEOUT}"; then
+            echo "[ManiSkill] Train + eval script completed."
+          else
+            TRAIN_EXIT=$?
+            if [ "${TRAIN_EXIT}" -eq 124 ]; then
+              echo "[ManiSkill] Train + eval timed out after ${TRAIN_TIMEOUT}s."
+            else
+              echo "[ManiSkill] Train + eval script exited with code ${TRAIN_EXIT}."
+            fi
+          fi
+
+          SUBMISSION_CSV="${CODEBASE_PATH}/${SUBMISSION_SUBDIR}/submission_${NODE_ID}.csv"
+          if [ ! -f "${SUBMISSION_CSV}" ]; then
+            echo "[ManiSkill] ERROR: submission CSV not found at ${SUBMISSION_CSV}"
+            ls -la "${CODEBASE_PATH}/${SUBMISSION_SUBDIR}" || true
+            exit 1
+          fi
+
+          echo "[ManiSkill] Submission CSV:"
+          cat "${SUBMISSION_CSV}"
+
+          SUCCESS_RATE="$(awk -F, 'NR>1 { gsub(/[[:space:]\r]/, "", $2); if ($2 != "") { print $2; exit } }' "${SUBMISSION_CSV}")"
+          if [ -z "${SUCCESS_RATE}" ]; then
+            echo "[ManiSkill] ERROR: failed to parse success_rate from ${SUBMISSION_CSV}"
+            exit 1
+          fi
+
+          echo "[ManiSkill] Parsed success_rate=${SUCCESS_RATE}"
+          echo "FINAL_METRIC=${SUCCESS_RATE}"
+
+      volumes:
+      - name: maniskill-workspace
+        hostPath:
+          path: /data/gjliu/ManiSkill
+          type: Directory
+      - name: maniskill-asset
+        emptyDir: {}
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi
