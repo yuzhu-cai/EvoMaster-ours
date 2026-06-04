@@ -1,0 +1,219 @@
+# Robomimic BC (can/ph/low_dim): train + evaluate in a single K8s Job.
+#
+# How this template is used by EvoMaster:
+# - playground/embomaster/core/services/k8s_experiment_runner.py overrides the
+#   codebase hostPath at runtime so that each round's modified robomimic codebase
+#   (under the session's round workspace) is mounted at /workspace/robomimic.
+#   The `hostPath` below is only a placeholder / default for standalone runs.
+# - The container activates the `robomimic_venv` conda env, sanity-checks that
+#   the target paper config exists, runs `train.py`, and parses the rollout
+#   success rate from stdout.
+# - The last line printed MUST be "FINAL_METRIC=<success_rate>" because EvoMaster
+#   reads it via metric_pattern "FINAL_METRIC=([0-9]*\\.?[0-9]+)".
+#
+# IMPORTANT: This manifest does NOT run `generate_paper_configs.py`.
+# You must pre-generate paper configs ONCE on the host before any EvoMaster run:
+#
+#   cd /data/gjliu/robomimic && \
+#   conda activate robomimic_venv && \
+#   python robomimic/scripts/generate_paper_configs.py \
+#     --config_dir /data/gjliu/robomimic/robomimic/exps/paper \
+#     --output_dir /data/gjliu/robomimic/experiment_results \
+#     --dataset_dir /data/gjliu/robomimic/datasets/
+#
+# After that, agents' edits to `robomimic/exps/paper/**/*.json` will be honored
+# round-by-round (no runtime overwrite).
+#
+# Per-task parameters come from EvoMaster config's `k8s_runner.manifest_env`:
+#   TASK_NAME       e.g. can
+#   TASK_VARIANT    e.g. ph
+#   OBS_MODALITY    e.g. low_dim / image
+#   ALGO            e.g. bc / bcq / bc_rnn
+#   CONFIG_REL      relative path from codebase root to the training config json
+#                   e.g. robomimic/exps/paper/core/can/ph/low_dim/bc.json
+#   CONDA_ENV       conda env to activate (default: robomimic_venv)
+#   TRAIN_TIMEOUT   outer wrapper timeout in seconds
+#   SEED            reserved; robomimic config owns seed itself
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: robomimic-train-can-bc
+  namespace: default
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: robomimic-train
+        # TODO(user): replace with the latest robomimic image tag once provided.
+        image: 10.1.0.116:5000/robomimic:conda_init
+        imagePullPolicy: IfNotPresent
+
+        env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: "compute,utility,graphics"
+        - name: TASK_NAME
+          value: "can"
+        - name: TASK_VARIANT
+          value: "ph"
+        - name: OBS_MODALITY
+          value: "low_dim"
+        - name: ALGO
+          value: "bc"
+        - name: CONFIG_REL
+          value: "robomimic/exps/paper/core/can/ph/low_dim/bc.json"
+        - name: CONDA_ENV
+          value: "robomimic_venv"
+        - name: SEED
+          value: "0"
+        - name: GPU_ID
+          value: "0"
+        - name: TRAIN_TIMEOUT
+          value: "7200"
+
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: "8"
+            memory: "80Gi"
+          requests:
+            nvidia.com/gpu: 1
+            cpu: "4"
+            memory: "40Gi"
+
+        volumeMounts:
+        - name: robomimic-workspace
+          mountPath: /workspace/robomimic
+        - name: huggingface-cache
+          mountPath: /root/.cache/huggingface
+        - name: tmp-dir
+          mountPath: /root/tmp
+        - name: dshm
+          mountPath: /dev/shm
+
+        command: ["/bin/bash", "-lc"]
+        args:
+        - |
+          set -eo pipefail
+
+          CODEBASE_PATH="/workspace/robomimic"
+          NODE_ID="${HOSTNAME:-robomimic-job}"
+          TRAIN_LOG="${CODEBASE_PATH}/train_${NODE_ID}.log"
+
+          echo "=============================================="
+          echo "[Robomimic] BC train + evaluate"
+          echo "=============================================="
+          echo "TASK_NAME:      ${TASK_NAME}"
+          echo "TASK_VARIANT:   ${TASK_VARIANT}"
+          echo "OBS_MODALITY:   ${OBS_MODALITY}"
+          echo "ALGO:           ${ALGO}"
+          echo "CONFIG_REL:     ${CONFIG_REL}"
+          echo "CONDA_ENV:      ${CONDA_ENV}"
+          echo "SEED:           ${SEED}"
+          echo "GPU_ID:         ${GPU_ID}"
+          echo "TRAIN_TIMEOUT:  ${TRAIN_TIMEOUT}"
+          echo "CODEBASE_PATH:  ${CODEBASE_PATH}"
+          echo "NODE_ID:        ${NODE_ID}"
+          echo "=============================================="
+
+          if [ ! -d "${CODEBASE_PATH}" ]; then
+            echo "[Robomimic] ERROR: codebase path not found: ${CODEBASE_PATH}"
+            exit 1
+          fi
+          cd "${CODEBASE_PATH}"
+
+          if [ -f /opt/conda/etc/profile.d/conda.sh ]; then
+            source /opt/conda/etc/profile.d/conda.sh
+            if conda activate "${CONDA_ENV}" >/dev/null 2>&1; then
+              echo "[Robomimic] Activated conda env: ${CONDA_ENV}"
+            else
+              echo "[Robomimic] WARNING: failed to activate conda env ${CONDA_ENV}; continuing with system python"
+            fi
+          else
+            echo "[Robomimic] WARNING: /opt/conda/etc/profile.d/conda.sh not found"
+          fi
+
+          export CUDA_VISIBLE_DEVICES="${GPU_ID}"
+
+          CONFIG_ABS="${CODEBASE_PATH}/${CONFIG_REL}"
+          if [ ! -f "${CONFIG_ABS}" ]; then
+            echo "[Robomimic] ERROR: training config not found: ${CONFIG_ABS}"
+            echo "[Robomimic] Please pre-generate paper configs on the host ONCE:"
+            echo "  python robomimic/scripts/generate_paper_configs.py \\"
+            echo "    --config_dir ${CODEBASE_PATH}/robomimic/exps/paper \\"
+            echo "    --output_dir ${CODEBASE_PATH}/experiment_results \\"
+            echo "    --dataset_dir ${CODEBASE_PATH}/datasets/"
+            exit 1
+          fi
+
+          echo "[Robomimic] Using training config: ${CONFIG_ABS}"
+          echo "[Robomimic] Head of config:"
+          head -n 40 "${CONFIG_ABS}" || true
+          echo "=============================================="
+
+          TRAIN_EXIT=0
+          set +e
+          timeout "${TRAIN_TIMEOUT}" python robomimic/scripts/train.py \
+            --config "${CONFIG_REL}" 2>&1 | tee "${TRAIN_LOG}"
+          TRAIN_EXIT=${PIPESTATUS[0]}
+          set -e
+
+          if [ "${TRAIN_EXIT}" -eq 0 ]; then
+            echo "[Robomimic] Training completed successfully."
+          elif [ "${TRAIN_EXIT}" -eq 124 ]; then
+            echo "[Robomimic] Training timed out after ${TRAIN_TIMEOUT}s; attempting to parse partial rollout metrics."
+          else
+            echo "[Robomimic] Training exited with code ${TRAIN_EXIT}; attempting to parse partial rollout metrics."
+          fi
+
+          # Parse FINAL_METRIC from the last observed rollout success rate line.
+          # robomimic prints lines like:
+          #   Rollout/Success_Rate/NutAssemblySquare-mean: 0.780000
+          # We take the LAST such value across all envs as the final success rate.
+          SUCCESS_RATE=""
+          if [ -f "${TRAIN_LOG}" ]; then
+            SUCCESS_RATE="$(grep -Eo 'Rollout/Success_Rate/[^[:space:]]*-mean[[:space:]]*:[[:space:]]*[0-9]*\.?[0-9]+' "${TRAIN_LOG}" \
+              | tail -n 1 \
+              | grep -Eo '[0-9]*\.?[0-9]+$' || true)"
+          fi
+
+          if [ -z "${SUCCESS_RATE}" ] && [ -d "${CODEBASE_PATH}/experiment_results" ]; then
+            LOG_TXT="$(find "${CODEBASE_PATH}/experiment_results" -type f -name log.txt -printf '%T@ %p\n' 2>/dev/null \
+              | sort -n | tail -n 1 | cut -d' ' -f2-)"
+            if [ -n "${LOG_TXT}" ] && [ -f "${LOG_TXT}" ]; then
+              echo "[Robomimic] Fallback parsing from: ${LOG_TXT}"
+              SUCCESS_RATE="$(grep -Eo 'Rollout/Success_Rate/[^[:space:]]*-mean[[:space:]]*:[[:space:]]*[0-9]*\.?[0-9]+' "${LOG_TXT}" \
+                | tail -n 1 \
+                | grep -Eo '[0-9]*\.?[0-9]+$' || true)"
+            fi
+          fi
+
+          if [ -z "${SUCCESS_RATE}" ]; then
+            echo "[Robomimic] ERROR: failed to parse Rollout/Success_Rate from training output."
+            echo "[Robomimic] Tail of train log:"
+            tail -n 50 "${TRAIN_LOG}" 2>/dev/null || true
+            exit 1
+          fi
+
+          echo "[Robomimic] Parsed success_rate=${SUCCESS_RATE}"
+          echo "FINAL_METRIC=${SUCCESS_RATE}"
+
+      volumes:
+      - name: robomimic-workspace
+        hostPath:
+          path: /data/gjliu/robomimic
+          type: Directory
+      - name: huggingface-cache
+        hostPath:
+          path: /data/gjliu/robomimic/k8s_tmp/huggingface
+          type: Directory
+      - name: tmp-dir
+        hostPath:
+          path: /data/gjliu/robomimic/k8s_tmp/tmp
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 64Gi

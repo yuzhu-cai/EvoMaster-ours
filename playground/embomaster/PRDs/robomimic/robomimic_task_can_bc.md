@@ -36,12 +36,12 @@ You may check all the code using your tools (file_editor, terminal).
 
 You may **ONLY** edit the following files:
 
-1. **General training configuration**: ./robomimic/exps/paper_local/core/can/ph/low_dim/bc.json
+1. **General training configuration**: ./robomimic/exps/paper/core/can/ph/low_dim/bc.json
 2. **Model and loss function**: ./robomimic/algo/bc.py
 
 Note 1: Modify the relevant parts of the algorithm files as per the config content. For example:
 ```
-# In ./robomimic/exps/paper_local/core/can/ph/low_dim/bc.json
+# In ./robomimic/exps/paper/core/can/ph/low_dim/bc.json
 
 "gmm": {
     "enabled": true,
@@ -81,7 +81,7 @@ You have access to the following tools:
 
 **Step 1: Inspect the current code**
 ```
-Use file_editor to view ./robomimic/algo/bc.py and ./robomimic/exps/paper_local/core/can/ph/low_dim/bc.json  (just example)
+Use file_editor to view ./robomimic/algo/bc.py and ./robomimic/exps/paper/core/can/ph/low_dim/bc.json  (just example)
 ```
 
 **Step 2: Make your improvements**
