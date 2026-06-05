@@ -833,6 +833,22 @@ class OpenAILLM(BaseLLM):
         import httpx
 
         body = request_params.copy()
+        if isinstance(body.get("tools"), list):
+            # Some OpenAI-compatible servers reject Pydantic's explicit
+            # `strict: null`; OpenAI treats it as omitted.
+            cleaned_tools = []
+            for tool in body["tools"]:
+                if not isinstance(tool, dict):
+                    cleaned_tools.append(tool)
+                    continue
+                cleaned_tool = tool.copy()
+                function = cleaned_tool.get("function")
+                if isinstance(function, dict) and function.get("strict") is None:
+                    function = function.copy()
+                    function.pop("strict", None)
+                    cleaned_tool["function"] = function
+                cleaned_tools.append(cleaned_tool)
+            body["tools"] = cleaned_tools
         timeout = body.pop("timeout", self.config.timeout)
         url_base = (self.config.base_url or "https://api.openai.com/v1").rstrip("/")
         url = f"{url_base}/chat/completions"

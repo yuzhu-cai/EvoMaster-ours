@@ -450,8 +450,10 @@ class PaperBenchCodeDevPlayground(BasePlayground):
         task_doc = self._render_task_doc(spec)
         self.session.exec_bash(
             f"mkdir -p {workspace_q}/logs {workspace_q}/artifacts {workspace_q}/audits "
+            f"{workspace_q}/tmp {workspace_q}/.cache/pip "
             f"{submission_q} && "
-            f"chmod -R a+rwX {workspace_q}/logs {workspace_q}/artifacts {workspace_q}/audits {submission_q} "
+            f"chmod -R a+rwX {workspace_q}/logs {workspace_q}/artifacts {workspace_q}/audits "
+            f"{workspace_q}/tmp {workspace_q}/.cache {submission_q} "
             "2>/dev/null || true && "
             "git config --global user.email paperbench-codedev@evomaster.local && "
             "git config --global user.name paperbench-codedev-agent && "

@@ -30,8 +30,32 @@ def copy_submission(src: Path, dst: Path) -> None:
     shutil.copytree(
         src,
         dst,
-        ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "*.pyc", "*.pyo"),
+        ignore=shutil.ignore_patterns(
+            "__pycache__",
+            ".pytest_cache",
+            ".mypy_cache",
+            ".ruff_cache",
+            "*.pyc",
+            "*.pyo",
+            "*.egg-info",
+            "build",
+            "dist",
+        ),
     )
+
+
+def marker_is_complete(marker: Path) -> tuple[bool, str]:
+    """Return whether the completion marker is a finished, packageable run."""
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return False, f"bad_completion_marker:{exc}"
+    if payload.get("status") != "completed":
+        return False, f"marker_status_{payload.get('status') or 'missing'}"
+    artifact_status = payload.get("artifact_status") or {}
+    if artifact_status and not artifact_status.get("ok", False):
+        return False, "artifact_status_not_ok"
+    return True, "ok"
 
 
 def main() -> int:
@@ -57,6 +81,11 @@ def main() -> int:
             if not args.allow_incomplete and not marker.exists():
                 skipped.append({"paper_id": paper_id, "run_dir": str(run_dir), "reason": "missing_completion_marker"})
                 continue
+            if not args.allow_incomplete:
+                complete, reason = marker_is_complete(marker)
+                if not complete:
+                    skipped.append({"paper_id": paper_id, "run_dir": str(run_dir), "reason": reason})
+                    continue
             dst = args.grade_run / "workspaces" / paper_id / "submission"
             copy_submission(submission, dst)
             rows.append(

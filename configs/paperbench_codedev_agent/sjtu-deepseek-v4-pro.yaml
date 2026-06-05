@@ -1,0 +1,153 @@
+# PaperBench Code-Dev run config for sjtu/deepseek-v4-pro via the OpenAI-compatible gateway.
+# Derived from solve.yaml; no EvoMaster core code changes are required.
+paperbench_codedev:
+  paperbench_root: /data/yuzhu/Devs/third_party/frontier-evals/project/paperbench
+  workspace: /workspace
+  paper_mount: /home/paper
+  submission_dir: /home/submission
+  submission_tar_path: /workspace/artifacts/submission.tar.gz
+  host_agent_env: /data/yuzhu/Devs/EvoMaster-ours/.env
+  expose_rubric: false
+  bootstrap:
+    enabled: true
+    template: auto
+    templates_dir: playground/paperbench_codedev_agent/bootstrap_templates
+    seed_grade_runs:
+    - runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z
+    - runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z
+    min_seed_score: 0.0
+    overwrite_existing: false
+    commit: true
+  paper_excerpt_chars: 18000
+  addendum_excerpt_chars: 9000
+  historical_feedback:
+    enabled: true
+    grade_runs:
+    - runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z
+    - runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z
+    max_failed_leaves: 18
+    max_chars: 12000
+  codex_gap_feedback:
+    enabled: true
+    codex_grade_run: runs/codex4paperbench/codex_gpt54_regen_regrade_crs_gpt55_responses_medium_c4x40_20260527T071410Z
+    evomaster_grade_runs:
+    - runs/paperbench_codedev_regrade_crs_gpt55_responses_c4x40_20260526T162828Z
+    - runs/paperbench_codedev_combined_regrade_crs_gpt55_responses_c4x40_20260527T142508Z
+    only_when_codex_ahead: true
+    min_paper_gap: 0.005
+    codex_min_leaf_score: 0.999
+    min_leaf_delta: 0.25
+    max_gap_leaves: 18
+    max_chars: 10000
+  max_runtime_seconds: 86400
+  grade_command: ''
+  grade_timeout: 7200
+  iteration:
+    enabled: true
+    max_rounds: 24
+    min_rounds: 8
+    max_stagnant_rounds: 6
+    snapshot_each_round: true
+    prompt_file: prompts/iteration_prompt.txt
+    grade_each_round: false
+    select_best_graded_round: false
+    quality_gate:
+      enabled: true
+      min_round: 8
+      min_elapsed_seconds: 7200
+      min_tracked_files: 45
+      min_python_files: 24
+      min_script_files: 3
+      min_test_files: 2
+      min_config_files: 1
+      min_nonblank_lines: 2600
+      min_git_commits: 5
+      require_clean_git: true
+      require_audit_ok: true
+llm:
+  openai:
+    provider: openai
+    model: sjtu/deepseek-v4-pro
+    api_key: ${DEEPSEEK_API_KEY}
+    base_url: ${DEEPSEEK_API_BASE}/v1
+    temperature: 0.25
+    max_tokens: 8192
+    max_tokens_param: max_tokens
+    timeout: 300
+    max_retries: 8
+    retry_delay: 5.0
+  default: openai
+agents:
+  codedev:
+    llm: openai
+    max_turns: 220
+    tools:
+      builtin:
+      - execute_bash
+      - str_replace_editor
+      - think
+      - finish
+      google_search: google_search
+      web_fetch: web_fetch
+      paperbench_status: paperbench_status
+      paperbench_paper: paperbench_paper
+    context:
+      max_tokens: 100000
+      truncation_strategy: summary
+      preserve_system_messages: true
+      preserve_recent_turns: 6
+    system_prompt_file: prompts/system_prompt.txt
+    user_prompt_file: prompts/user_prompt.txt
+    prompt_format_kwargs: {}
+session:
+  type: docker
+  local:
+    working_dir: ./playground/paperbench_codedev_agent/workspace
+    timeout: 86400
+    gpu_devices: null
+    cpu_devices: 0-15
+    symlinks: {}
+  docker:
+    image: pb-env:latest
+    pull_image: never
+    container_name: null
+    use_existing_container: null
+    working_dir: /workspace
+    workspace_path: /workspace
+    gpu_devices: null
+    one_gpu_per_container: false
+    memory_limit: 32g
+    cpu_limit: 8.0
+    cpu_devices: null
+    network_mode: host
+    volumes: {}
+    env_vars:
+      OPENAI_API_KEY: ${DEEPSEEK_API_KEY}
+      GPT_BASE_URL: ${DEEPSEEK_API_BASE}/v1
+      GPT_CHAT_MODEL: sjtu/deepseek-v4-pro
+      SERPER_KEY_ID: ${SERPER_KEY_ID}
+      JINA_API_KEY: ${JINA_API_KEY}
+      HF_HOME: /workspace/.cache/huggingface
+      HF_HUB_CACHE: /workspace/.cache/huggingface/hub
+      TRANSFORMERS_CACHE: /workspace/.cache/huggingface/hub
+      TORCH_HOME: /workspace/.cache/torch
+      XDG_CACHE_HOME: /workspace/.cache
+      PIP_CACHE_DIR: /workspace/.cache/pip
+      PIP_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+      PIP_DEFAULT_TIMEOUT: "120"
+      TMPDIR: /workspace/tmp
+      TMP: /workspace/tmp
+      TEMP: /workspace/tmp
+      NO_PROXY: localhost,127.0.0.1
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      DEEPSEEK_API_BASE: ${DEEPSEEK_API_BASE}/v1
+    auto_remove: true
+    timeout: 86400
+llm_output:
+  show_in_console: false
+  log_to_file: true
+logging:
+  level: INFO
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  file: null
+  console: true
